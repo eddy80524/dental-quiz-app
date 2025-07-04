@@ -1,0 +1,1272 @@
+[
+  {
+    "number": "117C1",
+    "question": "歯肉炎と歯周炎を鑑別する所見はどれか。1つ選べ。",
+    "choices": [
+      "歯肉腫脹",
+      "歯肉出血",
+      "歯肉の発赤",
+      "真性ポケット",
+      "スティップリング"
+    ],
+    "image_urls": null,
+    "answer": "D"
+  },
+  {
+    "number": "117C2",
+    "question": "口内法エックス線撮影の補助具の写真（別冊No.1）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C2.png?resize=289%2C251&ssl=1] 使用目的はどれか。1つ選べ。",
+    "choices": [
+      "線量の調整",
+      "頭部の固定",
+      "検出器の保持",
+      "散乱線の除去",
+      "画像コントラストの向上"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C2.png?resize=289%2C251&ssl=1"
+    ],
+    "answer": "C"
+  },
+  {
+    "number": "117C3",
+    "question": "下顎の低形成を特徴とするのはどれか。1つ選べ。",
+    "choices": [
+      "Marfan症候群",
+      "先天性表皮水疱症",
+      "Papillon-Lefevre症候群",
+      "Treacher-Collins症候群",
+      "Beckwith-Wiedemann症候群"
+    ],
+    "image_urls": null,
+    "answer": "D"
+  },
+  {
+    "number": "117C4",
+    "question": "アドレナリンの薬理作用はどれか。1つ選べ。",
+    "choices": [
+      "強心作用",
+      "筋弛緩作用",
+      "抗不整脈作用",
+      "血小板凝集抑制作用",
+      "ヒスタミン遊離作用"
+    ],
+    "image_urls": null,
+    "answer": "A"
+  },
+  {
+    "number": "117C5",
+    "question": "市町村が要介護・要支援の二次判定を行うのはどれか。1つ選べ。",
+    "choices": [
+      "地域ケア会議",
+      "介護認定審査会",
+      "介護保険審査会",
+      "社会福祉協議会",
+      "社会保障審議会"
+    ],
+    "image_urls": null,
+    "answer": "B"
+  },
+  {
+    "number": "117C6",
+    "question": "酵素共役型受容体に作用するのはどれか。1つ選べ。",
+    "choices": [
+      "インスリン",
+      "アドレナリン",
+      "アセチルコリン",
+      "アルドステロン",
+      "γ-アミノ酪酸〈GABA〉"
+    ],
+    "image_urls": null,
+    "answer": "A"
+  },
+  {
+    "number": "117C7",
+    "question": "( ) is the voluntary agreement given by a patient for treatment regimen after being informed of the purpose, methods, benefits, and risks. （ ）に入るのはどれか。1つ選べ。",
+    "choices": [
+      "Clinical pathway",
+      "End of life care",
+      "Informed consent",
+      "Paternalism",
+      "Second opinion"
+    ],
+    "image_urls": null,
+    "answer": "C"
+  },
+  {
+    "number": "117C8",
+    "question": "健康の社会的決定要因はどれか。1つ選べ。",
+    "choices": [
+      "遺　伝",
+      "教　育",
+      "年　齢",
+      "生活習慣",
+      "保健行動"
+    ],
+    "image_urls": null,
+    "answer": "B"
+  },
+  {
+    "number": "117C9",
+    "question": "母子健康手帳の省令様式において、妊娠中と産後の歯科の記載事項はどれか。2つ選べ。",
+    "choices": [
+      "口　臭",
+      "歯肉の炎症",
+      "顎関節の異常",
+      "歯列咬合の異常",
+      "要治療のむし歯"
+    ],
+    "image_urls": null,
+    "answer": "BE"
+  },
+  {
+    "number": "117C10",
+    "question": "RANKを発言するのはどれか。1つ選べ。",
+    "choices": [
+      "骨芽細胞",
+      "破骨細胞",
+      "線維芽細胞",
+      "象牙芽細胞",
+      "血管内皮細胞"
+    ],
+    "image_urls": null,
+    "answer": "B"
+  },
+  {
+    "number": "117C11",
+    "question": "応力-ひずみ曲線図のHooke〈フック〉の法則が成立する範囲において、応力をひずみで除して求めるのはどれか。1つ選べ。",
+    "choices": [
+      "靭　性",
+      "耐　力",
+      "弾性限",
+      "弹性係数",
+      "レジリエンス"
+    ],
+    "image_urls": null,
+    "answer": "D"
+  },
+  {
+    "number": "117C12",
+    "question": "顎態模型の基準平面はどれか。2つ選べ。",
+    "choices": [
+      "眼窩平面",
+      "顔面平面",
+      "口蓋平面",
+      "咬合平面",
+      "フランクフルト平面"
+    ],
+    "image_urls": null,
+    "answer": "AE"
+  },
+  {
+    "number": "117C13",
+    "question": "イオンチャネルを遮断するのはどれか。1つ選べ。",
+    "choices": [
+      "ミダゾラム",
+      "プレドニゾロン",
+      "プロピトカイン塩酸塩",
+      "ミノサイクリン塩酸塩",
+      "ロキソプロフェンナトリウム水和物"
+    ],
+    "image_urls": null,
+    "answer": "C"
+  },
+  {
+    "number": "117C14",
+    "question": "口腔内写真（別冊No.2）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C14.png?resize=250%2C365&ssl=1] Hellmanの歯齢はどれか。1つ選べ。",
+    "choices": [
+      "ⅢA期",
+      "ⅢB期",
+      "ⅢC期",
+      "ⅣA期",
+      "ⅣC期"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C14.png?resize=250%2C365&ssl=1"
+    ],
+    "answer": "C"
+  },
+  {
+    "number": "117C15",
+    "question": "診療に関する記録と法令で義務付けられている保存期間の組合せで正しいのはどれか。1つ選べ。",
+    "choices": [
+      "照射録 ーーーーーーーーー 5年",
+      "処方箋 ーーーーーーーーー 5年",
+      "診療録 ーーーーーーーーー 3年",
+      "歯科技工指示書 ーーーーー 5年",
+      "歯科衛生士の業務記録 ーー 3年"
+    ],
+    "image_urls": null,
+    "answer": "E"
+  },
+  {
+    "number": "117C16",
+    "question": "成人と比べて小児で高値を示すのはどれか。1つ選べ。",
+    "choices": [
+      "ALP",
+      "赤血球",
+      "尿素窒素",
+      "ヘモグロビン",
+      "ヘマトクリット"
+    ],
+    "image_urls": null,
+    "answer": "A"
+  },
+  {
+    "number": "117C17",
+    "question": "口呼吸を伴う骨格性Ⅱ級にみられるのはどれか。1つ選べ。",
+    "choices": [
+      "上顎前歯の舌側傾斜",
+      "下顎前歯の舌側傾斜",
+      "下顎下縁平面角の過大",
+      "咬合平面傾斜角の過小",
+      "負のオーバージェット"
+    ],
+    "image_urls": null,
+    "answer": "C"
+  },
+  {
+    "number": "117C18",
+    "question": "栓状歯の形成と同じ時期に生じるのはどれか。1つ選べ。",
+    "choices": [
+      "先天歯",
+      "低位歯",
+      "斑状歯",
+      "埋伏歯",
+      "Fournier歯"
+    ],
+    "image_urls": null,
+    "answer": "E"
+  },
+  {
+    "number": "117C19",
+    "question": "成人において放射線の確定的影響〈組織反応〉が生じる最低線量はどれか。1つ選べ。",
+    "choices": [
+      "0.0005Gy",
+      "0.005Gy",
+      "0.05Gy",
+      "0.5Gy",
+      "5Gy"
+    ],
+    "image_urls": null,
+    "answer": "D"
+  },
+  {
+    "number": "117C20",
+    "question": "生後、ミュータンスレンサ球菌が定着しやすい時期はどれか。1つ選べ。",
+    "choices": [
+      "0〜6か月",
+      "8〜16か月",
+      "19〜31か月",
+      "34〜44か月",
+      "48〜54か月"
+    ],
+    "image_urls": null,
+    "answer": "C"
+  },
+  {
+    "number": "117C21",
+    "question": "各種合着・接着用セメントの引張強さとエナメル質との接着強さを図に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C21f.png?resize=280%2C212&ssl=1] エはどれか。1つ選べ。 ただし、ア〜オはａ～ｅのいずれかに該当する。",
+    "choices": [
+      "EBAセメント",
+      "レジンセメント",
+      "リン酸亜鉛セメント",
+      "グラスアイオノマーセメント",
+      "ポリカルボキシレートセメント"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C21f.png?resize=280%2C212&ssl=1"
+    ],
+    "answer": "D"
+  },
+  {
+    "number": "117C22",
+    "question": "22歳の男性。下顎の前突感を主訴として来院した。診断の結果、下顎枝矢状分割術による外科的矯正治療を行うこととした。初診時の顔面写真（別冊No.3A）、口腔内写真（別冊No.3B）及びエックス線画像（別冊No.3C）を別に示す。セファロ分析の結果を図に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C22c.png?resize=167%2C124&ssl=1] [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C22d.png?resize=234%2C176&ssl=1] [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C22b.png?resize=278%2C183&ssl=1] [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C22f.png?resize=304%2C281&ssl=1] 適切な抜歯部位はどれか。1つ選べ。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C22g.png?resize=90%2C204&ssl=1]",
+    "choices": [],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C22c.png?resize=167%2C124&ssl=1",
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C22d.png?resize=234%2C176&ssl=1",
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C22b.png?resize=278%2C183&ssl=1",
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C22f.png?resize=304%2C281&ssl=1",
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C22g.png?resize=90%2C204&ssl=1"
+    ],
+    "answer": "A"
+  },
+  {
+    "number": "117C23",
+    "question": "根管イスムスの確認に有効なのはどれか。2つ選べ。",
+    "choices": [
+      "電気的根管長測定",
+      "マイクロスコープ",
+      "口内法エックス線撮影",
+      "レーザー蛍光強度測定",
+      "歯科用コーンビームCT"
+    ],
+    "image_urls": null,
+    "answer": "BE"
+  },
+  {
+    "number": "117C24",
+    "question": "82歳の女性。上下顎全部床義歯の製作を希望して来院した。5年前に左側下顎歯肉癌で、下顎区域切除術と腹直筋皮弁を用いた即時再建術および放射線治療が施行されたという。診察の結果、義歯を製作することとした。初診時の口腔内写真（別冊No.4A）とエックス線画像（別冊No.4B）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C24a.png?resize=120%2C180&ssl=1] [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C24b.png?resize=210%2C164&ssl=1] 適切な対応はどれか。3つ選べ。",
+    "choices": [
+      "健側を主体とした咀嚼方法の指導",
+      "右側下顎骨へのインプラントの埋入",
+      "ニュートラルゾーンへの人工歯の排列",
+      "上顎義歯へのオクルーザルランプの付与",
+      "皮弁で覆われた顎欠損部に対する加圧印象"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C24a.png?resize=120%2C180&ssl=1",
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C24b.png?resize=210%2C164&ssl=1"
+    ],
+    "answer": "ACD"
+  },
+  {
+    "number": "117C25",
+    "question": "右側顎下部の腫脹を主訴として来院した13歳男子の初診時の口腔外写真（別冊No.5A）とMRIT2強調像（別冊No.5B）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C25b.png?resize=166%2C176&ssl=1] [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C25c.png?resize=119%2C141&ssl=1] 本疾患の発症に関連するのはどれか。1つ選べ。",
+    "choices": [
+      "顎下腺",
+      "舌下腺",
+      "顔面静脈",
+      "Wharton管",
+      "顎下リンパ節"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C25b.png?resize=166%2C176&ssl=1",
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C25c.png?resize=119%2C141&ssl=1"
+    ],
+    "answer": "B"
+  },
+  {
+    "number": "117C26",
+    "question": "摂食嚥下障害患者に対して行う間接訓練の様子（別冊No.6）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C26b.png?resize=254%2C170&ssl=1] この訓練によって改善を目指すのはどれか。1つ選べ。",
+    "choices": [
+      "咬合力",
+      "口唇閉鎖",
+      "声門閉鎖",
+      "舌可動域",
+      "唾液分泌"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C26b.png?resize=254%2C170&ssl=1"
+    ],
+    "answer": "C"
+  },
+  {
+    "number": "117C27",
+    "question": "虐待を受けた疑いがある児童が来院した。 児童虐待の防止等に関する法律に規定されている通告先はどれか。2つ選べ。",
+    "choices": [
+      "警察署",
+      "保健所",
+      "児童相談所",
+      "福祉事務所",
+      "学校保健委員会"
+    ],
+    "image_urls": null,
+    "answer": "CD"
+  },
+  {
+    "number": "117C28",
+    "question": "38歳の女性。下顎左側第一小臼歯の咬合痛と違和感を主訴として来院した。10か月前から自覚していたがそのままにしていたという。歯周基本治療後の再評価の結果、FGF-2製剤を応用した歯周組織再生療法を行うこととした。初診時の口腔内写真（別冊No.7A）とエックス線画像（別冊No.7B）を別に示す。初診時の歯周組織検査結果の一部を表に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C28a.png?resize=240%2C383&ssl=1] [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C28f.png?resize=253%2C155&ssl=1] 歯周組織再生療法に先立って行う処置はどれか。1つ選べ。",
+    "choices": [
+      "暫間固定",
+      "小帯切除術",
+      "感染根管治療",
+      "オドントプラスティ",
+      "局所薬物配送システム〈LDDS〉"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C28a.png?resize=240%2C383&ssl=1",
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C28f.png?resize=253%2C155&ssl=1"
+    ],
+    "answer": "C"
+  },
+  {
+    "number": "117C29",
+    "question": "（解答なし） 腫瘍類似疾患はどれか。1つ選べ。",
+    "choices": [
+      "神経鞘腫",
+      "動静脈奇形",
+      "粘液線維腫",
+      "セメント芽細胞腫",
+      "Langerhans細胞組織球症"
+    ],
+    "image_urls": null,
+    "answer": "解答なし"
+  },
+  {
+    "number": "117C30",
+    "question": "68歳の男性。咀嚼困難を主訴として来院した。使用中の義歯は10年前に製作し、破折による修理を繰り返したという。上顎前歯部ブリッジの再製作も希望している。診察の結果、④③2①┴①②ブリッジと7ー5┴3ー7の可撤性義歯を製作することとした。現在装着している義歯とプロビジョナルレストレーションを撤去した状態の口腔内写真（別冊No.8A）と製作中のブリッジの写真（別冊No.8B）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C30a.png?resize=237%2C374&ssl=1] この後に行う治療・製作過程を示す。 ① → ② → 咬合採得 → ブリッジの研磨 → フレームワーク製作 → 人工歯排列 → ブリッジ・ろう義歯試適 → ③ → ④ → ⑤ ④に入るのはどれか。1つ選べ。 ただし、①～⑤はａ〜ｅのいずれかに該当する。",
+    "choices": [
+      "義歯の装着",
+      "ブリッジの試適",
+      "ブリッジの装着",
+      "義歯の重合・研磨",
+      "義歯の精密印象採得"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C30a.png?resize=237%2C374&ssl=1"
+    ],
+    "answer": "C"
+  },
+  {
+    "number": "117C31",
+    "question": "輸血について正しいのはどれか。1つ選べ。",
+    "choices": [
+      "血小板濃厚液はHb上昇が期待できる。",
+      "新鮮凍結血漿は感染を避けることができる。",
+      "赤血球液の有効期間は採血後1年間である。",
+      "自己血輸血はGVHDを防止することができる。",
+      "赤血球輸血は不規則抗体のスクリーニングを省略できる。"
+    ],
+    "image_urls": null,
+    "answer": "D"
+  },
+  {
+    "number": "117C32",
+    "question": "線維芽細胞が産生するのはどれか。3つ選べ。",
+    "choices": [
+      "メラニン",
+      "エラスチン",
+      "セロトニン",
+      "ヒアルロン酸",
+      "Ⅰ型コラーゲン"
+    ],
+    "image_urls": null,
+    "answer": "BDE"
+  },
+  {
+    "number": "117C33",
+    "question": "高齢者において低血糖を起こしやすい薬物はどれか。1つ選べ。",
+    "choices": [
+      "ビグアナイド薬",
+      "プレドニゾロン",
+      "スルホニル尿素薬",
+      "ニトログリセリン",
+      "ワルファリンカリウム"
+    ],
+    "image_urls": null,
+    "answer": "C"
+  },
+  {
+    "number": "117C34",
+    "question": "赤血球の破壊によって生じるのはどれか。2つ選べ。",
+    "choices": [
+      "メラニン",
+      "ビリルビン",
+      "ヘモジデリン",
+      "リポフスチン",
+      "プロスタグランジン"
+    ],
+    "image_urls": null,
+    "answer": "BC"
+  },
+  {
+    "number": "117C35",
+    "question": "ポリファーマシーの予防に役立つのはどれか。3つ選べ。",
+    "choices": [
+      "お薬手帳",
+      "薬の一包化",
+      "診療情報提供書",
+      "服薬カレンダー",
+      "薬剤師との連携"
+    ],
+    "image_urls": null,
+    "answer": "ACE"
+  },
+  {
+    "number": "117C36",
+    "question": "67歳の男性。ポーセレンラミネートベニアが破折したことを主訴として来院した。初診時の口腔内写真（別冊No.9A）、窩洞形成時の口腔内写真（別冊No.9B）及びコンポジットレジンを用いて補修修復を行った後の口腔内写真（別冊No.9C）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C36a.png?resize=288%2C495&ssl=1] 接着性を向上させるために行うべき手技で適切なのはどれか。3つ選べ。",
+    "choices": [
+      "リン酸エッチング",
+      "サンドブラスト処理",
+      "レジンコーティング",
+      "硫黄系機能性モノマー塗布",
+      "シランカップリング材塗布"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C36a.png?resize=288%2C495&ssl=1"
+    ],
+    "answer": "ABE"
+  },
+  {
+    "number": "117C37",
+    "question": "82歳の男性。上顎全部床義歯の脱落を主訴として来院した。診察の結果、義歯を製作することとした。個人トレー製作時に研究用模型で前歯部顎堤をパラフィンワックスでリリーフし、ある操作（丸印で示す部位）を行った。初診時の口腔内写真（別冊No.10A）、触診時の口腔内写真（別冊No.10B）、個人トレーの写真（別冊No.10C）及び精密印象の写真（別冊No.10D）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C37a.png?resize=137%2C218&ssl=1] [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C37b.png?resize=136%2C218&ssl=1] この印象法はどれか。1つ選べ。",
+    "choices": [
+      "加圧印象",
+      "咬座印象",
+      "咬合圧印象",
+      "選択的加压印象",
+      "ダイナミック印象"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C37a.png?resize=137%2C218&ssl=1",
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C37b.png?resize=136%2C218&ssl=1"
+    ],
+    "answer": "D"
+  },
+  {
+    "number": "117C38",
+    "question": "7歳の男児。下の前歯が生えてこないことを主訴として来院した。食事で困っていることはないが、いつ生えてくるか知りたいという。初診時の口腔内写真（別冊No.11A）とエックス線画像（別冊No.11B）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C38a.png?resize=304%2C385&ssl=1] 現時点で確認できる永久歯数（本）はどれか。1つ選べ。",
+    "choices": [
+      "6",
+      "13",
+      "17",
+      "19",
+      "23"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C38a.png?resize=304%2C385&ssl=1"
+    ],
+    "answer": "D"
+  },
+  {
+    "number": "117C39",
+    "question": "予防接種法に基づいて0歳児に定期接種されるワクチンはどれか。1つ選べ。",
+    "choices": [
+      "黄　熱",
+      "狂犬病",
+      "B型肝炎",
+      "带状疱疹",
+      "流行性耳下腺炎"
+    ],
+    "image_urls": null,
+    "answer": "C"
+  },
+  {
+    "number": "117C40",
+    "question": "完成した上顎ブリッジの口腔内試適後の写真（別冊No.12A）と口腔内装着後の写真（別冊No.12B）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C40a.png?resize=128%2C205&ssl=1] [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C40b.png?resize=142%2C122&ssl=1] 患者への口腔清掃指導で正しいのはどれか。1つ選べ。",
+    "choices": [
+      "「歯磨剤は使わないでください」",
+      "「歯間ブラシを使用してください」",
+      "「右上を浮かせて清掃してください」",
+      "「右上を取りはずして清掃してください」",
+      "「白い部分に歯ブラシをあてないでください」"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C40a.png?resize=128%2C205&ssl=1",
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C40b.png?resize=142%2C122&ssl=1"
+    ],
+    "answer": "B"
+  },
+  {
+    "number": "117C41",
+    "question": "加齢に伴い根面齲蝕のリスクが高くなる理由はどれか。2つ選べ。",
+    "choices": [
+      "歯肉の退縮",
+      "歯髄腔の狭小化",
+      "唾液腺の脂肪化",
+      "味覚閾値の上昇",
+      "セメント質の肥厚"
+    ],
+    "image_urls": null,
+    "answer": "AC"
+  },
+  {
+    "number": "117C42",
+    "question": "歯周組織再生療法でGTR膜の所要条件はどれか。3つ選べ。",
+    "choices": [
+      "骨形成能",
+      "細胞遮断性",
+      "生体親和性",
+      "幹細胞の増殖促進",
+      "歯肉線維との結合"
+    ],
+    "image_urls": null,
+    "answer": "BCE"
+  },
+  {
+    "number": "117C43",
+    "question": "過度の糖質制限で血中に増加するのはどれか。1つ選べ。",
+    "choices": [
+      "尿　酸",
+      "ケトン体",
+      "アルブミン",
+      "ビリルビン",
+      "コレステロール"
+    ],
+    "image_urls": null,
+    "answer": "B"
+  },
+  {
+    "number": "117C44",
+    "question": "修復前後の口腔内写真（別冊No.13A、B）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C44a.png?resize=238%2C366&ssl=1] この処置で必要な器具はどれか。1つ選べ。",
+    "choices": [
+      "ガムリトラクター",
+      "クラウンフォーム",
+      "リング状リテーナー",
+      "サービカルマトリックス",
+      "Ivoryのシンプルセパレーター"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C44a.png?resize=238%2C366&ssl=1"
+    ],
+    "answer": "C"
+  },
+  {
+    "number": "117C45",
+    "question": "10歳の女児。下顎右側第一小臼歯の位置異常を主訴として来院した。齲蝕治療を始める際に撮影したエックス線画像で指摘されたという。自覚症状はない。診察の結果、D┐を抜歯してバンドループを装着することとした。初診時の口腔内写真（別冊No.14A）とエックス線画像（別冊No.14B）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C45a.png?resize=208%2C273&ssl=1] 装置装着までの治療過程を示す。 浸潤麻酔 → ラバーダム装着 → ① → ② → ③ → ④ → ⑤ → 技工操作 → 装置装着（後日） ③に入るのはどれか。1つ選べ。 ただし、①～⑤はａ〜ｅのいずれかに該当する。",
+    "choices": [
+      "抜　歯",
+      "印象採得",
+      "バンド試適",
+      "ラバーダム撤去",
+      "コンポジットレジン修復"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C45a.png?resize=208%2C273&ssl=1"
+    ],
+    "answer": "C"
+  },
+  {
+    "number": "117C46",
+    "question": "85歳の男性。口蓋粘膜の疼痛を主訴として来院した。8年前から上顎全部床義歯を使用しているという。来院時の口腔内写真（別冊No.15A）、義歯の写真（別冊No.15B）及び適合試験後の義歯の写真（別冊No.15C）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C46a.png?resize=261%2C607&ssl=1] まず行うべき対応はどれか。2つ選べ。",
+    "choices": [
+      "培養検査",
+      "抗菌薬の投与",
+      "義歯の清掃指導",
+      "ティッシュコンディショニング",
+      "副腎皮質ステロイド軟膏の塗布"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C46a.png?resize=261%2C607&ssl=1"
+    ],
+    "answer": "AC"
+  },
+  {
+    "number": "117C47",
+    "question": "従来型グラスアイオノマーセメント修復の処置内容と目的の組合せで正しいのはどれか。2つ選べ。",
+    "choices": [
+      "リン酸処理 ーーーーーーーーーー 歯質接着性向上",
+      "バーニッシュの塗布 ーーーーーー 感水防止",
+      "ラウンドベベルの付与 ーーーーー 辺縁厚み確保",
+      "リバースカーブの付与 ーーーーー 予防拡大",
+      "カプセルタイプの使用 ーーーーー 気泡混入低減"
+    ],
+    "image_urls": null,
+    "answer": "BE"
+  },
+  {
+    "number": "117C48",
+    "question": "側貌の模式図（別冊No.16）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C48a.png?resize=206%2C220&ssl=1] 側貌型の判定に用いる点はどれか。3つ選べ。",
+    "choices": [
+      "ア",
+      "イ",
+      "ウ",
+      "エ",
+      "オ"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C48a.png?resize=206%2C220&ssl=1"
+    ],
+    "answer": "ADE"
+  },
+  {
+    "number": "117C49",
+    "question": "下顎右側中切歯の自発痛と歯肉の腫脹で来院した患者の口腔内写真（別冊No.17A）とエックス線画像（別冊No.17B）を別に示す。プロービング深さは遠心唇側で5mmであった。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C49a.png?resize=214%2C365&ssl=1] 適切な対応はどれか。1つ選べ。",
+    "choices": [
+      "PMTC",
+      "歯肉切除",
+      "新付着術",
+      "歯周ポケット掻爬術",
+      "局所薬物配送システム〈LDDS〉"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C49a.png?resize=214%2C365&ssl=1"
+    ],
+    "answer": "E"
+  },
+  {
+    "number": "117C50",
+    "question": "40歳の男性。上顎右側第一小臼歯のクラウン脱離による咀嚼困難を主訴として来院した。診察の結果、咬合様式はグループファンクションであり、ジルコニアクラウンを製作することとした。完成したクラウンの口腔内試適で隣接面接触、辺縁適合性は共に良好であった。咬合検査後の口腔内写真（別冊No.18）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C50a.png?resize=249%2C209&ssl=1] 次に行うのはどれか。1つ選べ。",
+    "choices": [
+      "クラウンの装着",
+      "クラウンの再製作",
+      "頰側咬頭の咬合調整",
+      "口蓋側咬頭の咬合調整",
+      "辺縁隆線部の咬合調整"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C50a.png?resize=249%2C209&ssl=1"
+    ],
+    "answer": "C"
+  },
+  {
+    "number": "117C51",
+    "question": "上顎右側中切歯の色調改善のために、クラウンによる補綴処置を行うこととした。初診時の口腔内写真（別冊No.19A）、作業用模型上のクラウンの写真（別冊No.19B）及びクラウン装着後の口腔内写真（別冊No.19C）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C51.png?resize=186%2C337&ssl=1] 矢印の部分が最も関係するのはどれか。1つ選べ。",
+    "choices": [
+      "機能的要件",
+      "審美的要件",
+      "力学的要件",
+      "材料学的要件",
+      "生物学的要件"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C51.png?resize=186%2C337&ssl=1"
+    ],
+    "answer": "E"
+  },
+  {
+    "number": "117C52",
+    "question": "頬筋を支配する運動神経が通過するのはどれか。1つ選べ。",
+    "choices": [
+      "口蓋骨",
+      "後頭骨",
+      "上顎骨",
+      "側頭骨",
+      "蝶形骨"
+    ],
+    "image_urls": null,
+    "answer": "D"
+  },
+  {
+    "number": "117C53",
+    "question": "4歳の男児。前歯の変色を主訴として来院した。1年前に室内で転倒して前歯部を打撲し、上顎右側乳中切歯は完全脱落したが、そのままにしていたという。2歳ころから親指を口に入れる癖があるという。└Aの動揺度は1度である。初診時の口腔内写真（別冊No.20A）とエックス線画像（別冊No.20B）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C53a.png?resize=120%2C241&ssl=1] [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C53b.png?resize=160%2C200&ssl=1] 保護者への説明で適切なのはどれか。3つ選べ。",
+    "choices": [
+      "「左上の前歯は根の治療が必要です」",
+      "「前歯に固定式の装置を入れましょう」",
+      "「指しゃぶりはやめた方が良いでしょう」",
+      "「すぐ永久歯が生えてくるので心配いりません」",
+      "「永久歯の前歯には変色がみられるかもしれません」"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C53a.png?resize=120%2C241&ssl=1",
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C53b.png?resize=160%2C200&ssl=1"
+    ],
+    "answer": "ACE"
+  },
+  {
+    "number": "117C54",
+    "question": "適合試験前後の義歯床粘膜面の写真（別冊No.21）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C54a.png?resize=236%2C371&ssl=1] 調整が必要な部位はどれか。3つ選べ。",
+    "choices": [
+      "ア",
+      "イ",
+      "ウ",
+      "エ",
+      "オ"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C54a.png?resize=236%2C371&ssl=1"
+    ],
+    "answer": "ABE"
+  },
+  {
+    "number": "117C55",
+    "question": "76歳の女性。上顎前歯部のブラッシング時の出血を主訴として家族と来院した。半年前から気付いていたが痛みがないためそのままにしていたという。2年前にAlzheimer型認知症と診断され近医を受診しているという。2週前に受診した際の検査結果は、認知症高齢者の日常生活自立度でⅡｂであった。歯周組織検査の結果、慢性歯周炎と診断し、歯周基本治療を行った。歯周基本治療後の再評価時の口腔内写真（別冊No.22A）とエックス線画像（別冊No.22B）を別に示す。歯周基本治療後の再評価結果の一部を表に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C55a.png?resize=240%2C287&ssl=1] [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C55b.png?resize=289%2C172&ssl=1] [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C55f.png?resize=327%2C128&ssl=1] 適切な対応はどれか。3つ選べ。",
+    "choices": [
+      "PTC",
+      "フラップ手術",
+      "FGF-2製剤の応用",
+      "同居家族への口腔清掃指導",
+      "スケーリング・ルートプレーニング"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C55a.png?resize=240%2C287&ssl=1",
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C55b.png?resize=289%2C172&ssl=1",
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C55f.png?resize=327%2C128&ssl=1"
+    ],
+    "answer": "ADE"
+  },
+  {
+    "number": "117C56",
+    "question": "後期高齢者医療制度を規定しているのはどれか。1つ選べ。",
+    "choices": [
+      "医療法",
+      "介護保険法",
+      "老人福祉法",
+      "国民健康保険法",
+      "高齢者の医療の確保に関する法律"
+    ],
+    "image_urls": null,
+    "answer": "E"
+  },
+  {
+    "number": "117C57",
+    "question": "上顎部分切除術が適応となるのはどれか。1つ選べ。",
+    "choices": [
+      "口蓋隆起",
+      "多形腺腫",
+      "エプーリス",
+      "悪性リンパ腫",
+      "歯原性粘液腫"
+    ],
+    "image_urls": null,
+    "answer": "E"
+  },
+  {
+    "number": "117C58",
+    "question": "60歳の女性。上顎左側第二小臼歯と第一大臼歯間の冷水痛を主訴として来院した。1か月前から冷水に対して一過性の痛みを認めるようになったという。└56には自発痛と打診痛はない。初診時の口腔内写真（別冊No.23A）とエックス線画像（別冊No.23B）を別に示す。初診時の歯周組織検査結果の一部を表に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C58a.png?resize=214%2C411&ssl=1] [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C58f.png?resize=236%2C195&ssl=1] 処置の組合せで正しいのはどれか。1つ選べ。 └5 └6",
+    "choices": [
+      "コンポジットレジン修復 ーーーーーー スケーリング",
+      "コンポジットレジン修復 ーーーーーー コンポジットレジン修復",
+      "コンポジットレジン修復 ーーーーーー グラスアイオノマーセメント修復",
+      "グラスアイオノマーセメント修復 ーー スケーリング",
+      "グラスアイオノマーセメント修復 ーー コンポジットレジン修復"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C58a.png?resize=214%2C411&ssl=1",
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C58f.png?resize=236%2C195&ssl=1"
+    ],
+    "answer": "A"
+  },
+  {
+    "number": "117C59",
+    "question": "MRSA陽性患者に対する周術期口腔機能管理の際に必要なのはどれか。2つ選べ。",
+    "choices": [
+      "標準予防策",
+      "空気感染予防策",
+      "経口感染予防策",
+      "垂直感染予防策",
+      "接触感染予防策"
+    ],
+    "image_urls": null,
+    "answer": "AE"
+  },
+  {
+    "number": "117C60",
+    "question": "アナフィラキシーショックでみられるのはどれか。3つ選べ。",
+    "choices": [
+      "意識障害",
+      "気道狭窄",
+      "出血傾向",
+      "水疱形成",
+      "皮膚紅潮"
+    ],
+    "image_urls": null,
+    "answer": "ABE"
+  },
+  {
+    "number": "117C61",
+    "question": "部分床義歯のリラインの印象採得に適しているのはどれか。2つ選べ。",
+    "choices": [
+      "寒天印象材",
+      "石膏印象材",
+      "アクリル系印象材",
+      "シリコーンゴム印象材",
+      "ユーティリティワックス"
+    ],
+    "image_urls": null,
+    "answer": "CD"
+  },
+  {
+    "number": "117C62",
+    "question": "20歳の男性。上顎左側大臼歯歯槽部の腫脹を主訴として来院した。3か月前から徐々に増大してきたという。同部に軽度の圧痛を認める。初診時の口腔内写真（別No.24A）、エックス線画像（別冊No.24B）、CT（別冊No.24C）及び生検時のH-E染色病理組織像（別冊No.24D）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C62a.png?resize=144%2C195&ssl=1] [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C62b.png?resize=157%2C209&ssl=1] [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C62c.png?resize=174%2C147&ssl=1] 適切な治療法はどれか。1つ選べ。",
+    "choices": [
+      "摘出術",
+      "切開排膿",
+      "放射線治療",
+      "上顎洞根治術",
+      "上顎部分切除術"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C62a.png?resize=144%2C195&ssl=1",
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C62b.png?resize=157%2C209&ssl=1",
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C62c.png?resize=174%2C147&ssl=1"
+    ],
+    "answer": "A"
+  },
+  {
+    "number": "117C63",
+    "question": "",
+    "choices": [
+      "NAとRNAの両方を有する微生物による感染症はどれか。2つ選べ。",
+      "梅　毒",
+      "麻　疹",
+      "B型肝炎",
+      "手足口病",
+      "ツツガムシ病"
+    ],
+    "image_urls": null,
+    "answer": "AE"
+  },
+  {
+    "number": "117C64",
+    "question": "甲状腺機能低下症の症状はどれか。3つ選べ。",
+    "choices": [
+      "巨　舌",
+      "頻　脈",
+      "便　秘",
+      "低血圧",
+      "体重減少"
+    ],
+    "image_urls": null,
+    "answer": "ACD"
+  },
+  {
+    "number": "117C65",
+    "question": "67歳の男性。下顎右側第一大臼歯の歯肉腫脹を主訴として来院した。3日前に激しい痛みを認めたが、昨日から軽減してきたという。軽度の打診痛があるが自発痛はない。初診時の口腔内写真（別冊No.25A）とエックス線画像（別冊No.25B）を別に示す。初診時の歯周組織検査結果の一部を表に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C65a.png?resize=241%2C458&ssl=1] [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C65f.png?resize=247%2C153&ssl=1] 6┐に行うのはどれか。2つ選べ。",
+    "choices": [
+      "歯根分割",
+      "歯肉切除",
+      "感染根管治療",
+      "歯根尖切除法",
+      "ヘミセクション"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C65a.png?resize=241%2C458&ssl=1",
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C65f.png?resize=247%2C153&ssl=1"
+    ],
+    "answer": "CE"
+  },
+  {
+    "number": "117C66",
+    "question": "13歳の男子。咬み合わせの異常を主訴として来院した。初診時の顔面写真（別冊No.26A）、口腔内写真（別冊No.26B）及びエックス線画像（別冊No.26C）を別に示す。セファロ分析の結果を図に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C66c.png?resize=164%2C121&ssl=1] [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C66d.png?resize=174%2C131&ssl=1] [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C66b.png?resize=260%2C180&ssl=1] [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C66f.png?resize=289%2C282&ssl=1] 正しい所見はどれか。2つ選べ。",
+    "choices": [
+      "骨格性Ⅱ級",
+      "上顎前歯の唇側傾斜",
+      "542」の先天欠如",
+      "└234の先天欠如",
+      "4┐の先天欠如"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C66c.png?resize=164%2C121&ssl=1",
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C66d.png?resize=174%2C131&ssl=1",
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C66b.png?resize=260%2C180&ssl=1",
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C66f.png?resize=289%2C282&ssl=1"
+    ],
+    "answer": "CD"
+  },
+  {
+    "number": "117C67",
+    "question": "54歳の女性。上顎右側側切歯のブラッシング時の痛みと審美不良を主訴として来院した。2年前から自覚していたがそのままにしていたという。歯周基本治療後の再評価の結果、プロービング深さはすべて3mm以下であったが、症状が改善されなかったため、歯周外科治療を行うこととした。初診時の口腔内写真（別冊No.27A）と術中の口腔内写真（別冊No.27B）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C67a.png?resize=217%2C383&ssl=1] この術式はどれか。1つ選べ。",
+    "choices": [
+      "小带切除術",
+      "結合組織移植術",
+      "口腔前庭拡張術",
+      "歯肉剝離掻爬術",
+      "遊離歯肉移植術"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C67a.png?resize=217%2C383&ssl=1"
+    ],
+    "answer": "B"
+  },
+  {
+    "number": "117C68",
+    "question": "顎口腔領域の筋電図検査で診断できるのはどれか。1つ選べ。",
+    "choices": [
+      "サルコペニア",
+      "ブラキシズム",
+      "口腔機能低下症",
+      "睡眠時無呼吸症",
+      "慢性閉塞性肺疾患"
+    ],
+    "image_urls": null,
+    "answer": "B"
+  },
+  {
+    "number": "117C69",
+    "question": "矯正装置の写真（別冊No.28）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C69a.png?resize=230%2C322&ssl=1] 治療後に増加するのはどれか。2つ選べ。",
+    "choices": [
+      "FMIA",
+      "IMPA",
+      "SNB角",
+      "歯列弓長径",
+      "歯槽基底弓幅径"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C69a.png?resize=230%2C322&ssl=1"
+    ],
+    "answer": "BD"
+  },
+  {
+    "number": "117C70",
+    "question": "16歳の女子。あごの歪みを主訴として来院した。幼少時から自覚し、徐々に増悪しているという。6歳時に小耳症に対して耳介形成術を受けた。交叉咬合を認める。初診時のエックス線画像（別冊No.29A）と3D-C（別冊No.29B）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C70a.png?resize=262%2C359&ssl=1] 考えられるのはどれか。1つ選べ。",
+    "choices": [
+      "Apert症候群",
+      "Crouzon症候群",
+      "基底細胞母斑症候群",
+      "第一第二鰓弓症候群",
+      "McCune-Albright症候群"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C70a.png?resize=262%2C359&ssl=1"
+    ],
+    "answer": "D"
+  },
+  {
+    "number": "117C71",
+    "question": "妊婦の歯科的対応で正しいのはどれか。3つ選べ。",
+    "choices": [
+      "浸潤麻酔の使用は禁忌である。",
+      "定期的な歯科検診が必要である。",
+      "フッ化物配合歯磨剤を推奨する。",
+      "治療はできる限り妊娠中期に行う。",
+      "抗菌薬はニューキノロン系を第一選択とする。"
+    ],
+    "image_urls": null,
+    "answer": "BCD"
+  },
+  {
+    "number": "117C72",
+    "question": "Ramsay Hunt症候群でみられるのはどれか。2つ選べ。",
+    "choices": [
+      "嗄　声",
+      "難　聴",
+      "舌運動障害",
+      "オトガイ部水疱",
+      "顏面表情筋麻痺"
+    ],
+    "image_urls": null,
+    "answer": "BE"
+  },
+  {
+    "number": "117C73",
+    "question": "セファロ分析で上顎骨の重ね合わせに用いる計測点と基準平面の組合せはどれか。1つ選べ。",
+    "choices": [
+      "A点 ーーーーー SN平面",
+      "A点 ーーーーー 口蓋平面",
+      "A点 ーーーーー 顏面平面",
+      "ANS ーーーーー SN平面",
+      "ANS ーーーーー 口蓋平面"
+    ],
+    "image_urls": null,
+    "answer": "E"
+  },
+  {
+    "number": "117C74",
+    "question": "72歳の男性。経口摂取を希望して来院した。2年前に上顎右側歯肉癌で上顎亜全摘と肩甲骨・広背筋皮弁による即時再建が行われ、現在まで胃瘻で栄養管理され、義歯は使用していないという。口腔清掃後に行った反復唾液嚥下テストは1回（2回以下を異常値とする）、改訂水飲みテストでは2点（嚥下あり、むせなし、呼吸切迫あり）であった。初診時の口腔内写真（別冊No.30）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C74b.png?resize=268%2C248&ssl=1] 次に行うべきなのはどれか。2つ選べ。",
+    "choices": [
+      "咳テスト",
+      "発語機能検査",
+      "フードテスト",
+      "スパイロメトリ",
+      "オーラルディアドコキネシス"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C74b.png?resize=268%2C248&ssl=1"
+    ],
+    "answer": "AC"
+  },
+  {
+    "number": "117C75",
+    "question": "18歳の女子。上顎前歯の前突感を主訴として来院した。診断の結果、マルチブラケット装置を用いて上顎前突の改善を図ることとした。治療中の口腔内写真（別冊No.31）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C75a.png?resize=360%2C314&ssl=1] 今後の治療目標として適切なのはどれか。2つ選べ。",
+    "choices": [
+      "上顎左側臼歯の遠心移動",
+      "下顎右側臼歯の近心移動",
+      "下顎左側臼歯の近心移動",
+      "上下顎歯列正中線の一致",
+      "AngleⅠ級の大臼歯関係の確立"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C75a.png?resize=360%2C314&ssl=1"
+    ],
+    "answer": "BD"
+  },
+  {
+    "number": "117C76",
+    "question": "心臓ペースメーカが適応されるのはどれか。2つ選べ。",
+    "choices": [
+      "心室細動",
+      "WPW症候群",
+      "洞不全症候群",
+      "心室性期外収縮",
+      "完全房室ブロック"
+    ],
+    "image_urls": null,
+    "answer": "CE"
+  },
+  {
+    "number": "117C77",
+    "question": "1か月前にテーブルに上顎前歯をぶつけた4歳女児の口腔内写真（別冊No.32A）とエックス線画像（別冊No.32B）を別に示す。└Aに打診痛を認める。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C77a.png?resize=195%2C290&ssl=1] 適切な対応はどれか。1つ選べ。",
+    "choices": [
+      "経過観察",
+      "整復固定",
+      "抜　髄",
+      "感染根管治療",
+      "抜　歯"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C77a.png?resize=195%2C290&ssl=1"
+    ],
+    "answer": "D"
+  },
+  {
+    "number": "117C78",
+    "question": "クラウン製作に用いる2種類のスキャナーの写真と、各スキャナーで得られた画像（別冊No.33A、B）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C78a.png?resize=297%2C247&ssl=1]",
+    "choices": [
+      "と比較したBの特徴はどれか。3つ選べ。",
+      "異常絞扼反射を生じにくい。",
+      "技工操作過程を短縮できる。",
+      "歯肉縁下の印象採得に適している。",
+      "消毒による印象の変形が生じない。",
+      "全顎にわたる補綴処置に適している。"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C78a.png?resize=297%2C247&ssl=1"
+    ],
+    "answer": "ABD"
+  },
+  {
+    "number": "117C79",
+    "question": "26歳の男性。左側頰部の腫脹を主訴として来院した。左側耳下腺乳頭の後方部に可動性、弾性軟の腫瘤を触知する。初診時の造影CT（別冊No.34A）、造影3D-CT（別冊No.34B）及びMRI（別冊No.34C）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C79a.png?resize=166%2C320&ssl=1] [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C79b.png?resize=152%2C319&ssl=1] 考えられるのはどれか。1つ選べ。",
+    "choices": [
+      "血管腫",
+      "脂肪腫",
+      "神経鞘腫",
+      "類皮囊胞",
+      "リンパ管腫"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C79a.png?resize=166%2C320&ssl=1",
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C79b.png?resize=152%2C319&ssl=1"
+    ],
+    "answer": "A"
+  },
+  {
+    "number": "117C80",
+    "question": "特定健康診査で必須の項目はどれか。3つ選べ。",
+    "choices": [
+      "腹　囲",
+      "喫煙歴",
+      "現在歯数",
+      "空腹時血糖値",
+      "胸部エックス線撮影"
+    ],
+    "image_urls": null,
+    "answer": "ABD"
+  },
+  {
+    "number": "117C81",
+    "question": "52歳の男性。上顎左側中切歯の充填物辺縁の不適合を主訴として来院した。8年前に処置を受け、症状なく経過していたが、2か月前からデンタルフロスでの清掃時に抵抗感を自覚するようになったという。検査の結果、コンポジットレジン修復を行うこととした。初診時の口腔内写真（別冊No.35A）、エックス線画像（別冊No.35B）及び操作過程の一部の写真（別冊No.35C）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C81a.png?resize=182%2C309&ssl=1] [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C81b.png?resize=300%2C367&ssl=1] ①〜③の操作の目的はどれか。2つ選べ。",
+    "choices": [
+      "研磨性の向上",
+      "C-valueの軽減",
+      "気泡の混入防止",
+      "色調適合性の向上",
+      "重合収縮応力の緩和"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C81a.png?resize=182%2C309&ssl=1",
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C81b.png?resize=300%2C367&ssl=1"
+    ],
+    "answer": "DE"
+  },
+  {
+    "number": "117C82",
+    "question": "間欠的な力を発揮するのはどれか。2つ選べ。",
+    "choices": [
+      "急速大装置",
+      "リンガルアーチ",
+      "上顎前方牽引装置",
+      "ハイプルヘッドギア",
+      "トランスパラタルアーチ"
+    ],
+    "image_urls": null,
+    "answer": "CD"
+  },
+  {
+    "number": "117C83",
+    "question": "下顎右側第一大臼歯のエックス線画像（別冊No.36）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C83a.png?resize=310%2C288&ssl=1] 近心根根尖部の根管形成に適した器具はどれか。2つ選べ。",
+    "choices": [
+      "Kファイル",
+      "超音波チップ",
+      "ピーソーリーマー",
+      "ゲーツグリッデンドリル",
+      "Ni-Tiロータリーファイル"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C83a.png?resize=310%2C288&ssl=1"
+    ],
+    "answer": "AE"
+  },
+  {
+    "number": "117C84",
+    "question": "76歳の男性。話しづらいことを主訴として来院した。3年前に脳出血を発症したが、現在リハビリテーションを受けておらず、主訴以外に気になる点はないという。上咽頭から評価した嚥下内視鏡検査の画像（別冊No.37）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C84a.png?resize=195%2C374&ssl=1] 影響を受けると思われるのはどれか。3つ選べ。",
+    "choices": [
+      "/a/",
+      "/m/",
+      "/n/",
+      "/p/",
+      "/t/"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C84a.png?resize=195%2C374&ssl=1"
+    ],
+    "answer": "ADE"
+  },
+  {
+    "number": "117C85",
+    "question": "82歳の男性。下顎埋伏智歯の抜去に先立ち、静脈路を確保した。手術開始時の輸液製剤の写真（別冊No.38）を別に示す。そのときの輸液残量を矢印で示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C85a.png?resize=220%2C307&ssl=1] 成人輸液セット（1mL=20滴）で1分あたりの滴下数を60滴に調整した場合、手術開始1時間後の輸液残量はどれか。1つ選べ。",
+    "choices": [
+      "20mL",
+      "70mL",
+      "120mL",
+      "170mL",
+      "220mL"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C85a.png?resize=220%2C307&ssl=1"
+    ],
+    "answer": "E"
+  },
+  {
+    "number": "117C86",
+    "question": "上下顎全部床義歯を新製する際の、咬合器上のろう義歯の写真（別冊No.39A）と口腔内試適時の写真（別冊No.39B）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C86a.png?resize=262%2C389&ssl=1]",
+    "choices": [
+      "のようになった原因と考えられる不備のあった操作はどれか。2つ選べ。",
+      "筋压形成",
+      "咬合器装着",
+      "人工歯排列",
+      "顎間関係記録",
+      "咬合床への正中線記入"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C86a.png?resize=262%2C389&ssl=1"
+    ],
+    "answer": "BD"
+  },
+  {
+    "number": "117C87",
+    "question": "27歳の女性。上下顎前突を主訴として来院した。顎変形症と診断され、術前矯正治療が終了し、上下顎の顎矯正手術を行った。手術前後のパノラマエックス線画像（別冊No.40A）と側面頭部エックス線規格写真（別冊No.40B）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C87a.png?resize=212%2C275&ssl=1] [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C87b.png?resize=116%2C276&ssl=1] [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C87f.png?resize=239%2C108&ssl=1] 実施した術式の組合せで正しいのはどれか。1つ選べ。 上顎 下顎",
+    "choices": [
+      "LFⅠ ーーーーーーーーーーー IVRO",
+      "LFⅠ ーーーーーーーーーーー SSRO",
+      "前歯部歯槽骨切り術 ーーーー IVRO",
+      "LFⅠ+前歯部歯槽骨切り術 ー IVRO",
+      "LFⅠ+前歯部歯槽骨切り術 ー SSRO"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C87a.png?resize=212%2C275&ssl=1",
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C87b.png?resize=116%2C276&ssl=1",
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C87f.png?resize=239%2C108&ssl=1"
+    ],
+    "answer": "E"
+  },
+  {
+    "number": "117C88",
+    "question": "上顎中切歯のデジタル画像検査において空間分解能が最も高いのはどれか。1つ選べ。",
+    "choices": [
+      "CT",
+      "MRI",
+      "口内法エックス線撮影",
+      "歯科用コーンビームCT",
+      "パノラマエックス線撮影"
+    ],
+    "image_urls": null,
+    "answer": "C"
+  },
+  {
+    "number": "117C89",
+    "question": "55歳の女性。上顎前歯のブリッジ部に食べ物が挟まることを主訴として来院した。ブリッジは10年前に装着したという。診察の結果、上顎左側側切歯の歯根破折が認められたため、2」を抜歯し、新しくブリッジを製作することとした。完成した③2①┴①2ブリッジの写真（別冊No.41A、B）と装着過程の一連の写真（別冊No.41C）を別に示す。 [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C89a.png?resize=181%2C234&ssl=1] [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C89b.png?resize=234%2C333&ssl=1] [Image: https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C89f.png?resize=328%2C39&ssl=1] 口腔内での調整後、装着までに行った操作を実施順に並べよ。",
+    "choices": [
+      "ア",
+      "イ",
+      "ウ",
+      "エ",
+      "オ"
+    ],
+    "image_urls": [
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C89a.png?resize=181%2C234&ssl=1",
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C89b.png?resize=234%2C333&ssl=1",
+      "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2024/02/117C89f.png?resize=328%2C39&ssl=1"
+    ],
+    "answer": "CEABD"
+  },
+  {
+    "number": "117C90",
+    "question": "あｖ 歯周病患者100名と歯周病のない100名からなる集団に、感度0.60、特異度0.80の歯周病をスクリーニングする検査を行った。 この検査の陽性反応的中度を求めよ。 ただし、小数点以下第3位の数字が得られた場合は四捨五入すること。",
+    "choices": [],
+    "image_urls": null,
+    "answer": "75"
+  }
+]
