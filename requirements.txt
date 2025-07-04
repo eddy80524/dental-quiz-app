@@ -1,0 +1,6 @@
+# scraping 用
+selenium
+beautifulsoup4
+
+# Streamlit アプリ用
+streamlit
