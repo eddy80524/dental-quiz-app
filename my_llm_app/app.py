@@ -404,10 +404,16 @@ else:
         selected_eval_label = st.radio("自己評価", eval_map.keys(), horizontal=True, label_visibility="collapsed")
         if st.form_submit_button("次の問題へ", type="primary"):
             quality = eval_map[selected_eval_label]
+            add_to_short_term_review = False
             for q_num_str in current_q_group:
                 card = st.session_state.cards.get(q_num_str, {})
                 updated_card = sm2_update(card, quality)
                 st.session_state.cards[q_num_str] = updated_card
+                # --- 短期復習キュー追加ロジック ---
+                if quality < 4 and updated_card.get("I", 1) < 0.015:
+                    add_to_short_term_review = True
+            if add_to_short_term_review and current_q_group not in st.session_state.short_term_review_queue:
+                st.session_state.short_term_review_queue.append(current_q_group)
             save_user_data(username, st.session_state.cards)
             st.session_state.current_q_group = get_next_q_group()
             for key in list(st.session_state.keys()):
