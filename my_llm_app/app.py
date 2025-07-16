@@ -129,13 +129,27 @@ def load_user_data(user_id):
     if db and user_id:
         doc_ref = db.collection("user_progress").document(user_id)
         doc = doc_ref.get()
-        return doc.to_dict().get("cards", {}) if doc.exists else {}
-    return {}
+        if doc.exists:
+            data = doc.to_dict()
+            return {
+                "cards": data.get("cards", {}),
+                "main_queue": data.get("main_queue", []),
+                "short_term_review_queue": data.get("short_term_review_queue", []),
+                "current_q_group": data.get("current_q_group", [])
+            }
+    return {"cards": {}, "main_queue": [], "short_term_review_queue": [], "current_q_group": []}
 
-def save_user_data(user_id, cards_data):
+def save_user_data(user_id, cards_data, main_queue=None, short_term_review_queue=None, current_q_group=None):
     if db and user_id:
         doc_ref = db.collection("user_progress").document(user_id)
-        doc_ref.set({"cards": cards_data})
+        payload = {"cards": cards_data}
+        if main_queue is not None:
+            payload["main_queue"] = main_queue
+        if short_term_review_queue is not None:
+            payload["short_term_review_queue"] = short_term_review_queue
+        if current_q_group is not None:
+            payload["current_q_group"] = current_q_group
+        doc_ref.set(payload)
 
 # --- データ読み込み関数 ---
 @st.cache_data
@@ -176,16 +190,30 @@ def chem_latex(text):
 def sm2_update(card, quality, now=None):
     if now is None: now = datetime.datetime.now(datetime.timezone.utc)
     EF, n, I = card.get("EF", 2.5), card.get("n", 0), card.get("I", 0)
-    if quality < 3:
+    # Anki方式に忠実な分岐
+    if quality == 1:  # もう一度（完全失敗）
         n = 0
-        I = 10 / 1440 # 10分
-    else:
-        if n == 0: I = 1
-        elif n == 1: I = 4
+        EF = max(EF - 0.3, 1.3)  # EF大幅減少
+        I = 10 / 1440  # 10分
+    elif quality == 2:  # 難しい（部分的失敗）
+        EF = max(EF - 0.15, 1.3)  # EF少し減少
+        I = max(card.get("I", 1) * 0.5, 10 / 1440)  # 前回間隔の半分、最短10分
+        # nは維持
+    elif quality == 4 or quality == 5:  # 普通・簡単（成功）
+        if n == 0:
+            I = 1  # 1日
+        elif n == 1:
+            I = 4  # 4日
         else:
             EF = max(EF + (0.1 - (5-quality)*(0.08 + (5-quality)*0.02)), 1.3)
-            I = round(I * EF)
+            I = card.get("I", 1) * EF
         n += 1
+        if quality == 5:
+            I *= 1.3  # "簡単"はさらに間隔拡大
+    else:
+        # 万が一その他の値
+        n = 0
+        I = 10 / 1440
     next_review_dt = now + datetime.timedelta(days=I)
     card["history"] = card.get("history", []) + [{"timestamp": now.isoformat(), "quality": quality, "interval": I, "EF": EF}]
     card.update({"EF": EF, "n": n, "I": I, "next_review": next_review_dt.isoformat(), "quality": quality})
@@ -193,10 +221,11 @@ def sm2_update(card, quality, now=None):
 
 # --- セッションステート初期化 ---
 if "user_logged_in" not in st.session_state or st.session_state.user_logged_in != username:
-    st.session_state.cards = load_user_data(username)
-    st.session_state.main_queue = []
-    st.session_state.short_term_review_queue = []
-    st.session_state.current_q_group = []
+    user_data = load_user_data(username)
+    st.session_state.cards = user_data.get("cards", {})
+    st.session_state.main_queue = user_data.get("main_queue", [])
+    st.session_state.short_term_review_queue = user_data.get("short_term_review_queue", [])
+    st.session_state.current_q_group = user_data.get("current_q_group", [])
     st.session_state.result_log = {}
     st.session_state.user_logged_in = username
     st.rerun()
@@ -300,7 +329,7 @@ if not st.session_state.get("current_q_group"):
     st.session_state.current_q_group = get_next_q_group()
 
 current_q_group = st.session_state.get("current_q_group", [])
-if not current_q_group:
+if not current_q_group and not st.session_state.get("main_queue") and not st.session_state.get("short_term_review_queue"):
     st.info("学習を開始するには、サイドバーで問題を選択してください。")
     st.stop()
 
@@ -414,7 +443,14 @@ else:
                     add_to_short_term_review = True
             if add_to_short_term_review and current_q_group not in st.session_state.short_term_review_queue:
                 st.session_state.short_term_review_queue.append(current_q_group)
-            save_user_data(username, st.session_state.cards)
+            # Firestoreに全キューも保存
+            save_user_data(
+                username,
+                st.session_state.cards,
+                st.session_state.main_queue,
+                st.session_state.short_term_review_queue,
+                get_next_q_group() if st.session_state.main_queue or st.session_state.short_term_review_queue else []
+            )
             st.session_state.current_q_group = get_next_q_group()
             for key in list(st.session_state.keys()):
                 if key.startswith("checked_") or key.startswith("user_selection_") or key.startswith("shuffled_") or key.startswith("free_input_"):
