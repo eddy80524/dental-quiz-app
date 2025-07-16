@@ -141,19 +141,34 @@ def load_user_data(user_id):
 
 def save_user_data(user_id, cards_data, main_queue=None, short_term_review_queue=None, current_q_group=None):
     def sanitize_queue(queue):
-        # リストの中身をすべてstr型のリストに変換（dictやsetもstr化）
+        # リストの中身をすべてstr型のリストに変換（dictやsetもstr化、None除外）
         if isinstance(queue, list):
             result = []
             for group in queue:
                 if isinstance(group, (list, set)):
-                    result.append([str(item) for item in group])
+                    result.append([str(item) for item in group if item is not None])
                 elif isinstance(group, dict):
-                    # dictの場合はキーのみをstr化（用途に応じて）
                     result.append([str(k) for k in group.keys()])
-                else:
+                elif group is not None:
                     result.append([str(group)])
             return result
         return []
+    def flatten_group(group):
+        # current_q_groupは一次元のlist(str)のみ
+        if isinstance(group, list):
+            flat = []
+            for item in group:
+                if isinstance(item, (list, set)):
+                    flat.extend([str(x) for x in item if x is not None])
+                elif isinstance(item, dict):
+                    flat.extend([str(k) for k in item.keys()])
+                elif item is not None:
+                    flat.append(str(item))
+            return flat
+        elif group is not None:
+            return [str(group)]
+        else:
+            return []
     if db and user_id:
         doc_ref = db.collection("user_progress").document(user_id)
         payload = {"cards": cards_data}
@@ -162,7 +177,7 @@ def save_user_data(user_id, cards_data, main_queue=None, short_term_review_queue
         if short_term_review_queue is not None:
             payload["short_term_review_queue"] = sanitize_queue(short_term_review_queue)
         if current_q_group is not None:
-            payload["current_q_group"] = [str(item) for item in current_q_group] if isinstance(current_q_group, (list, set)) else [str(current_q_group)]
+            payload["current_q_group"] = flatten_group(current_q_group)
         doc_ref.set(payload)
 
 # --- データ読み込み関数 ---
