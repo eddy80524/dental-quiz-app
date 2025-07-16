@@ -8,7 +8,7 @@ import re
 from collections import Counter
 import firebase_admin
 from firebase_admin import credentials, firestore
-import streamlit_authenticator as stauth
+import requests
 import tempfile
 import collections.abc
 
@@ -25,6 +25,11 @@ def to_dict(obj):
     else:
         return obj
 
+# --- デバッグ用: secretsの内容を画面に表示 ---
+with st.expander("[DEBUG] st.secrets の内容 (本番運用時は削除)"):
+    st.write(dict(st.secrets))
+    st.write("firebase_api_key:", st.secrets.get("firebase_api_key"))
+
 try:
     # secretsから一時ファイルに書き出してパスを渡す（AttrDict→dict変換）
     firebase_creds = to_dict(st.secrets["firebase_credentials"])
@@ -37,43 +42,83 @@ try:
     db = firestore.client()
 except Exception as e:
     st.error(f"Firebaseの認証情報が正しく設定されていません。.streamlit/secrets.tomlファイルを確認してください。\n詳細: {e}")
+    st.error(f"[DEBUG] st.secrets: {dict(st.secrets)}")
     st.stop()
 
-# --- 認証ユーザー設定 ---
-# ユーザー情報をst.secretsから取得するように変更すると、より安全になります。
-# 今回は簡単のため、コード内に直接記述します。
-credentials_config = {
-    "usernames": {
-        "testuser": {
-            "name": "テスト ユーザー",
-            "password": "$2b$12$VgMqLtHxGl2vTRNCnA2l7eVKORJxNvZbJ/d7rReq8Zg6iM2Zywe86" # 生成したハッシュ値
-        }
-    }
-}
+# --- Firebase Authentication REST APIエンドポイント ---
+st.write("[DEBUG] st.secrets keys:", list(st.secrets.keys()))
+FIREBASE_API_KEY = st.secrets["firebase_api_key"]
+FIREBASE_AUTH_SIGNUP_URL = f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={FIREBASE_API_KEY}"
+FIREBASE_AUTH_SIGNIN_URL = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={FIREBASE_API_KEY}"
 
-authenticator = stauth.Authenticate(
-    credentials_config,
-    "dent_ai_cookie_final_v3",
-    "dent_ai_signature_key_final_v3",
-    cookie_expiry_days=30
-)
+def firebase_signup(email, password):
+    payload = {"email": email, "password": password, "returnSecureToken": True}
+    r = requests.post(FIREBASE_AUTH_SIGNUP_URL, json=payload)
+    return r.json()
 
-# --- ログイン処理 ---
-# authenticator.login()は認証状態をst.session_stateに保存します。
-authenticator.login(location='main')
+def firebase_signin(email, password):
+    payload = {"email": email, "password": password, "returnSecureToken": True}
+    r = requests.post(FIREBASE_AUTH_SIGNIN_URL, json=payload)
+    return r.json()
 
-# --- 認証状態のチェック ---
-# ログインしていない場合は、ここで処理を停止します。
-if not st.session_state.get("authentication_status"):
-    if st.session_state.get("authentication_status") is False:
-        st.error("ユーザー名またはパスワードが違います。")
-    elif st.session_state.get("authentication_status") is None:
-        st.warning("ユーザー名とパスワードを入力してください。")
+# --- 認証UI ---
+if not st.session_state.get("user_logged_in"):
+    login_tab, register_tab = st.tabs(["ログイン", "新規登録"])
+
+    with login_tab:
+        st.subheader("メールアドレスでログイン")
+        login_email = st.text_input("メールアドレス", key="login_email")
+        login_password = st.text_input("パスワード", type="password", key="login_password")
+        login_btn = st.button("ログイン", key="login_btn")
+        login_error = ""
+        if login_btn:
+            if not login_email or not login_password:
+                login_error = "メールアドレスとパスワードを入力してください。"
+            else:
+                result = firebase_signin(login_email, login_password)
+                if "idToken" in result:
+                    st.session_state["user_logged_in"] = login_email
+                    st.session_state["id_token"] = result["idToken"]
+                    st.session_state["refresh_token"] = result["refreshToken"]
+                    st.session_state["name"] = login_email.split("@")[0]
+                    st.session_state["username"] = login_email
+                    st.success("ログインに成功しました！")
+                    st.rerun()
+                else:
+                    login_error = result.get("error", {}).get("message", "ログインに失敗しました。")
+        if login_error:
+            st.error(login_error)
+
+    with register_tab:
+        st.subheader("新規ユーザー登録")
+        reg_email = st.text_input("メールアドレス", key="reg_email")
+        reg_password = st.text_input("パスワード（6文字以上）", type="password", key="reg_password")
+        reg_btn = st.button("登録", key="reg_btn")
+        reg_error = ""
+        if reg_btn:
+            if not reg_email or not reg_password:
+                reg_error = "メールアドレスとパスワードを入力してください。"
+            elif len(reg_password) < 6:
+                reg_error = "パスワードは6文字以上で入力してください。"
+            else:
+                result = firebase_signup(reg_email, reg_password)
+                if "idToken" in result:
+                    st.success("ユーザー登録が完了しました。ログインしてください。")
+                else:
+                    reg_error = result.get("error", {}).get("message", "登録に失敗しました。")
+        if reg_error:
+            st.error(reg_error)
     st.stop()
 
-# -------------------------------------------------------------------
-# --- ログイン成功後のアプリケーション本体 ---
-# -------------------------------------------------------------------
+# --- ログアウトボタン ---
+with st.sidebar:
+    if st.button("ログアウト", key="logout_btn"):
+        for k in ["user_logged_in", "id_token", "refresh_token", "name", "username"]:
+            if k in st.session_state:
+                del st.session_state[k]
+        st.rerun()
+
+# --- 以降、認証済みユーザーのみアプリ本体が動作 ---
 
 # --- ログインユーザー情報の取得 ---
 name = st.session_state["name"]
@@ -156,10 +201,13 @@ if "user_logged_in" not in st.session_state or st.session_state.user_logged_in !
     st.session_state.user_logged_in = username
     st.rerun()
 
+# result_logの初期化を保証
+if "result_log" not in st.session_state:
+    st.session_state.result_log = {}
+
 # --- サイドバー ---
 with st.sidebar:
     st.success(f"{name} としてログイン中")
-    authenticator.logout("ログアウト", "sidebar")
     st.header("出題設定")
     mode = st.radio("出題形式を選択", ["回数別", "科目別"])
     questions_to_load = []
@@ -212,6 +260,10 @@ with st.sidebar:
                 if key.startswith("checked_") or key.startswith("user_selection_") or key.startswith("shuffled_"):
                     del st.session_state[key]
             st.rerun()
+
+    # cardsの初期化を保証
+    if "cards" not in st.session_state:
+        st.session_state.cards = {}
 
     st.markdown("---"); st.header("学習記録")
     if st.session_state.cards:
@@ -287,7 +339,6 @@ if not is_checked:
                     st.checkbox(label, key=f"user_selection_{q['number']}_{i}")
             else:
                 st.text_input("回答を入力", key=f"free_input_{q['number']}")
-
         submitted_check = st.form_submit_button("回答をチェック", type="primary")
         skipped = st.form_submit_button("スキップ", type="secondary")
         if submitted_check:
@@ -332,19 +383,21 @@ else:
                 else:
                     label = f"{chr(65 + i)}. {chem_latex(str(choice_item))}"
                 st.checkbox(label, key=f"user_selection_{q['number']}_{i}", disabled=True)
-            # 正誤表示
+            # --- ここからUX改善 ---
             is_correct = st.session_state.result_log.get(q['number'], False)
-            status = "✓ 正解" if is_correct else "× 不正解"
-            st.markdown(f"**{status}**")
-            if not is_correct:
-                st.info(f"正解: {'・'.join(correct_labels)}")
+            if is_correct:
+                st.markdown("<span style='font-size:1.5em; color:green;'>✓ 正解！</span>", unsafe_allow_html=True)
+            else:
+                st.markdown("<span style='font-size:1.5em; color:red;'>× 不正解</span>", unsafe_allow_html=True)
+                st.markdown(f"<span style='color:blue;'>正解: {'・'.join(correct_labels)}</span>", unsafe_allow_html=True)
         else:
             st.text_input("回答を入力", key=f"free_input_{q['number']}", disabled=True)
             is_correct = st.session_state.result_log.get(q['number'], False)
-            status = "✓ 正解" if is_correct else "× 不正解"
-            st.markdown(f"**{status}**")
-            if not is_correct:
-                st.info(f"正解: {q.get('answer', '')}")
+            if is_correct:
+                st.markdown("<span style='font-size:1.5em; color:green;'>✓ 正解！</span>", unsafe_allow_html=True)
+            else:
+                st.markdown("<span style='font-size:1.5em; color:red;'>× 不正解</span>", unsafe_allow_html=True)
+                st.markdown(f"<span style='color:blue;'>正解: {q.get('answer', '')}</span>", unsafe_allow_html=True)
     with st.form(key=f"eval_form_{group_id}"):
         st.markdown("#### この問題グループの自己評価")
         eval_map = {"もう一度": 1, "難しい": 2, "普通": 4, "簡単": 5}
