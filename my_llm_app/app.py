@@ -140,44 +140,34 @@ def load_user_data(user_id):
     return {"cards": {}, "main_queue": [], "short_term_review_queue": [], "current_q_group": []}
 
 def save_user_data(user_id, cards_data, main_queue=None, short_term_review_queue=None, current_q_group=None):
-    def sanitize_queue(queue):
-        # リストの中身をすべてstr型のリストに変換（dictやsetもstr化、None除外）
-        if isinstance(queue, list):
+    def flatten_and_str(obj):
+        # 再帰的にlist/setをフラット化しstr型のみ返す
+        if isinstance(obj, (list, set)):
             result = []
-            for group in queue:
-                if isinstance(group, (list, set)):
-                    result.append([str(item) for item in group if item is not None])
-                elif isinstance(group, dict):
-                    result.append([str(k) for k in group.keys()])
-                elif group is not None:
-                    result.append([str(group)])
+            for item in obj:
+                result.extend(flatten_and_str(item))
             return result
-        return []
-    def flatten_group(group):
-        # current_q_groupは一次元のlist(str)のみ
-        if isinstance(group, list):
-            flat = []
-            for item in group:
-                if isinstance(item, (list, set)):
-                    flat.extend([str(x) for x in item if x is not None])
-                elif isinstance(item, dict):
-                    flat.extend([str(k) for k in item.keys()])
-                elif item is not None:
-                    flat.append(str(item))
-            return flat
-        elif group is not None:
-            return [str(group)]
-        else:
+        elif isinstance(obj, dict):
+            # dictはキーのみstr化
+            return [str(k) for k in obj.keys()]
+        elif obj is None:
             return []
+        else:
+            return [str(obj)]
     if db and user_id:
         doc_ref = db.collection("user_progress").document(user_id)
         payload = {"cards": cards_data}
         if main_queue is not None:
-            payload["main_queue"] = sanitize_queue(main_queue)
+            payload["main_queue"] = [flatten_and_str(group) for group in main_queue]
         if short_term_review_queue is not None:
-            payload["short_term_review_queue"] = sanitize_queue(short_term_review_queue)
+            payload["short_term_review_queue"] = [flatten_and_str(group) for group in short_term_review_queue]
         if current_q_group is not None:
-            payload["current_q_group"] = flatten_group(current_q_group)
+            payload["current_q_group"] = flatten_and_str(current_q_group)
+        # デバッグ: 型チェック（dict/setが混入していないか）
+        for k, v in payload.items():
+            if isinstance(v, (dict, set)):
+                print(f"[ERROR] Firestore保存前: {k}が不正な型: {type(v)}")
+                return
         doc_ref.set(payload)
 
 # --- データ読み込み関数 ---
