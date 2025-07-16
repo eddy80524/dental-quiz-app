@@ -313,8 +313,16 @@ with st.sidebar:
                 last_history = card['history'][-1]
                 last_eval_mark = quality_to_mark.get(last_history.get('quality'))
                 timestamp_str = datetime.datetime.fromisoformat(last_history['timestamp']).strftime('%Y-%m-%d %H:%M')
-                st.markdown(f"- `{q_num}` : **{last_eval_mark}** ({timestamp_str})")
-
+                # 問題ジャンプ機能
+                jump_btn = st.button(f"{q_num}", key=f"jump_{q_num}")
+                st.markdown(f"- `{q_num}` : **{last_eval_mark}** ({timestamp_str})", unsafe_allow_html=True)
+                if jump_btn:
+                    st.session_state.current_q_group = [q_num]
+                    # checked_などの状態をクリア
+                    for key in list(st.session_state.keys()):
+                        if key.startswith("checked_") or key.startswith("user_selection_") or key.startswith("shuffled_") or key.startswith("free_input_"):
+                            del st.session_state[key]
+                    st.rerun()
 
 
 # --- メインロジック ---
