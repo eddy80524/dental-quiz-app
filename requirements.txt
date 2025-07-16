@@ -1,8 +1,8 @@
-# scraping 用
-selenium
-beautifulsoup4
+# requirements.txt
 
-# Streamlit アプリ用
 streamlit
-python-dotenv
-pyngrok
+firebase-admin
+streamlit-authenticator
+pandas
+requests
+PyYAML
