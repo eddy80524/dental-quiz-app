@@ -46,10 +46,10 @@ except Exception as e:
     st.stop()
 
 # --- Firebase Authentication REST APIエンドポイント ---
-st.write("[DEBUG] st.secrets keys:", list(st.secrets.keys()))
-FIREBASE_API_KEY = st.secrets["firebase_api_key"]
-FIREBASE_AUTH_SIGNUP_URL = f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={FIREBASE_API_KEY}"
-FIREBASE_AUTH_SIGNIN_URL = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={FIREBASE_API_KEY}"
+#st.write("[DEBUG] st.secrets keys:", list(st.secrets.keys()))
+#FIREBASE_API_KEY = st.secrets["firebase_api_key"]
+#FIREBASE_AUTH_SIGNUP_URL = f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={FIREBASE_API_KEY}"
+#FIREBASE_AUTH_SIGNIN_URL = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={FIREBASE_API_KEY}"
 
 def firebase_signup(email, password):
     payload = {"email": email, "password": password, "returnSecureToken": True}
