@@ -26,9 +26,9 @@ def to_dict(obj):
         return obj
 
 # --- デバッグ用: secretsの内容を画面に表示 ---
-with st.expander("[DEBUG] st.secrets の内容 (本番運用時は削除)"):
-    st.write(dict(st.secrets))
-    st.write("firebase_api_key:", st.secrets.get("firebase_api_key"))
+#with st.expander("[DEBUG] st.secrets の内容 (本番運用時は削除)"):
+    #st.write(dict(st.secrets))
+    #st.write("firebase_api_key:", st.secrets.get("firebase_api_key"))
 
 try:
     # secretsから一時ファイルに書き出してパスを渡す（AttrDict→dict変換）
