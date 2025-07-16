@@ -141,9 +141,18 @@ def load_user_data(user_id):
 
 def save_user_data(user_id, cards_data, main_queue=None, short_term_review_queue=None, current_q_group=None):
     def sanitize_queue(queue):
-        # リストの中身をすべてstr型のリストに変換
+        # リストの中身をすべてstr型のリストに変換（dictやsetもstr化）
         if isinstance(queue, list):
-            return [list(map(str, group)) if isinstance(group, (list, set)) else [str(group)] for group in queue]
+            result = []
+            for group in queue:
+                if isinstance(group, (list, set)):
+                    result.append([str(item) for item in group])
+                elif isinstance(group, dict):
+                    # dictの場合はキーのみをstr化（用途に応じて）
+                    result.append([str(k) for k in group.keys()])
+                else:
+                    result.append([str(group)])
+            return result
         return []
     if db and user_id:
         doc_ref = db.collection("user_progress").document(user_id)
@@ -153,7 +162,7 @@ def save_user_data(user_id, cards_data, main_queue=None, short_term_review_queue
         if short_term_review_queue is not None:
             payload["short_term_review_queue"] = sanitize_queue(short_term_review_queue)
         if current_q_group is not None:
-            payload["current_q_group"] = list(map(str, current_q_group)) if isinstance(current_q_group, (list, set)) else [str(current_q_group)]
+            payload["current_q_group"] = [str(item) for item in current_q_group] if isinstance(current_q_group, (list, set)) else [str(current_q_group)]
         doc_ref.set(payload)
 
 # --- データ読み込み関数 ---
