@@ -4,3 +4,5 @@ beautifulsoup4
 
 # Streamlit アプリ用
 streamlit
+python-dotenv
+pyngrok
