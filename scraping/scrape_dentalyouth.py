@@ -4,6 +4,7 @@ import re
 import time
 import os
 import json
+import sys
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -11,11 +12,25 @@ from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from scraping.kyousei_urls import kyousei_urls
+from scraping.shouni_urls import shouni_urls
+from scraping.targets import kuraburi_urls
+
 # 「回数は2～3桁の数字」「領域はA～D」「あとは連番」をキャッチする正規表現
 HEADER_PAT = re.compile(r"^(\d{2,3}[A-D]\d+)\s*(.*)", re.DOTALL)
 
 # 選択肢行をキャッチするパターン（ａ～ｅ／A～E + 任意の区切り記号）
 CHOICE_PAT = re.compile(r"^[ａ-ｅa-eＡ-ＥA-E][\s　\.\)．、,]*(.+)")
+
+def to_fullsize_url(url):
+    # サムネイル除去
+    url = re.sub(r'(-\d+x\d+)(\.\w+)$', r'\2', url)
+    # jpg/jpeg/webp→pngに変換（高画質化目的）
+    url = re.sub(r'\.(jpg|jpeg|webp)$', '.png', url, flags=re.IGNORECASE)
+    # ?resize=...や?ssl=1などのクエリを除去し、必ず.pngで終わるように
+    url = re.sub(r'\.png\?.*$', '.png', url, flags=re.IGNORECASE)
+    return url
 
 def scrape_questions_from(url: str) -> list[dict]:
     """
@@ -42,7 +57,9 @@ def scrape_questions_from(url: str) -> list[dict]:
     driver = webdriver.Chrome(options=options)
     try:
         driver.get(url)
-        time.sleep(5)
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "div[id^='text-button']"))
+        )
         buttons = driver.find_elements(By.CSS_SELECTOR, "div[id^='text-button']")
         answers = []
         for btn in buttons:
@@ -125,9 +142,9 @@ def scrape_questions_from(url: str) -> list[dict]:
                 for line in elem.get_text(separator="\n", strip=True).splitlines():
                     process_line(line)
 
-            # 画像とリストの処理は元のコードのまま
             elif elem.name == "img":
                 src = urljoin(url, elem["src"])
+                src = to_fullsize_url(src)  # ★必ず元画像URLに変換
                 img_urls.append(src)
                 question_parts.append(f"[Image: {src}]")
 
@@ -135,6 +152,7 @@ def scrape_questions_from(url: str) -> list[dict]:
                 img = elem.find("img")
                 if img and img.get("src"):
                     src = urljoin(url, img["src"])
+                    src = to_fullsize_url(src)  # ★必ず元画像URLに変換
                     img_urls.append(src)
                     question_parts.append(f"[Image: {src}]")
 
@@ -146,13 +164,22 @@ def scrape_questions_from(url: str) -> list[dict]:
         # ★修正点: 不要になったフォールバックロジックを削除
 
         # 問題文を整形 (元の関数をそのまま使用)
-        def clean_question(text: str) -> str:
+        def clean_question(text: str, image_urls=None) -> str:
             text = re.sub(r"[\u3000\n]+", " ", text)
             text = re.sub(r"\bあ\b", "", text) # 「あ」の削除機能を維持
+            # 画像URLがテキストに混入している場合は除去
+            if image_urls:
+                for url in image_urls:
+                    # サムネイルやクエリ付きも除去
+                    url_pattern = re.escape(url)
+                    url_pattern = url_pattern.replace(r'\\?', r'\\?')
+                    text = re.sub(url_pattern + r'(\?[^\s\]]*)?', '', text)
+                # [Image: ...] のような表記も除去
+                text = re.sub(r'\[Image: [^\]]+\]', '', text)
             return re.sub(r"\s+", " ", text).strip()
 
         raw_q = " ".join(question_parts)
-        question_clean = clean_question(raw_q)
+        question_clean = clean_question(raw_q, img_urls)
 
         questions.append({
             "number":     number,
@@ -179,13 +206,66 @@ def save_questions_to_json(questions, filename):
         json.dump(questions, f, ensure_ascii=False, indent=2)
     print(f"保存しました: {file_path}")
 
+def scrape_and_save_shouni():
+    MAX_RETRY = 3
+    all_questions = []
+    for url in shouni_urls:
+        print(f"スクレイピング中: {url}")
+        for attempt in range(1, MAX_RETRY + 1):
+            try:
+                questions = scrape_questions_from(url)
+                if questions:
+                    all_questions.extend(questions)
+                break
+            except Exception as e:
+                print(f"  エラー発生 (試行{attempt}/{MAX_RETRY}): {e}")
+                if attempt == MAX_RETRY:
+                    print(f"  スキップします: {url}")
+                else:
+                    time.sleep(3)
+    save_questions_to_json(all_questions, "dental_shouni.json")
+
+def scrape_and_save_kuraburi():
+    MAX_RETRY = 3
+    all_questions = []
+    for url in kuraburi_urls:
+        print(f"スクレイピング中: {url}")
+        for attempt in range(1, MAX_RETRY + 1):
+            try:
+                questions = scrape_questions_from(url)
+                if questions:
+                    all_questions.extend(questions)
+                break
+            except Exception as e:
+                print(f"  エラー発生 (試行{attempt}/{MAX_RETRY}): {e}")
+                if attempt == MAX_RETRY:
+                    print(f"  スキップします: {url}")
+                else:
+                    time.sleep(3)
+    save_questions_to_json(all_questions, "../data/科目別/dental_kuraburi.json")
+
 # 例：scrape_questions_fromの利用後に保存
 if __name__ == "__main__":
-    url = "https://..."  # 取得したいURL
-    questions = scrape_questions_from(url)
-    # ファイル名例: dental_118A.json など
-    if questions and "number" in questions[0]:
-        filename = f"dental_{questions[0]['number'][:5]}.json"
-    else:
-        filename = "dental_unknown.json"
-    save_questions_to_json(questions, filename)
+    from scraping.shouni_urls import shouni_urls
+    MAX_RETRY = 3
+    all_questions = []
+    for url in shouni_urls:
+        print(f"スクレイピング中: {url}")
+        for attempt in range(1, MAX_RETRY + 1):
+            try:
+                questions = scrape_questions_from(url)
+                if questions:
+                    all_questions.extend(questions)
+                break  # 成功したらリトライループを抜ける
+            except Exception as e:
+                print(f"  エラー発生 (試行{attempt}/{MAX_RETRY}): {e}")
+                if attempt == MAX_RETRY:
+                    print(f"  スキップします: {url}")
+                else:
+                    time.sleep(3)  # 少し待ってリトライ
+    # すべての小児歯科学問題を1ファイルにまとめて保存
+    save_questions_to_json(all_questions, "dental_shouni.json")
+    
+    # クラウンブリッジ学もスクレイピング
+    from scraping.targets import kuraburi_urls
+    scrape_and_save_kuraburi()

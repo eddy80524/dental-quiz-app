@@ -1,0 +1,25 @@
+version: "3.8"
+services:
+  llm:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+    environment:
+      - OLLAMA_MODELS=/root/.ollama/models
+
+  app:
+    build: .
+    command: streamlit run my_llm_app/app.py --server.port 8501 --server.address 0.0.0.0
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./:/app
+      - ./data:/app/data
+      - ./Models:/Models
+    depends_on:
+      - llm
+
+volumes:
+  ollama:
