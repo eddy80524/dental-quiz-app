@@ -42,7 +42,7 @@ try:
     db = firestore.client()
 except Exception as e:
     st.error(f"Firebaseの認証情報が正しく設定されていません。.streamlit/secrets.tomlファイルを確認してください。\n詳細: {e}")
-    st.error(f"[DEBUG] st.secrets: {dict(st.secrets)}")
+    # st.secretsが存在しない場合はデバッグ出力を省略
     st.stop()
 
 # --- Firebase Authentication REST APIエンドポイント ---
@@ -158,14 +158,15 @@ def save_user_data(user_id, cards_data, main_queue=None, short_term_review_queue
         doc_ref = db.collection("user_progress").document(user_id)
         payload = {"cards": cards_data}
         if main_queue is not None:
-            payload["main_queue"] = [flatten_and_str(group) for group in main_queue]
+            # 各グループをカンマ区切り文字列に変換
+            payload["main_queue"] = [','.join(flatten_and_str(group)) for group in main_queue]
         if short_term_review_queue is not None:
-            payload["short_term_review_queue"] = [flatten_and_str(group) for group in short_term_review_queue]
+            payload["short_term_review_queue"] = [','.join(flatten_and_str(group)) for group in short_term_review_queue]
         if current_q_group is not None:
-            payload["current_q_group"] = flatten_and_str(current_q_group)
+            payload["current_q_group"] = ','.join(flatten_and_str(current_q_group))
         # デバッグ: 型チェック（dict/setが混入していないか）
         for k, v in payload.items():
-            if isinstance(v, (dict, set)):
+            if k != "cards" and isinstance(v, (dict, set)):
                 print(f"[ERROR] Firestore保存前: {k}が不正な型: {type(v)}")
                 return
         doc_ref.set(payload)
@@ -256,58 +257,85 @@ if "result_log" not in st.session_state:
 # --- サイドバー ---
 with st.sidebar:
     st.success(f"{name} としてログイン中")
-    st.header("出題設定")
-    mode = st.radio("出題形式を選択", ["回数別", "科目別"])
-    questions_to_load = []
-    if mode == "回数別":
-        selected_exam_num = st.selectbox("回数", ALL_EXAM_NUMBERS)
-        if selected_exam_num:
-            available_sections = sorted([s[-1] for s in ALL_EXAM_SESSIONS if s.startswith(selected_exam_num)])
-            selected_section_char = st.selectbox("領域", available_sections)
-            if selected_section_char:
-                selected_session = f"{selected_exam_num}{selected_section_char}"
-                questions_to_load = [q for q in ALL_QUESTIONS if q.get("number", "").startswith(selected_session)]
-    elif mode == "科目別":
-        KISO_SUBJECTS = ["解剖学", "歯科理工学", "組織学", "生理学", "病理学", "薬理学", "微生物学・免疫学", "衛生学", "発生学・加齢老年学", "生化学"]
-        RINSHOU_SUBJECTS = ["保存修復学", "歯周病学", "歯内治療学", "クラウンブリッジ学", "部分床義歯学", "全部床義歯学", "インプラント学", "口腔外科学", "歯科放射線学", "歯科麻酔学", "矯正歯科学", "小児歯科学"]
-        group = st.radio("科目グループ", ["基礎系科目", "臨床系科目"])
-        subjects_to_display = KISO_SUBJECTS if group == "基礎系科目" else RINSHOU_SUBJECTS
-        available_subjects = [s for s in ALL_SUBJECTS if s in subjects_to_display]
-        selected_subject = st.selectbox("科目", available_subjects)
-        if selected_subject: questions_to_load = [q for q in ALL_QUESTIONS if q.get("subject") == selected_subject]
-
-    order_mode = st.selectbox("出題順", ["順番通り", "シャッフル"])
-    if order_mode == "シャッフル":
-        random.shuffle(questions_to_load)
-    else:
-        questions_to_load = sorted(questions_to_load, key=lambda q: q.get('number', ''))
-
-    if st.button("この条件で学習開始", type="primary"):
-        if not questions_to_load:
-            st.warning("該当する問題がありません。")
-        else:
-            grouped_queue = []
-            processed_q_nums = set()
-            for q in questions_to_load:
-                q_num = str(q['number'])
-                if q_num in processed_q_nums: continue
-                case_id = q.get('case_id')
-                if case_id and case_id in CASES:
-                    siblings = sorted([str(sq['number']) for sq in ALL_QUESTIONS if sq.get('case_id') == case_id])
-                    if siblings not in grouped_queue:
-                        grouped_queue.append(siblings)
-                    processed_q_nums.update(siblings)
-                else:
-                    grouped_queue.append([q_num])
-                    processed_q_nums.add(q_num)
-            st.session_state.main_queue = grouped_queue
-            st.session_state.short_term_review_queue = []
-            st.session_state.current_q_group = []
-            # 古い解答結果をクリア
+    # --- 進捗が残っている場合は「前回の続きから再開」ボタンを表示 ---
+    has_progress = (
+        st.session_state.get("main_queue") or
+        st.session_state.get("short_term_review_queue") or
+        st.session_state.get("current_q_group")
+    )
+    if has_progress and st.session_state.get("current_q_group"):
+        if st.button("前回の続きから再開", key="resume_btn", type="primary"):
+            st.session_state["resume_requested"] = True
+            st.rerun()
+        # --- 「演習を終了」ボタンを追加 ---
+        if st.button("演習を終了", key="end_session_btn", type="secondary"):
+            st.session_state["main_queue"] = []
+            st.session_state["short_term_review_queue"] = []
+            st.session_state["current_q_group"] = []
+            st.session_state.pop("resume_requested", None)
+            # checked_やuser_selection_などの状態もクリア
             for key in list(st.session_state.keys()):
-                if key.startswith("checked_") or key.startswith("user_selection_") or key.startswith("shuffled_"):
+                if key.startswith("checked_") or key.startswith("user_selection_") or key.startswith("shuffled_") or key.startswith("free_input_"):
                     del st.session_state[key]
             st.rerun()
+        st.markdown("---")
+    # resume_requestedがある場合は出題設定UIをスキップ
+    if not st.session_state.get("resume_requested"):
+        st.header("出題設定")
+        mode = st.radio("出題形式を選択", ["回数別", "科目別", "CBTモード（写真問題のみ）"])
+        questions_to_load = []
+        if mode == "回数別":
+            selected_exam_num = st.selectbox("回数", ALL_EXAM_NUMBERS)
+            if selected_exam_num:
+                available_sections = sorted([s[-1] for s in ALL_EXAM_SESSIONS if s.startswith(selected_exam_num)])
+                selected_section_char = st.selectbox("領域", available_sections)
+                if selected_section_char:
+                    selected_session = f"{selected_exam_num}{selected_section_char}"
+                    questions_to_load = [q for q in ALL_QUESTIONS if q.get("number", "").startswith(selected_session)]
+        elif mode == "科目別":
+            KISO_SUBJECTS = ["解剖学", "歯科理工学", "組織学", "生理学", "病理学", "薬理学", "微生物学・免疫学", "衛生学", "発生学・加齢老年学", "生化学"]
+            RINSHOU_SUBJECTS = ["保存修復学", "歯周病学", "歯内治療学", "クラウンブリッジ学", "部分床義歯学", "全部床義歯学", "インプラント学", "口腔外科学", "歯科放射線学", "歯科麻酔学", "矯正歯科学", "小児歯科学"]
+            group = st.radio("科目グループ", ["基礎系科目", "臨床系科目"])
+            subjects_to_display = KISO_SUBJECTS if group == "基礎系科目" else RINSHOU_SUBJECTS
+            available_subjects = [s for s in ALL_SUBJECTS if s in subjects_to_display]
+            selected_subject = st.selectbox("科目", available_subjects)
+            if selected_subject: questions_to_load = [q for q in ALL_QUESTIONS if q.get("subject") == selected_subject]
+        elif mode == "CBTモード（写真問題のみ）":
+            # 写真問題のみ抽出
+            questions_to_load = [q for q in ALL_QUESTIONS if q.get("image_urls")]
+        order_mode = st.selectbox("出題順", ["順番通り", "シャッフル"])
+        if order_mode == "シャッフル":
+            random.shuffle(questions_to_load)
+        else:
+            questions_to_load = sorted(questions_to_load, key=lambda q: q.get('number', ''))
+
+        if st.button("この条件で学習開始", type="primary"):
+            if not questions_to_load:
+                st.warning("該当する問題がありません。")
+            else:
+                grouped_queue = []
+                processed_q_nums = set()
+                for q in questions_to_load:
+                    q_num = str(q['number'])
+                    if q_num in processed_q_nums: continue
+                    case_id = q.get('case_id')
+                    if case_id and case_id in CASES:
+                        siblings = sorted([str(sq['number']) for sq in ALL_QUESTIONS if sq.get('case_id') == case_id])
+                        if siblings not in grouped_queue:
+                            grouped_queue.append(siblings)
+                        processed_q_nums.update(siblings)
+                    else:
+                        grouped_queue.append([q_num])
+                        processed_q_nums.add(q_num)
+                st.session_state.main_queue = grouped_queue
+                st.session_state.short_term_review_queue = []
+                st.session_state.current_q_group = []
+                # 古い解答結果をクリア
+                for key in list(st.session_state.keys()):
+                    if key.startswith("checked_") or key.startswith("user_selection_") or key.startswith("shuffled_"):
+                        del st.session_state[key]
+                st.session_state.pop("resume_requested", None)
+                st.rerun()
 
     # cardsの初期化を保証
     if "cards" not in st.session_state:
@@ -423,7 +451,7 @@ if not is_checked:
     # フォームの外で画像を表示
     display_images = case_data.get('image_urls') if case_data else first_q.get('image_urls')
     if display_images:
-        st.image(display_images, use_column_width=True)
+        st.image(display_images, use_container_width=True)
 else:
     # 回答フォーム（選択内容・入力内容はそのまま表示）
     for q in q_objects:
@@ -486,4 +514,4 @@ else:
     # フォームの外で画像を表示
     display_images = case_data.get('image_urls') if case_data else first_q.get('image_urls')
     if display_images:
-        st.image(display_images, use_column_width=True)
+        st.image(display_images, use_container_width=True)
