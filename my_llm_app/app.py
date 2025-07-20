@@ -55,7 +55,6 @@ except Exception as e:
     st.stop()
 
 # --- Firebase Authentication REST APIエンドポイント ---
-#st.write("[DEBUG] st.secrets keys:", list(st.secrets.keys()))
 FIREBASE_API_KEY = st.secrets["firebase_api_key"]
 FIREBASE_AUTH_SIGNUP_URL = f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={FIREBASE_API_KEY}"
 FIREBASE_AUTH_SIGNIN_URL = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={FIREBASE_API_KEY}"
@@ -70,63 +69,107 @@ def firebase_signin(email, password):
     r = requests.post(FIREBASE_AUTH_SIGNIN_URL, json=payload)
     return r.json()
 
-# --- 認証UI ---
-if not st.session_state.get("user_logged_in"):
-    login_tab, register_tab = st.tabs(["ログイン", "新規登録"])
+# --- Firestore連携関数 ---
+def load_user_data(user_id):
+    if db and user_id:
+        doc_ref = db.collection("user_progress").document(user_id)
+        doc = doc_ref.get()
+        if doc.exists:
+            data = doc.to_dict()
+            # ▼▼▼ キューの読み込みロジックを追加 ▼▼▼
+            main_queue_str_list = data.get("main_queue", [])
+            short_term_review_queue_str_list = data.get("short_term_review_queue", [])
+            current_q_group_str = data.get("current_q_group", "")
 
-    with login_tab:
-        st.subheader("メールアドレスでログイン")
+            main_queue = [item.split(',') for item in main_queue_str_list if item]
+            short_term_review_queue = [item.split(',') for item in short_term_review_queue_str_list if item]
+            current_q_group = current_q_group_str.split(',') if current_q_group_str else []
+            # ▲▲▲ ここまで追加 ▲▲▲
+            return {
+                "cards": data.get("cards", {}),
+                "main_queue": main_queue,
+                "short_term_review_queue": short_term_review_queue,
+                "current_q_group": current_q_group
+            }
+    return {"cards": {}, "main_queue": [], "short_term_review_queue": [], "current_q_group": []}
+
+def save_user_data(user_id, cards_data, main_queue=None, short_term_review_queue=None, current_q_group=None):
+    def flatten_and_str(obj):
+        # 再帰的にlist/setをフラット化しstr型のみ返す
+        if isinstance(obj, (list, set)):
+            result = []
+            for item in obj:
+                result.extend(flatten_and_str(item))
+            return result
+        elif isinstance(obj, dict):
+            # dictはキーのみstr化
+            return [str(k) for k in obj.keys()]
+        elif obj is None:
+            return []
+        else:
+            return [str(obj)]
+    if db and user_id:
+        doc_ref = db.collection("user_progress").document(user_id)
+        payload = {"cards": cards_data}
+        if main_queue is not None:
+            # 各グループをカンマ区切り文字列に変換
+            payload["main_queue"] = [','.join(flatten_and_str(group)) for group in main_queue]
+        if short_term_review_queue is not None:
+            payload["short_term_review_queue"] = [','.join(flatten_and_str(group)) for group in short_term_review_queue]
+        if current_q_group is not None:
+            payload["current_q_group"] = ','.join(flatten_and_str(current_q_group))
+        # デバッグ: 型チェック（dict/setが混入していないか）
+        for k, v in payload.items():
+            if k != "cards" and isinstance(v, (dict, set)):
+                print(f"[ERROR] Firestore保存前: {k}が不正な型: {type(v)}")
+                return
+        doc_ref.set(payload)
+
+# --- 認証フローの統合 ---
+if not st.session_state.get("user_logged_in"):
+    st.title("ログイン／新規登録")
+    tab_login, tab_signup = st.tabs(["ログイン", "新規登録"])
+    with tab_login:
         login_email = st.text_input("メールアドレス", key="login_email")
         login_password = st.text_input("パスワード", type="password", key="login_password")
-        login_btn = st.button("ログイン", key="login_btn")
-        login_error = ""
-        if login_btn:
-            if not login_email or not login_password:
-                login_error = "メールアドレスとパスワードを入力してください。"
+        if st.button("ログイン", key="login_btn"):
+            result = firebase_signin(login_email, login_password)
+            if "idToken" in result:
+                st.session_state["name"] = login_email.split("@")[0]
+                st.session_state["username"] = login_email
+                st.session_state["id_token"] = result["idToken"]
+                st.session_state["user_logged_in"] = login_email
+                st.rerun()
             else:
-                result = firebase_signin(login_email, login_password)
-                if "idToken" in result:
-                    st.session_state["user_logged_in"] = login_email
-                    st.session_state["id_token"] = result["idToken"]
-                    st.session_state["refresh_token"] = result["refreshToken"]
-                    st.session_state["name"] = login_email.split("@")[0]
-                    st.session_state["username"] = login_email
-                    st.success("ログインに成功しました！")
-                    st.rerun()
-                else:
-                    login_error = result.get("error", {}).get("message", "ログインに失敗しました。")
-        if login_error:
-            st.error(login_error)
-
-    with register_tab:
-        st.subheader("新規ユーザー登録")
-        reg_email = st.text_input("メールアドレス", key="reg_email")
-        reg_password = st.text_input("パスワード（6文字以上）", type="password", key="reg_password")
-        reg_btn = st.button("登録", key="reg_btn")
-        reg_error = ""
-        if reg_btn:
-            if not reg_email or not reg_password:
-                reg_error = "メールアドレスとパスワードを入力してください。"
-            elif len(reg_password) < 6:
-                reg_error = "パスワードは6文字以上で入力してください。"
+                st.error("ログインに失敗しました。メールアドレスまたはパスワードを確認してください。")
+    with tab_signup:
+        signup_email = st.text_input("メールアドレス", key="signup_email")
+        signup_password = st.text_input("パスワード（6文字以上）", type="password", key="signup_password")
+        if st.button("新規登録", key="signup_btn"):
+            result = firebase_signup(signup_email, signup_password)
+            if "idToken" in result:
+                st.success("新規登録に成功しました。ログインしてください。")
             else:
-                result = firebase_signup(reg_email, reg_password)
-                if "idToken" in result:
-                    st.success("ユーザー登録が完了しました。ログインしてください。")
-                else:
-                    reg_error = result.get("error", {}).get("message", "登録に失敗しました。")
-        if reg_error:
-            st.error(reg_error)
+                st.error("新規登録に失敗しました。メールアドレスが既に使われているか、パスワードが短すぎます。")
     st.stop()
-
-# --- ログアウトボタン ---
-with st.sidebar:
-    if st.button("ログアウト", key="logout_btn"):
-        for k in ["user_logged_in", "id_token", "refresh_token", "name", "username"]:
-            if k in st.session_state:
-                del st.session_state[k]
-        st.rerun()
-
+else:
+    # --- ログイン済みユーザー情報の取得 ---
+    name = st.session_state["name"]
+    username = st.session_state["username"]
+    # --- ログアウトボタン ---
+    with st.sidebar:
+        if st.button("ログアウト", key="logout_btn"):
+            save_user_data(
+                username,
+                st.session_state.cards,
+                st.session_state.main_queue,
+                st.session_state.short_term_review_queue,
+                st.session_state.current_q_group
+            )
+            for k in ["user_logged_in", "id_token", "refresh_token", "name", "username"]:
+                if k in st.session_state:
+                    del st.session_state[k]
+            st.rerun()
 # --- 以降、認証済みユーザーのみアプリ本体が動作 ---
 
 # --- ログインユーザー情報の取得 ---
@@ -140,11 +183,20 @@ def load_user_data(user_id):
         doc = doc_ref.get()
         if doc.exists:
             data = doc.to_dict()
+            # ▼▼▼ キューの読み込みロジックを追加 ▼▼▼
+            main_queue_str_list = data.get("main_queue", [])
+            short_term_review_queue_str_list = data.get("short_term_review_queue", [])
+            current_q_group_str = data.get("current_q_group", "")
+
+            main_queue = [item.split(',') for item in main_queue_str_list if item]
+            short_term_review_queue = [item.split(',') for item in short_term_review_queue_str_list if item]
+            current_q_group = current_q_group_str.split(',') if current_q_group_str else []
+            # ▲▲▲ ここまで追加 ▲▲▲
             return {
                 "cards": data.get("cards", {}),
-                "main_queue": data.get("main_queue", []),
-                "short_term_review_queue": data.get("short_term_review_queue", []),
-                "current_q_group": data.get("current_q_group", [])
+                "main_queue": main_queue,
+                "short_term_review_queue": short_term_review_queue,
+                "current_q_group": current_q_group
             }
     return {"cards": {}, "main_queue": [], "short_term_review_queue": [], "current_q_group": []}
 
@@ -301,6 +353,15 @@ with st.sidebar:
                 st.rerun()
             # --- 「演習を終了」ボタンを追加 ---
             if st.button("演習を終了", key="end_session_btn", type="secondary"):
+                # ▼▼▼ 進捗保存を追加 ▼▼▼
+                save_user_data(
+                    username,
+                    st.session_state.cards,
+                    st.session_state.main_queue,
+                    st.session_state.short_term_review_queue,
+                    st.session_state.current_q_group
+                )
+                # ▲▲▲ ここまで追加 ▲▲▲
                 st.session_state["main_queue"] = []
                 st.session_state["short_term_review_queue"] = []
                 st.session_state["current_q_group"] = []
