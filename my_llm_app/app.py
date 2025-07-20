@@ -11,6 +11,15 @@ from firebase_admin import credentials, firestore
 import requests
 import tempfile
 import collections.abc
+import pandas as pd
+
+# plotlyインポート（未インストール時の案内付き）
+# 必ずこの場所（利用する場所より前）で定義します
+try:
+    import plotly.express as px
+    PLOTLY_AVAILABLE = True
+except ImportError:
+    PLOTLY_AVAILABLE = False
 
 # --- ページ設定 (スクリプトの最初に一度だけ呼び出す) ---
 st.set_page_config(layout="wide")
@@ -205,7 +214,14 @@ def get_shuffled_choices(q):
     return [q["choices"][i] for i in st.session_state[key]], st.session_state[key]
 
 def chem_latex(text):
-    return re.sub(r'Ca2\+', '$\\\\mathrm{Ca^{2+}}$', text)
+    # re.subのreplacementでバックスラッシュが問題になるためstr.replaceで十分
+    return text.replace('Ca2+', '$\\mathrm{Ca^{2+}}$')
+
+def is_ordering_question(q):
+    # 「順番に並べよ」「正しい順序」「適切な順序」「正しい順番」などを検出
+    text = q.get("question", "")
+    keywords = ["順番に並べよ", "正しい順序", "適切な順序", "正しい順番", "順序で"]
+    return any(k in text for k in keywords)
 
 def sm2_update(card, quality, now=None):
     if now is None: now = datetime.datetime.now(datetime.timezone.utc)
@@ -254,35 +270,51 @@ if "user_logged_in" not in st.session_state or st.session_state.user_logged_in !
 if "result_log" not in st.session_state:
     st.session_state.result_log = {}
 
-# --- サイドバー ---
+# --- サイドバー（1か所だけで描画） ---
 with st.sidebar:
     st.success(f"{name} としてログイン中")
-    # --- 進捗が残っている場合は「前回の続きから再開」ボタンを表示 ---
-    has_progress = (
-        st.session_state.get("main_queue") or
-        st.session_state.get("short_term_review_queue") or
-        st.session_state.get("current_q_group")
-    )
-    if has_progress and st.session_state.get("current_q_group"):
-        if st.button("前回の続きから再開", key="resume_btn", type="primary"):
-            st.session_state["resume_requested"] = True
-            st.rerun()
-        # --- 「演習を終了」ボタンを追加 ---
-        if st.button("演習を終了", key="end_session_btn", type="secondary"):
-            st.session_state["main_queue"] = []
-            st.session_state["short_term_review_queue"] = []
-            st.session_state["current_q_group"] = []
-            st.session_state.pop("resume_requested", None)
-            # checked_やuser_selection_などの状態もクリア
-            for key in list(st.session_state.keys()):
-                if key.startswith("checked_") or key.startswith("user_selection_") or key.startswith("shuffled_") or key.startswith("free_input_"):
-                    del st.session_state[key]
-            st.rerun()
-        st.markdown("---")
-    # resume_requestedがある場合は出題設定UIをスキップ
-    if not st.session_state.get("resume_requested"):
+    # ページ切り替えUI
+    page = st.radio("ページ選択", ["演習", "検索"], key="page_select")
+
+    if page == "演習":
+        # 新規カード/日 入力UI（演習ページのみ表示）
+        DEFAULT_NEW_CARDS_PER_DAY = 10
+        if "new_cards_per_day" not in st.session_state:
+            user_data = load_user_data(username)
+            st.session_state["new_cards_per_day"] = user_data.get("new_cards_per_day", DEFAULT_NEW_CARDS_PER_DAY)
+        new_cards_per_day = st.number_input("新規カード/日", min_value=1, max_value=100, value=st.session_state["new_cards_per_day"], step=1, key="new_cards_per_day_input")
+        if new_cards_per_day != st.session_state["new_cards_per_day"]:
+            st.session_state["new_cards_per_day"] = new_cards_per_day
+            user_data = load_user_data(username)
+            user_data["new_cards_per_day"] = new_cards_per_day
+            db.collection("user_progress").document(username).set(user_data, merge=True)
+
+        # --- 進捗が残っている場合は「前回の続きから再開」ボタンを表示 ---
+        has_progress = (
+            st.session_state.get("main_queue") or
+            st.session_state.get("short_term_review_queue") or
+            st.session_state.get("current_q_group")
+        )
+        if has_progress and st.session_state.get("current_q_group"):
+            if st.button("前回の続きから再開", key="resume_btn", type="primary"):
+                st.session_state["resume_requested"] = True
+                st.rerun()
+            # --- 「演習を終了」ボタンを追加 ---
+            if st.button("演習を終了", key="end_session_btn", type="secondary"):
+                st.session_state["main_queue"] = []
+                st.session_state["short_term_review_queue"] = []
+                st.session_state["current_q_group"] = []
+                st.session_state.pop("resume_requested", None)
+                # checked_やuser_selection_などの状態もクリア
+                for key in list(st.session_state.keys()):
+                    if key.startswith("checked_") or key.startswith("user_selection_") or key.startswith("shuffled_") or key.startswith("free_input_"):
+                        del st.session_state[key]
+                st.rerun()
+            st.markdown("---")
+        # 出題設定UIは常に表示
         st.header("出題設定")
-        mode = st.radio("出題形式を選択", ["回数別", "科目別", "CBTモード（写真問題のみ）"])
+        # --- 既存の出題設定 ---
+        mode = st.radio("出題形式を選択", ["回数別", "科目別", "CBTモード（写真問題のみ）"], key=f"mode_radio_{st.session_state.get('page_select', 'default')}")
         questions_to_load = []
         if mode == "回数別":
             selected_exam_num = st.selectbox("回数", ALL_EXAM_NUMBERS)
@@ -335,183 +367,335 @@ with st.sidebar:
                     if key.startswith("checked_") or key.startswith("user_selection_") or key.startswith("shuffled_"):
                         del st.session_state[key]
                 st.session_state.pop("resume_requested", None)
+                # cardsも選択した問題だけで初期化 → 既存cardsを残しつつ未登録のみ追加
+                if "cards" not in st.session_state:
+                    st.session_state.cards = {}
+                for q in questions_to_load:
+                    if q['number'] not in st.session_state.cards:
+                        st.session_state.cards[q['number']] = {}
+                # today_due_cardsとcurrent_q_numもリセット
+                st.session_state.pop("today_due_cards", None)
+                st.session_state.pop("current_q_num", None)
                 st.rerun()
 
-    # cardsの初期化を保証
-    if "cards" not in st.session_state:
-        st.session_state.cards = {}
+        # cardsの初期化を保証
+        if "cards" not in st.session_state:
+            st.session_state.cards = {}
 
-    st.markdown("---"); st.header("学習記録")
-    if st.session_state.cards:
-        quality_to_mark = {1: "×", 2: "△", 4: "◯", 5: "◎"}
-        mark_to_label = {"◎": "簡単", "◯": "普通", "△": "難しい", "×": "もう一度"}
-        evaluated_marks = [quality_to_mark.get(card.get('quality')) for card in st.session_state.cards.values() if card.get('quality')]
-        total_evaluated = len(evaluated_marks)
-        counter = Counter(evaluated_marks)
-        with st.expander("自己評価の分布", expanded=True):
-            st.markdown(f"**合計評価数：{total_evaluated}問**")
-            for mark, label in mark_to_label.items():
-                count = counter.get(mark, 0); percent = int(round(count / total_evaluated * 100)) if total_evaluated else 0
-                st.markdown(f"{mark} {label}：{count}問 ({percent}％)")
-        with st.expander("最近の評価ログ", expanded=False):
-            cards_with_history = [(q_num, card) for q_num, card in st.session_state.cards.items() if card.get('history')]
-            sorted_cards = sorted(cards_with_history, key=lambda item: item[1]['history'][-1]['timestamp'], reverse=True)
-            for q_num, card in sorted_cards[:10]:
-                last_history = card['history'][-1]
-                last_eval_mark = quality_to_mark.get(last_history.get('quality'))
-                timestamp_str = datetime.datetime.fromisoformat(last_history['timestamp']).strftime('%Y-%m-%d %H:%M')
-                # 問題ジャンプ機能
-                jump_btn = st.button(f"{q_num}", key=f"jump_{q_num}")
-                st.markdown(f"- `{q_num}` : **{last_eval_mark}** ({timestamp_str})", unsafe_allow_html=True)
-                if jump_btn:
-                    st.session_state.current_q_group = [q_num]
-                    # checked_などの状態をクリア
-                    for key in list(st.session_state.keys()):
-                        if key.startswith("checked_") or key.startswith("user_selection_") or key.startswith("shuffled_") or key.startswith("free_input_"):
-                            del st.session_state[key]
-                    st.rerun()
+        st.markdown("---"); st.header("学習記録")
+        if st.session_state.cards:
+            quality_to_mark = {1: "×", 2: "△", 4: "◯", 5: "◎"}
+            mark_to_label = {"◎": "簡単", "◯": "普通", "△": "難しい", "×": "もう一度"}
+            evaluated_marks = [quality_to_mark.get(card.get('quality')) for card in st.session_state.cards.values() if card.get('quality')]
+            total_evaluated = len(evaluated_marks)
+            counter = Counter(evaluated_marks)
+            with st.expander("自己評価の分布", expanded=True):
+                st.markdown(f"**合計評価数：{total_evaluated}問**")
+                for mark, label in mark_to_label.items():
+                    count = counter.get(mark, 0); percent = int(round(count / total_evaluated * 100)) if total_evaluated else 0
+                    st.markdown(f"{mark} {label}：{count}問 ({percent}％)")
+            with st.expander("最近の評価ログ", expanded=False):
+                cards_with_history = [(q_num, card) for q_num, card in st.session_state.cards.items() if card.get('history')]
+                sorted_cards = sorted(cards_with_history, key=lambda item: item[1]['history'][-1]['timestamp'], reverse=True)
+                for q_num, card in sorted_cards[:10]:
+                    last_history = card['history'][-1]
+                    last_eval_mark = quality_to_mark.get(last_history.get('quality'))
+                    timestamp_str = datetime.datetime.fromisoformat(last_history['timestamp']).strftime('%Y-%m-%d %H:%M')
+                    # 問題ジャンプ機能
+                    jump_btn = st.button(f"{q_num}", key=f"jump_{q_num}")
+                    st.markdown(f"- `{q_num}` : **{last_eval_mark}** ({timestamp_str})", unsafe_allow_html=True)
+                    if jump_btn:
+                        st.session_state.current_q_group = [q_num]
+                        # checked_などの状態をクリア
+                        for key in list(st.session_state.keys()):
+                            if key.startswith("checked_") or key.startswith("user_selection_") or key.startswith("shuffled_") or key.startswith("free_input_"):
+                                del st.session_state[key]
+                        st.rerun()
 
 
 # --- メインロジック ---
-def get_next_q_group():
-    if st.session_state.get("short_term_review_queue"):
-        return st.session_state.short_term_review_queue.pop(0)
-    if st.session_state.get("main_queue"):
-        return st.session_state.main_queue.pop(0)
-    return []
+def render_practice_page():
+    # --- 「演習」ページのロジックをすべてここに移動 ---
+    def get_next_q_group():
+        if st.session_state.get("short_term_review_queue"):
+            return st.session_state.short_term_review_queue.pop(0)
+        if st.session_state.get("main_queue"):
+            return st.session_state.main_queue.pop(0)
+        return []
 
-if not st.session_state.get("current_q_group"):
-    st.session_state.current_q_group = get_next_q_group()
+    if not st.session_state.get("current_q_group"):
+        st.session_state.current_q_group = get_next_q_group()
 
-current_q_group = st.session_state.get("current_q_group", [])
-if not current_q_group and not st.session_state.get("main_queue") and not st.session_state.get("short_term_review_queue"):
-    st.info("学習を開始するには、サイドバーで問題を選択してください。")
-    st.stop()
+    current_q_group = st.session_state.get("current_q_group", [])
+    if not current_q_group and not st.session_state.get("main_queue") and not st.session_state.get("short_term_review_queue"):
+        st.info("学習を開始するには、サイドバーで問題を選択してください。")
+        st.stop()
 
-# --- 問題表示と解答・評価 ---
-q_objects = [ALL_QUESTIONS_DICT.get(q_num) for q_num in current_q_group if q_num in ALL_QUESTIONS_DICT]
-if not q_objects:
-    st.success("🎉 このセッションの学習はすべて完了しました！")
-    st.balloons()
-    st.stop()
+    q_objects = [ALL_QUESTIONS_DICT.get(q_num) for q_num in current_q_group if q_num in ALL_QUESTIONS_DICT]
+    if not q_objects:
+        st.success("🎉 このセッションの学習はすべて完了しました！")
+        st.balloons()
+        st.stop()
 
-first_q = q_objects[0]
-group_id = first_q['number']
-is_checked = st.session_state.get(f"checked_{group_id}", False)
-case_data = CASES.get(first_q.get('case_id')) if first_q.get('case_id') else None
+    first_q = q_objects[0]
+    group_id = first_q['number']
+    is_checked = st.session_state.get(f"checked_{group_id}", False)
+    case_data = CASES.get(first_q.get('case_id')) if first_q.get('case_id') else None
 
-st.title("歯科医師国家試験 演習")
+    st.title("歯科医師国家試験 演習")
 
-if case_data:
-    st.info(f"【連問】この症例には{len(q_objects)}問の問題が含まれています。")
-    if 'scenario_text' in case_data:
-        st.markdown(case_data['scenario_text'])
+    if case_data:
+        st.info(f"【連問】この症例には{len(q_objects)}問の問題が含まれています。")
+        if 'scenario_text' in case_data:
+            st.markdown(case_data['scenario_text'])
 
-if not is_checked:
-    # 解答フォーム
-    with st.form(key=f"answer_form_{group_id}"):
+    if not is_checked:
+        # 解答フォーム
+        with st.form(key=f"answer_form_{group_id}"):
+            for q in q_objects:
+                st.markdown(f"#### {q['number']}")
+                st.markdown(chem_latex(q.get('question', '')))
+                if "choices" in q and q["choices"]:
+                    shuffled_choices, _ = get_shuffled_choices(q)
+                    # --- 選択肢の選択状態をセッションに保存・復元 ---
+                    user_selection_key = f"user_selection_{q['number']}"
+                    if user_selection_key not in st.session_state:
+                        st.session_state[user_selection_key] = [False] * len(shuffled_choices)
+                    for i, choice_item in enumerate(shuffled_choices):
+                        if isinstance(choice_item, dict):
+                            label = f"{chr(65 + i)}. {chem_latex(choice_item.get('text', str(choice_item)))}"
+                        else:
+                            label = f"{chr(65 + i)}. {chem_latex(str(choice_item))}"
+                        # チェックボックスの状態をセッションで管理
+                        checked = st.session_state[user_selection_key][i]
+                        new_checked = st.checkbox(label, value=checked, key=f"user_selection_{q['number']}_{i}")
+                        st.session_state[user_selection_key][i] = new_checked
+                else:
+                    st.text_input("回答を入力", key=f"free_input_{q['number']}")
+            submitted_check = st.form_submit_button("回答をチェック", type="primary")
+            skipped = st.form_submit_button("スキップ", type="secondary")
+            if submitted_check:
+                for q in q_objects:
+                    if "choices" in q and q["choices"]:
+                        user_answers = []
+                        shuffled_choices, shuffle_indices = get_shuffled_choices(q)
+                        user_selection_key = f"user_selection_{q['number']}"
+                        for i, choice_item in enumerate(shuffled_choices):
+                            if st.session_state[user_selection_key][i]:
+                                original_index = shuffle_indices[i]
+                                user_answers.append(chr(65 + original_index))
+                        correct_answers = sorted(list(q.get("answer", "")))
+                        st.session_state.result_log[q['number']] = (sorted(user_answers) == correct_answers)
+                    else:
+                        user_input = st.session_state.get(f"free_input_{q['number']}", "").strip()
+                        correct_answer = str(q.get("answer", "")).strip()
+                        st.session_state.result_log[q['number']] = (user_input == correct_answer)
+                st.session_state[f"checked_{group_id}"] = True
+                st.rerun()
+            elif skipped:
+                st.session_state.current_q_group = get_next_q_group()
+                for key in list(st.session_state.keys()):
+                    if key.startswith("checked_") or key.startswith("user_selection_") or key.startswith("shuffled_") or key.startswith("free_input_"):
+                        del st.session_state[key]
+                st.rerun()
+        # フォームの下で画像を表示
+        display_images = case_data.get('image_urls') if case_data else first_q.get('image_urls')
+        if display_images:
+            st.image(display_images, use_container_width=True)
+    else:
+        # 回答フォーム（選択内容・入力内容はそのまま表示）
         for q in q_objects:
             st.markdown(f"#### {q['number']}")
             st.markdown(chem_latex(q.get('question', '')))
             if "choices" in q and q["choices"]:
-                shuffled_choices, _ = get_shuffled_choices(q)
+                shuffled_choices, shuffle_indices = get_shuffled_choices(q)
+                correct_indices = [ord(l) - 65 for l in q.get("answer", "") if l.isalpha()]
+                correct_labels = [chr(65 + shuffle_indices.index(i)) for i in correct_indices if i < len(shuffle_indices)]
                 for i, choice_item in enumerate(shuffled_choices):
                     if isinstance(choice_item, dict):
                         label = f"{chr(65 + i)}. {chem_latex(choice_item.get('text', str(choice_item)))}"
                     else:
                         label = f"{chr(65 + i)}. {chem_latex(str(choice_item))}"
-                    st.checkbox(label, key=f"user_selection_{q['number']}_{i}")
-            else:
-                st.text_input("回答を入力", key=f"free_input_{q['number']}")
-        submitted_check = st.form_submit_button("回答をチェック", type="primary")
-        skipped = st.form_submit_button("スキップ", type="secondary")
-        if submitted_check:
-            for q in q_objects:
-                if "choices" in q and q["choices"]:
-                    user_answers = []
-                    shuffled_choices, shuffle_indices = get_shuffled_choices(q)
-                    for i, choice_item in enumerate(shuffled_choices):
-                        if st.session_state.get(f"user_selection_{q['number']}_{i}"):
-                            original_index = shuffle_indices[i]
-                            user_answers.append(chr(65 + original_index))
-                    correct_answers = sorted(list(q.get("answer", "")))
-                    st.session_state.result_log[q['number']] = (sorted(user_answers) == correct_answers)
+                    # ▼▼▼ ここから2行追加 ▼▼▼
+                    user_selection_key = f"user_selection_{q['number']}"
+                    is_selected = st.session_state.get(user_selection_key, [False]*len(shuffled_choices))[i]
+                    # ▲▲▲ ここまで2行追加 ▲▲▲
+                    st.checkbox(label, value=is_selected, key=f"user_selection_{q['number']}_{i}", disabled=True)
+                # --- ここからUX改善 ---
+                is_correct = st.session_state.result_log.get(q['number'], False)
+                if is_correct:
+                    st.markdown("<span style='font-size:1.5em; color:green;'>✓ 正解！</span>", unsafe_allow_html=True)
                 else:
-                    user_input = st.session_state.get(f"free_input_{q['number']}", "").strip()
-                    correct_answer = str(q.get("answer", "")).strip()
-                    st.session_state.result_log[q['number']] = (user_input == correct_answer)
-            st.session_state[f"checked_{group_id}"] = True
-            st.rerun()
-        elif skipped:
-            st.session_state.current_q_group = get_next_q_group()
-            for key in list(st.session_state.keys()):
-                if key.startswith("checked_") or key.startswith("user_selection_") or key.startswith("shuffled_") or key.startswith("free_input_"):
-                    del st.session_state[key]
-            st.rerun()
-    # フォームの外で画像を表示
-    display_images = case_data.get('image_urls') if case_data else first_q.get('image_urls')
-    if display_images:
-        st.image(display_images, use_container_width=True)
-else:
-    # 回答フォーム（選択内容・入力内容はそのまま表示）
-    for q in q_objects:
-        st.markdown(f"#### {q['number']}")
-        st.markdown(chem_latex(q.get('question', '')))
-        if "choices" in q and q["choices"]:
-            shuffled_choices, shuffle_indices = get_shuffled_choices(q)
-            correct_indices = [ord(l) - 65 for l in q.get("answer", "") if l.isalpha()]
-            correct_labels = [chr(65 + shuffle_indices.index(i)) for i in correct_indices if i < len(shuffle_indices)]
-            for i, choice_item in enumerate(shuffled_choices):
-                if isinstance(choice_item, dict):
-                    label = f"{chr(65 + i)}. {chem_latex(choice_item.get('text', str(choice_item)))}"
-                else:
-                    label = f"{chr(65 + i)}. {chem_latex(str(choice_item))}"
-                st.checkbox(label, key=f"user_selection_{q['number']}_{i}", disabled=True)
-            # --- ここからUX改善 ---
-            is_correct = st.session_state.result_log.get(q['number'], False)
-            if is_correct:
-                st.markdown("<span style='font-size:1.5em; color:green;'>✓ 正解！</span>", unsafe_allow_html=True)
+                    st.markdown("<span style='font-size:1.5em; color:red;'>× 不正解</span>", unsafe_allow_html=True)
+                    st.markdown(f"<span style='color:blue;'>正解: {'・'.join(correct_labels)}</span>", unsafe_allow_html=True)
             else:
-                st.markdown("<span style='font-size:1.5em; color:red;'>× 不正解</span>", unsafe_allow_html=True)
-                st.markdown(f"<span style='color:blue;'>正解: {'・'.join(correct_labels)}</span>", unsafe_allow_html=True)
+                st.text_input("回答を入力", key=f"free_input_{q['number']}", disabled=True)
+                is_correct = st.session_state.result_log.get(q['number'], False)
+                if is_correct:
+                    st.markdown("<span style='font-size:1.5em; color:green;'>✓ 正解！</span>", unsafe_allow_html=True)
+                else:
+                    st.markdown("<span style='font-size:1.5em; color:red;'>× 不正解</span>", unsafe_allow_html=True)
+                    st.markdown(f"<span style='color:blue;'>正解: {q.get('answer', '')}</span>", unsafe_allow_html=True)
+        with st.form(key=f"eval_form_{group_id}"):
+            st.markdown("#### この問題グループの自己評価")
+            eval_map = {"もう一度": 1, "難しい": 2, "普通": 4, "簡単": 5}
+            selected_eval_label = st.radio("自己評価", eval_map.keys(), horizontal=True, label_visibility="collapsed")
+            if st.form_submit_button("次の問題へ", type="primary"):
+                with st.spinner('学習記録を保存中...'):
+                    quality = eval_map[selected_eval_label]
+                    add_to_short_term_review = False
+                    for q_num_str in current_q_group:
+                        card = st.session_state.cards.get(q_num_str, {})
+                        updated_card = sm2_update(card, quality)
+                        st.session_state.cards[q_num_str] = updated_card
+                        # --- 短期復習キュー追加ロジック ---
+                        if quality < 4 and updated_card.get("I", 1) < 0.015:
+                            add_to_short_term_review = True
+                    if add_to_short_term_review and current_q_group not in st.session_state.short_term_review_queue:
+                        st.session_state.short_term_review_queue.append(current_q_group)
+                    # Firestoreに全キューも保存
+                    save_user_data(
+                        username,
+                        st.session_state.cards,
+                        st.session_state.main_queue,
+                        st.session_state.short_term_review_queue,
+                        get_next_q_group() if st.session_state.main_queue or st.session_state.short_term_review_queue else []
+                    )
+                st.session_state.current_q_group = get_next_q_group()
+                for key in list(st.session_state.keys()):
+                    if key.startswith("checked_") or key.startswith("user_selection_") or key.startswith("shuffled_") or key.startswith("free_input_"):
+                        del st.session_state[key]
+                st.rerun()
+
+def render_search_page():
+    # --- 「検索」ページのロジックをすべてここに移動 ---
+    st.title("検索・進捗ページ")
+    questions_data = []
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    for q in ALL_QUESTIONS:
+        q_num = q["number"]
+        card = st.session_state.get("cards", {}).get(q_num, {})
+        def map_card_to_level(card_data):
+            n = card_data.get("n")
+            if not card_data or n is None: return "未学習"
+            if n == 0: return "レベル0"
+            if n == 1: return "レベル1"
+            if n == 2: return "レベル2"
+            if n == 3: return "レベル3"
+            if n == 4: return "レベル4"
+            if n >= 5: return "習得済み"
+            return "未学習"
+        level = map_card_to_level(card)
+        days_until_due = None
+        if "next_review" in card:
+            try:
+                due_date = datetime.datetime.fromisoformat(card["next_review"])
+                days_until_due = (due_date - now_utc).days
+            except (ValueError, TypeError):
+                days_until_due = None
+        questions_data.append({
+            "id": q_num,
+            "year": int(q_num[:3]) if q_num[:3].isdigit() else None,
+            "region": q_num[3] if len(q_num) >= 4 and q_num[3] in "ABCD" else None,
+            "category": q.get("category", ""),
+            "subject": q.get("subject", ""),
+            "level": level,
+            "ef": card.get("EF"),
+            "interval": card.get("I"),
+            "repetitions": card.get("n"),
+            "history": card.get("history", []),
+            "days_until_due": days_until_due
+        })
+    df = pd.DataFrame(questions_data)
+    df["year"] = pd.to_numeric(df["year"], errors="coerce").astype('Int64')
+    with st.sidebar:
+        st.header("絞り込み条件")
+        years_sorted = sorted([int(x) for x in ALL_EXAM_NUMBERS if str(x).isdigit()])
+        regions_sorted = sorted([r for r in df["region"].dropna().unique() if r in ["A","B","C","D"]])
+        subjects_sorted = sorted(df["subject"].dropna().unique())
+        levels_sorted = ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "習得済み"]
+        years = st.multiselect("回数", years_sorted, default=years_sorted)
+        regions = st.multiselect("領域", regions_sorted, default=regions_sorted)
+        subjects = st.multiselect("科目", subjects_sorted, default=subjects_sorted)
+        levels = st.multiselect("習熟度", levels_sorted, default=levels_sorted)
+    filtered_df = df.copy()
+    if years: filtered_df = filtered_df[filtered_df["year"].isin(years)]
+    if regions: filtered_df = filtered_df[filtered_df["region"].isin(regions)]
+    if subjects: filtered_df = filtered_df[filtered_df["subject"].isin(subjects)]
+    if levels: filtered_df = filtered_df[filtered_df["level"].isin(levels)]
+    tab1, tab2, tab3 = st.tabs(["概要", "グラフ分析", "問題リスト検索"])
+    with tab1:
+        st.subheader("学習状況サマリー")
+        if filtered_df.empty:
+            st.warning("選択された条件に一致する問題がありません。")
         else:
-            st.text_input("回答を入力", key=f"free_input_{q['number']}", disabled=True)
-            is_correct = st.session_state.result_log.get(q['number'], False)
-            if is_correct:
-                st.markdown("<span style='font-size:1.5em; color:green;'>✓ 正解！</span>", unsafe_allow_html=True)
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("##### カード習熟度分布")
+                level_counts = filtered_df["level"].value_counts().reindex(levels_sorted).fillna(0).astype(int)
+                st.dataframe(level_counts)
+            with col2:
+                st.markdown("##### 正解率 (True Retention)")
+                total_reviews = 0
+                correct_reviews = 0
+                for history_list in filtered_df["history"]:
+                    for review in history_list:
+                        if isinstance(review, dict) and "quality" in review:
+                            total_reviews += 1
+                            if review["quality"] >= 4:
+                                correct_reviews += 1
+                retention_rate = (correct_reviews / total_reviews * 100) if total_reviews > 0 else 0
+                st.metric(label="選択範囲の正解率", value=f"{retention_rate:.1f}%", delta=f"{correct_reviews} / {total_reviews} 回")
+    with tab2:
+        st.subheader("学習データの可視化")
+        if filtered_df.empty:
+            st.warning("選択された条件に一致する問題がありません。")
+        else:
+            st.markdown("##### 日々の学習量（過去90日間）")
+            review_history = []
+            for history_list in filtered_df["history"]:
+                for review in history_list:
+                    if isinstance(review, dict) and "timestamp" in review:
+                        review_history.append(datetime.datetime.fromisoformat(review["timestamp"]).date())
+            if review_history:
+                review_counts = Counter(review_history)
+                ninety_days_ago = datetime.date.today() - datetime.timedelta(days=90)
+                dates = [ninety_days_ago + datetime.timedelta(days=i) for i in range(91)]
+                counts = [review_counts.get(d, 0) for d in dates]
+                chart_df = pd.DataFrame({"Date": dates, "Reviews": counts})
+                st.bar_chart(chart_df.set_index("Date"))
             else:
-                st.markdown("<span style='font-size:1.5em; color:red;'>× 不正解</span>", unsafe_allow_html=True)
-                st.markdown(f"<span style='color:blue;'>正解: {q.get('answer', '')}</span>", unsafe_allow_html=True)
-    with st.form(key=f"eval_form_{group_id}"):
-        st.markdown("#### この問題グループの自己評価")
-        eval_map = {"もう一度": 1, "難しい": 2, "普通": 4, "簡単": 5}
-        selected_eval_label = st.radio("自己評価", eval_map.keys(), horizontal=True, label_visibility="collapsed")
-        if st.form_submit_button("次の問題へ", type="primary"):
-            quality = eval_map[selected_eval_label]
-            add_to_short_term_review = False
-            for q_num_str in current_q_group:
-                card = st.session_state.cards.get(q_num_str, {})
-                updated_card = sm2_update(card, quality)
-                st.session_state.cards[q_num_str] = updated_card
-                # --- 短期復習キュー追加ロジック ---
-                if quality < 4 and updated_card.get("I", 1) < 0.015:
-                    add_to_short_term_review = True
-            if add_to_short_term_review and current_q_group not in st.session_state.short_term_review_queue:
-                st.session_state.short_term_review_queue.append(current_q_group)
-            # Firestoreに全キューも保存
-            save_user_data(
-                username,
-                st.session_state.cards,
-                st.session_state.main_queue,
-                st.session_state.short_term_review_queue,
-                get_next_q_group() if st.session_state.main_queue or st.session_state.short_term_review_queue else []
-            )
-            st.session_state.current_q_group = get_next_q_group()
-            for key in list(st.session_state.keys()):
-                if key.startswith("checked_") or key.startswith("user_selection_") or key.startswith("shuffled_") or key.startswith("free_input_"):
-                    del st.session_state[key]
-            st.rerun()
-    # フォームの外で画像を表示
-    display_images = case_data.get('image_urls') if case_data else first_q.get('image_urls')
-    if display_images:
-        st.image(display_images, use_container_width=True)
+                st.info("選択された範囲にレビュー履歴がまだありません。")
+            st.markdown("##### カードの「易しさ」分布")
+            ease_df = filtered_df[filtered_df['ef'].notna()]
+            if not ease_df.empty and PLOTLY_AVAILABLE:
+                fig = px.histogram(ease_df, x="ef", nbins=20, title="Easiness Factor (EF) の分布")
+                st.plotly_chart(fig, use_container_width=True)
+    with tab3:
+        st.subheader("問題リストと絞り込み")
+        level_colors = {
+            "未学習": "#757575", "レベル0": "#FF9800", "レベル1": "#FFC107",
+            "レベル2": "#8BC34A", "レベル3": "#9C27B0", "レベル4": "#03A9F4",
+            "レベル5": "#1E88E5", "習得済み": "#4CAF50"
+        }
+        st.markdown(f"**{len(filtered_df)}件の問題が見つかりました**")
+        if not filtered_df.empty:
+            def sort_key(row_id):
+                m = re.match(r"(\d+)([A-D])(\d+)", str(row_id))
+                return (int(m.group(1)), m.group(2), int(m.group(3))) if m else (0, '', 0)
+            filtered_sorted = filtered_df.copy()
+            filtered_sorted['sort_key'] = filtered_sorted['id'].apply(sort_key)
+            filtered_sorted = filtered_sorted.sort_values(by='sort_key').drop(columns=['sort_key'])
+            for _, row in filtered_sorted.iterrows():
+                st.markdown(
+                    f"<div style='margin-bottom: 5px; padding: 5px; border-left: 5px solid {level_colors.get(row.level, '#888')};'>"
+                    f"<span style='display:inline-block;width:80px;font-weight:bold;color:{level_colors.get(row.level, '#888')};'>{row.level}</span>"
+                    f"<span style='font-size:1.1em;'>{row.id}</span>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+
+if page == "演習":
+    render_practice_page()
+elif page == "検索":
+    render_search_page()
