@@ -415,7 +415,7 @@ with st.sidebar:
 
 # --- メインロジック ---
 def render_practice_page():
-    # --- 「演習」ページのロジックをすべてここに移動 ---
+    # --- 「演習」ページのロジック ---
     def get_next_q_group():
         if st.session_state.get("short_term_review_queue"):
             return st.session_state.short_term_review_queue.pop(0)
@@ -450,14 +450,18 @@ def render_practice_page():
             st.markdown(case_data['scenario_text'])
 
     if not is_checked:
-        # 解答フォーム
+        # --- 解答フォーム ---
         with st.form(key=f"answer_form_{group_id}"):
             for q in q_objects:
                 st.markdown(f"#### {q['number']}")
                 st.markdown(chem_latex(q.get('question', '')))
-                if "choices" in q and q["choices"]:
+                if is_ordering_question(q):
+                    st.markdown("##### 選択肢")
+                    for choice in q.get("choices", []):
+                        st.markdown(f"- {choice}")
+                    st.text_input("解答を順番に入力してください（例: CBEAD）", key=f"order_input_{q['number']}")
+                elif "choices" in q and q["choices"]:
                     shuffled_choices, _ = get_shuffled_choices(q)
-                    # --- 選択肢の選択状態をセッションに保存・復元 ---
                     user_selection_key = f"user_selection_{q['number']}"
                     if user_selection_key not in st.session_state:
                         st.session_state[user_selection_key] = [False] * len(shuffled_choices)
@@ -466,7 +470,6 @@ def render_practice_page():
                             label = f"{chr(65 + i)}. {chem_latex(choice_item.get('text', str(choice_item)))}"
                         else:
                             label = f"{chr(65 + i)}. {chem_latex(str(choice_item))}"
-                        # チェックボックスの状態をセッションで管理
                         checked = st.session_state[user_selection_key][i]
                         new_checked = st.checkbox(label, value=checked, key=f"user_selection_{q['number']}_{i}")
                         st.session_state[user_selection_key][i] = new_checked
@@ -476,61 +479,76 @@ def render_practice_page():
             skipped = st.form_submit_button("スキップ", type="secondary")
             if submitted_check:
                 for q in q_objects:
-                    if "choices" in q and q["choices"]:
+                    answer_str = q.get("answer", "")
+                    if is_ordering_question(q):
+                        user_input = st.session_state.get(f"order_input_{q['number']}", "").strip().upper().replace(" ", "")
+                        correct_answer = answer_str.strip().upper().replace(" ", "")
+                        st.session_state.result_log[q['number']] = (user_input == correct_answer)
+                    elif "choices" in q and q["choices"]:
                         user_answers = []
                         shuffled_choices, shuffle_indices = get_shuffled_choices(q)
                         user_selection_key = f"user_selection_{q['number']}"
-                        for i, choice_item in enumerate(shuffled_choices):
-                            if st.session_state[user_selection_key][i]:
+                        for i in range(len(shuffled_choices)):
+                            if st.session_state.get(user_selection_key, [])[i]:
                                 original_index = shuffle_indices[i]
                                 user_answers.append(chr(65 + original_index))
-                        correct_answers = sorted(list(q.get("answer", "")))
-                        st.session_state.result_log[q['number']] = (sorted(user_answers) == correct_answers)
+                        is_correct = False
+                        if "/" in answer_str or "／" in answer_str:
+                            valid_options = answer_str.replace("／", "/").split("/")
+                            if len(user_answers) == 1 and user_answers[0] in valid_options:
+                                is_correct = True
+                        else:
+                            correct_answers = sorted(list(answer_str))
+                            if sorted(user_answers) == correct_answers:
+                                is_correct = True
+                        st.session_state.result_log[q['number']] = is_correct
                     else:
                         user_input = st.session_state.get(f"free_input_{q['number']}", "").strip()
-                        correct_answer = str(q.get("answer", "")).strip()
-                        st.session_state.result_log[q['number']] = (user_input == correct_answer)
+                        st.session_state.result_log[q['number']] = (user_input == answer_str.strip())
                 st.session_state[f"checked_{group_id}"] = True
                 st.rerun()
             elif skipped:
                 st.session_state.current_q_group = get_next_q_group()
                 for key in list(st.session_state.keys()):
-                    if key.startswith("checked_") or key.startswith("user_selection_") or key.startswith("shuffled_") or key.startswith("free_input_"):
+                    if key.startswith(("checked_", "user_selection_", "shuffled_", "free_input_", "order_input_")):
                         del st.session_state[key]
                 st.rerun()
-        # フォームの下で画像を表示
-        display_images = case_data.get('image_urls') if case_data else first_q.get('image_urls')
-        if display_images:
-            st.image(display_images, use_container_width=True)
-    else:
-        # 回答フォーム（選択内容・入力内容はそのまま表示）
+    else: # --- 解答チェック後の表示 ---
         for q in q_objects:
             st.markdown(f"#### {q['number']}")
             st.markdown(chem_latex(q.get('question', '')))
-            if "choices" in q and q["choices"]:
+            is_correct = st.session_state.result_log.get(q['number'], False)
+            if is_ordering_question(q):
+                st.text_input("あなたの解答", value=st.session_state.get(f"order_input_{q['number']}", ""), disabled=True)
+                if is_correct:
+                    st.markdown("<span style='font-size:1.5em; color:green;'>✓ 正解！</span>", unsafe_allow_html=True)
+                else:
+                    st.markdown("<span style='font-size:1.5em; color:red;'>× 不正解</span>", unsafe_allow_html=True)
+                    st.markdown(f"<span style='color:blue;'>正解: {q.get('answer', '')}</span>", unsafe_allow_html=True)
+            elif "choices" in q and q["choices"]:
                 shuffled_choices, shuffle_indices = get_shuffled_choices(q)
-                correct_indices = [ord(l) - 65 for l in q.get("answer", "") if l.isalpha()]
-                correct_labels = [chr(65 + shuffle_indices.index(i)) for i in correct_indices if i < len(shuffle_indices)]
+                answer_str = q.get("answer", "")
+                if "/" in answer_str or "／" in answer_str:
+                    correct_letters = answer_str.replace("／", "/").split("/")
+                else:
+                    correct_letters = list(answer_str)
+                correct_indices = [ord(l) - 65 for l in correct_letters if l.isalpha()]
+                correct_labels = [chr(65 + shuffle_indices.index(i)) for i in correct_indices if i < len(shuffle_indices) and i in shuffle_indices]
                 for i, choice_item in enumerate(shuffled_choices):
                     if isinstance(choice_item, dict):
                         label = f"{chr(65 + i)}. {chem_latex(choice_item.get('text', str(choice_item)))}"
                     else:
                         label = f"{chr(65 + i)}. {chem_latex(str(choice_item))}"
-                    # ▼▼▼ ここから2行追加 ▼▼▼
                     user_selection_key = f"user_selection_{q['number']}"
                     is_selected = st.session_state.get(user_selection_key, [False]*len(shuffled_choices))[i]
-                    # ▲▲▲ ここまで2行追加 ▲▲▲
-                    st.checkbox(label, value=is_selected, key=f"user_selection_{q['number']}_{i}", disabled=True)
-                # --- ここからUX改善 ---
-                is_correct = st.session_state.result_log.get(q['number'], False)
+                    st.checkbox(label, value=is_selected, disabled=True, key=f"user_selection_{q['number']}_{i}")
                 if is_correct:
                     st.markdown("<span style='font-size:1.5em; color:green;'>✓ 正解！</span>", unsafe_allow_html=True)
                 else:
                     st.markdown("<span style='font-size:1.5em; color:red;'>× 不正解</span>", unsafe_allow_html=True)
                     st.markdown(f"<span style='color:blue;'>正解: {'・'.join(correct_labels)}</span>", unsafe_allow_html=True)
             else:
-                st.text_input("回答を入力", key=f"free_input_{q['number']}", disabled=True)
-                is_correct = st.session_state.result_log.get(q['number'], False)
+                st.text_input("あなたの解答", value=st.session_state.get(f"free_input_{q['number']}", ""), disabled=True)
                 if is_correct:
                     st.markdown("<span style='font-size:1.5em; color:green;'>✓ 正解！</span>", unsafe_allow_html=True)
                 else:
@@ -548,12 +566,10 @@ def render_practice_page():
                         card = st.session_state.cards.get(q_num_str, {})
                         updated_card = sm2_update(card, quality)
                         st.session_state.cards[q_num_str] = updated_card
-                        # --- 短期復習キュー追加ロジック ---
                         if quality < 4 and updated_card.get("I", 1) < 0.015:
                             add_to_short_term_review = True
                     if add_to_short_term_review and current_q_group not in st.session_state.short_term_review_queue:
                         st.session_state.short_term_review_queue.append(current_q_group)
-                    # Firestoreに全キューも保存
                     save_user_data(
                         username,
                         st.session_state.cards,
@@ -563,9 +579,14 @@ def render_practice_page():
                     )
                 st.session_state.current_q_group = get_next_q_group()
                 for key in list(st.session_state.keys()):
-                    if key.startswith("checked_") or key.startswith("user_selection_") or key.startswith("shuffled_") or key.startswith("free_input_"):
+                    if key.startswith(("checked_", "user_selection_", "shuffled_", "free_input_", "order_input_")):
                         del st.session_state[key]
                 st.rerun()
+
+    # 画像表示をフォームや結果表示の「後」に移動
+    display_images = case_data.get('image_urls') if case_data else first_q.get('image_urls')
+    if display_images:
+        st.image(display_images, use_container_width=True)
 
 def render_search_page():
     # --- 「検索」ページのロジックをすべてここに移動 ---
