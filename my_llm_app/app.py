@@ -73,6 +73,22 @@ ALL_SUBJECTS = sorted(list(set(q['subject'] for q in ALL_QUESTIONS if q.get('sub
 ALL_EXAM_NUMBERS = sorted(list(set(re.match(r'(\d+)', q['number']).group(1) for q in ALL_QUESTIONS if re.match(r'(\d+)', q['number']))), key=int, reverse=True)
 ALL_EXAM_SESSIONS = sorted(list(set(re.match(r'(\d+[A-D])', q['number']).group(1) for q in ALL_QUESTIONS if re.match(r'(\d+[A-D])', q['number']))))
 
+def is_hisshu(q_num_str):
+    """問題番号文字列を受け取り、必修問題かどうかを判定する"""
+    match = re.match(r'(\d+)([A-D])(\d+)', q_num_str)
+    if not match:
+        return False
+    kai, ryoiki, num = int(match.group(1)), match.group(2), int(match.group(3))
+    if 101 <= kai <= 102:
+        return ryoiki in ['A', 'B'] and 1 <= num <= 25
+    elif 103 <= kai <= 110:
+        return ryoiki in ['A', 'C'] and 1 <= num <= 35
+    elif 111 <= kai <= 118:
+        return ryoiki in ['A', 'B', 'C', 'D'] and 1 <= num <= 20
+    return False
+
+HISSHU_Q_NUMBERS_SET = {q['number'] for q in ALL_QUESTIONS if is_hisshu(q['number'])}
+
 # --- Firestore連携 ---
 def load_user_data(user_id):
     if db and user_id:
@@ -126,6 +142,20 @@ def get_shuffled_choices(q):
         random.shuffle(indices)
         st.session_state[key] = indices
     return [q["choices"][i] for i in st.session_state[key]], st.session_state[key]
+
+def get_natural_sort_key(q_dict):
+    """
+    問題辞書を受け取り、自然順ソート用のキー（タプル）を返す。
+    例: "112A5" -> (112, 'A', 5)
+    """
+    q_num_str = q_dict.get('number', '0A0')
+    match = re.match(r'(\d+)([A-Z]*)(\d+)', q_num_str)
+    if match:
+        part1 = int(match.group(1))
+        part2 = match.group(2)
+        part3 = int(match.group(3))
+        return (part1, part2, part3)
+    return (0, q_num_str, 0)
 
 def chem_latex(text):
     return text.replace('Ca2+', '$\\mathrm{Ca^{2+}}$')
@@ -275,6 +305,18 @@ def render_search_page():
                                 correct_reviews += 1
                 retention_rate = (correct_reviews / total_reviews * 100) if total_reviews > 0 else 0
                 st.metric(label="選択範囲の正解率", value=f"{retention_rate:.1f}%", delta=f"{correct_reviews} / {total_reviews} 回")
+                # --- 必修問題専用の正解率 ---
+                hisshu_df = filtered_df[filtered_df["id"].isin(HISSHU_Q_NUMBERS_SET)]
+                hisshu_total_reviews = 0
+                hisshu_correct_reviews = 0
+                for history_list in hisshu_df["history"]:
+                    for review in history_list:
+                        if isinstance(review, dict) and "quality" in review:
+                            hisshu_total_reviews += 1
+                            if review["quality"] >= 4:
+                                hisshu_correct_reviews += 1
+                hisshu_retention_rate = (hisshu_correct_reviews / hisshu_total_reviews * 100) if hisshu_total_reviews > 0 else 0
+                st.metric(label="【必修問題】の正解率 (目標: 80%以上)", value=f"{hisshu_retention_rate:.1f}%", delta=f"{hisshu_correct_reviews} / {hisshu_total_reviews} 回")
     with tab2:
         st.subheader("学習データの可視化")
         if filtered_df.empty:
@@ -470,17 +512,22 @@ def render_practice_page():
             if st.form_submit_button("次の問題へ", type="primary"):
                 with st.spinner('学習記録を保存中...'):
                     quality = eval_map[selected_eval_label]
-                    add_to_short_term_review = False
+                    # --- 修正ここから ---
+                    # 1. 先に次の問題グループを確保
+                    next_group = get_next_q_group()
+                    # 2. sm2_updateは従来通り
                     for q_num_str in current_q_group:
                         card = st.session_state.cards.get(q_num_str, {})
                         updated_card = sm2_update(card, quality)
                         st.session_state.cards[q_num_str] = updated_card
-                        if quality < 4 and updated_card.get("I", 1) < 0.015:
-                            add_to_short_term_review = True
-                    if add_to_short_term_review and current_q_group not in st.session_state.short_term_review_queue:
-                        st.session_state.short_term_review_queue.append(current_q_group)
+                    # 3. 「もう一度」なら今解いたグループをshort_term_review_queue末尾に追加
+                    if quality == 1:
+                        if current_q_group not in st.session_state.short_term_review_queue:
+                            st.session_state.short_term_review_queue.append(current_q_group)
+                    # 4. 保存
                     save_user_data(st.session_state.username, st.session_state)
-                st.session_state.current_q_group = get_next_q_group()
+                # 5. 先に確保したnext_groupをcurrent_q_groupにセット
+                st.session_state.current_q_group = next_group
                 for key in list(st.session_state.keys()):
                     if key.startswith(("checked_", "user_selection_", "shuffled_", "free_input_", "order_input_")):
                         del st.session_state[key]
@@ -573,7 +620,7 @@ else:
                             del st.session_state[key]
                     st.rerun()
                 st.markdown("---")
-            mode = st.radio("出題形式を選択", ["回数別", "科目別", "CBTモード（写真問題のみ）"], key=f"mode_radio_{st.session_state.get('page_select', 'default')}")
+            mode = st.radio("出題形式を選択", ["回数別", "科目別", "CBTモード（写真問題のみ）", "必修問題のみ"], key=f"mode_radio_{st.session_state.get('page_select', 'default')}")
             questions_to_load = []
             if mode == "回数別":
                 selected_exam_num = st.selectbox("回数", ALL_EXAM_NUMBERS)
@@ -593,11 +640,13 @@ else:
                 if selected_subject: questions_to_load = [q for q in ALL_QUESTIONS if q.get("subject") == selected_subject]
             elif mode == "CBTモード（写真問題のみ）":
                 questions_to_load = [q for q in ALL_QUESTIONS if q.get("image_urls")]
+            elif mode == "必修問題のみ":
+                questions_to_load = [q for q in ALL_QUESTIONS if q.get("number") in HISSHU_Q_NUMBERS_SET]
             order_mode = st.selectbox("出題順", ["順番通り", "シャッフル"])
             if order_mode == "シャッフル":
                 random.shuffle(questions_to_load)
             else:
-                questions_to_load = sorted(questions_to_load, key=lambda q: q.get('number', ''))
+                questions_to_load = sorted(questions_to_load, key=get_natural_sort_key)
             if st.button("この条件で学習開始", type="primary"):
                 if not questions_to_load:
                     st.warning("該当する問題がありません。")
