@@ -7,10 +7,12 @@ import re
 from collections import Counter
 import firebase_admin
 from firebase_admin import credentials, firestore
+from firebase_admin import storage
 import requests
 import tempfile
 import collections.abc
 import pandas as pd
+import glob
 
 # plotlyインポート（未インストール時の案内付き）
 try:
@@ -31,17 +33,20 @@ def to_dict(obj):
         return obj
 
 @st.cache_resource
-def get_firestore_client():
+def initialize_firebase():
     firebase_creds = to_dict(st.secrets["firebase_credentials"])
     with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
         json.dump(firebase_creds, f)
         temp_path = f.name
     creds = credentials.Certificate(temp_path)
     if not firebase_admin._apps:
-        firebase_admin.initialize_app(creds)
-    return firestore.client()
+        firebase_admin.initialize_app(creds, {'storageBucket': 'dent-ai-4d8d8.firebasestorage.app'})
+    # 何も返さない
+    return None
 
-db = get_firestore_client()
+initialize_firebase()
+db = firestore.client()
+bucket = storage.bucket()
 
 FIREBASE_API_KEY = st.secrets["firebase_api_key"]
 FIREBASE_AUTH_SIGNUP_URL = f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={FIREBASE_API_KEY}"
@@ -59,13 +64,51 @@ def firebase_signin(email, password):
 
 @st.cache_data
 def load_master_data():
-    master_file_path = os.path.join('data', 'master_questions_final.json')
-    if os.path.exists(master_file_path):
-        with open(master_file_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        return data.get('cases', {}), data.get('questions', [])
-    st.error(f"マスターファイルが見つかりません: {master_file_path}")
-    return {}, []
+    master_dir = os.path.join('data')
+    
+    # 読み込むファイルを直接指定する
+    files_to_load = ['master_questions_final.json', 'gakushi-2024-1-1.json', 'gakushi-2024-2.json']
+    target_files = [os.path.join(master_dir, f) for f in files_to_load]
+
+    all_cases = {}
+    all_questions = []
+    seen_numbers = set()
+
+    for file_path in target_files:
+        # ファイルが存在するか念のため確認
+        if not os.path.exists(file_path):
+            st.warning(f"指定されたファイルが見つかりません: {file_path}")
+            continue
+
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            if isinstance(data, dict):
+                # 'cases'キーがない場合もエラーにならないように.get()を使用
+                cases = data.get('cases', {})
+                if isinstance(cases, dict):
+                    all_cases.update(cases)
+                
+                questions = data.get('questions', [])
+                if isinstance(questions, list):
+                    for q in questions:
+                        num = q.get('number')
+                        if num and num not in seen_numbers:
+                            all_questions.append(q)
+                            seen_numbers.add(num)
+            
+            elif isinstance(data, list):
+                for q in data:
+                    num = q.get('number')
+                    if num and num not in seen_numbers:
+                        all_questions.append(q)
+                        seen_numbers.add(num)
+
+        except Exception as e:
+            st.warning(f"{file_path} の読み込みでエラー: {e}")
+            
+    return all_cases, all_questions
 
 CASES, ALL_QUESTIONS = load_master_data()
 ALL_QUESTIONS_DICT = {q['number']: q for q in ALL_QUESTIONS}
@@ -135,6 +178,36 @@ def save_user_data(user_id, session_state):
         doc_ref.set(payload)
 
 # --- ヘルパー関数 ---
+@st.cache_data
+def check_gakushi_permission(user_id):
+    """
+    Firestoreのuser_permissionsコレクションから権限を判定。
+    can_access_gakushi: trueならTrue, それ以外はFalse
+    """
+    if not db or not user_id:
+        return False
+    doc_ref = db.collection("user_permissions").document(user_id)
+    doc = doc_ref.get()
+    if doc.exists:
+        data = doc.to_dict()
+        return bool(data.get("can_access_gakushi", False))
+    return False
+
+def get_secure_image_url(path):
+    """
+    Firebase Storageのパスから15分有効な署名付きURLを生成。
+    もしhttp(s)で始まる完全なURLなら、そのまま返す。
+    """
+    if isinstance(path, str) and (path.startswith('http://') or path.startswith('https://')):
+        return path
+    try:
+        if path:
+            blob = bucket.blob(path)
+            return blob.generate_signed_url(expiration=datetime.timedelta(minutes=15))
+    except Exception:
+        pass
+    return None
+
 def get_shuffled_choices(q):
     key = f"shuffled_{q['number']}"
     if key not in st.session_state or len(st.session_state.get(key, [])) != len(q.get("choices", [])):
@@ -147,14 +220,28 @@ def get_natural_sort_key(q_dict):
     """
     問題辞書を受け取り、自然順ソート用のキー（タプル）を返す。
     例: "112A5" -> (112, 'A', 5)
+    学士試験形式: "G24-1-1-A-1" や "G24-2再-A-1" -> ('G', 24, '1-1', 'A', 1)
     """
-    q_num_str = q_dict.get('number', '0A0')
-    match = re.match(r'(\d+)([A-Z]*)(\d+)', q_num_str)
-    if match:
-        part1 = int(match.group(1))
-        part2 = match.group(2)
-        part3 = int(match.group(3))
+    q_num_str = q_dict.get('number', '0')
+    # 学士試験形式: G24-1-1-A-1 や G24-2再-A-1 に対応
+    # 試験タイプ部分の正規表現 `([\d\-再]+)` が、数字・ハイフン・「再」の文字を捉える
+    m_gakushi = re.match(r'^(G)(\d+)-([\d\-再]+)-([A-Z])-(\d+)$', q_num_str)
+    if m_gakushi:
+        return (
+            m_gakushi.group(1),      # G
+            int(m_gakushi.group(2)), # 24
+            m_gakushi.group(3),      # '1-1' や '2再' など（文字列としてソート）
+            m_gakushi.group(4),      # A
+            int(m_gakushi.group(5))  # 1
+        )
+    # 従来形式: 112A5
+    m_normal = re.match(r'^(\d+)([A-Z]*)(\d+)$', q_num_str)
+    if m_normal:
+        part1 = int(m_normal.group(1))
+        part2 = m_normal.group(2)
+        part3 = int(m_normal.group(3))
         return (part1, part2, part3)
+    # フォールバック
     return (0, q_num_str, 0)
 
 def chem_latex(text):
@@ -379,7 +466,7 @@ def render_practice_page():
         st.session_state.current_q_group = get_next_q_group()
 
     current_q_group = st.session_state.get("current_q_group", [])
-    if not current_q_group and not st.session_state.get("main_queue") and not st.session_state.get("short_term_review_queue"):
+    if not current_q_group:
         st.info("学習を開始するには、サイドバーで問題を選択してください。")
         st.stop()
 
@@ -533,9 +620,29 @@ def render_practice_page():
                         del st.session_state[key]
                 st.rerun()
 
-    display_images = case_data.get('image_urls') if case_data else first_q.get('image_urls')
+    display_images = []
+    image_keys = ['image_urls', 'image_paths']
+
+    # case_data の画像処理
+    if case_data:
+        for key in image_keys:
+            image_list = case_data.get(key)
+            if image_list:  # 値がNoneや空リストでないことを確認
+                display_images.extend(image_list)
+
+    # first_q の画像処理
+    if first_q:
+        for key in image_keys:
+            image_list = first_q.get(key)
+            if image_list:  # 値がNoneや空リストでないことを確認
+                display_images.extend(image_list)
+
     if display_images:
-        st.image(display_images, use_container_width=True)
+        # 重複を除去して、万が一同じパスが複数あってもエラーを防ぐ
+        unique_images = list(dict.fromkeys(display_images))
+        secure_urls = [url for path in unique_images if path and (url := get_secure_image_url(path))]
+        if secure_urls:
+            st.image(secure_urls, use_container_width=True)
 
 # --- メイン ---
 if not st.session_state.get("user_logged_in"):
@@ -620,7 +727,12 @@ else:
                             del st.session_state[key]
                     st.rerun()
                 st.markdown("---")
-            mode = st.radio("出題形式を選択", ["回数別", "科目別", "CBTモード（写真問題のみ）", "必修問題のみ"], key=f"mode_radio_{st.session_state.get('page_select', 'default')}")
+            # --- ここから出題形式の選択肢を権限で分岐 ---
+            has_gakushi_permission = check_gakushi_permission(username)
+            mode_choices = ["回数別", "科目別","必修問題のみ"]
+            if has_gakushi_permission:
+                mode_choices.append("学士試験")
+            mode = st.radio("出題形式を選択", mode_choices, key=f"mode_radio_{st.session_state.get('page_select', 'default')}")
             questions_to_load = []
             if mode == "回数別":
                 selected_exam_num = st.selectbox("回数", ALL_EXAM_NUMBERS)
@@ -638,10 +750,19 @@ else:
                 available_subjects = [s for s in ALL_SUBJECTS if s in subjects_to_display]
                 selected_subject = st.selectbox("科目", available_subjects)
                 if selected_subject: questions_to_load = [q for q in ALL_QUESTIONS if q.get("subject") == selected_subject]
-            elif mode == "CBTモード（写真問題のみ）":
-                questions_to_load = [q for q in ALL_QUESTIONS if q.get("image_urls")]
             elif mode == "必修問題のみ":
                 questions_to_load = [q for q in ALL_QUESTIONS if q.get("number") in HISSHU_Q_NUMBERS_SET]
+            elif mode == "学士試験":
+                # 年度・試験種別・領域の選択肢
+                gakushi_years = ["2025", "2024", "2023", "2022", "2021"]
+                # 正しい6種類のリストに修正
+                gakushi_types = ["1-1", "1-2", "1-3", "1再", "2", "2再"]
+                gakushi_areas = ["A", "B", "C", "D"]
+                selected_year = st.selectbox("年度", gakushi_years, key="gakushi_year_select")
+                selected_type = st.selectbox("試験種別", gakushi_types, key="gakushi_type_select")
+                selected_area = st.selectbox("領域", gakushi_areas, key="gakushi_area_select")
+                prefix = f"G{selected_year[-2:]}-{selected_type}-{selected_area}-"
+                questions_to_load = [q for q in ALL_QUESTIONS if q.get("number", "").startswith(prefix)]
             order_mode = st.selectbox("出題順", ["順番通り", "シャッフル"])
             if order_mode == "シャッフル":
                 random.shuffle(questions_to_load)
