@@ -73,13 +73,13 @@ def load_master_data():
     all_cases = {}
     all_questions = []
     seen_numbers = set()
+    missing_files = []
 
     for file_path in target_files:
         # ファイルが存在するか念のため確認
         if not os.path.exists(file_path):
-            st.warning(f"指定されたファイルが見つかりません: {file_path}")
+            missing_files.append(file_path)
             continue
-
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
@@ -106,8 +106,9 @@ def load_master_data():
                         seen_numbers.add(num)
 
         except Exception as e:
-            st.warning(f"{file_path} の読み込みでエラー: {e}")
-            
+            # ログだけ残してUIには表示しない
+            print(f"{file_path} の読み込みでエラー: {e}")
+    # ファイルが足りない場合は警告をUIに出さない
     return all_cases, all_questions
 
 CASES, ALL_QUESTIONS = load_master_data()
