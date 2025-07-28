@@ -64,7 +64,8 @@ def firebase_signin(email, password):
 
 @st.cache_data
 def load_master_data():
-    master_dir = os.path.join('data')
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    master_dir = os.path.join(script_dir, 'data')
     
     # 読み込むファイルを直接指定する
     files_to_load = ['master_questions_final.json', 'gakushi-2024-1-1.json', 'gakushi-2024-2.json']
@@ -285,91 +286,171 @@ def sm2_update(card, quality, now=None):
 # --- 検索ページ ---
 def render_search_page():
     st.title("検索・進捗ページ")
-    questions_data = []
-    now_utc = datetime.datetime.now(datetime.timezone.utc)
-    for q in ALL_QUESTIONS:
-        q_num = q["number"]
-        card = st.session_state.get("cards", {}).get(q_num, {})
-        def map_card_to_level(card_data):
-            n = card_data.get("n")
-            if not card_data or n is None: return "未学習"
-            if n == 0: return "レベル0"
-            if n == 1: return "レベル1"
-            if n == 2: return "レベル2"
-            if n == 3: return "レベル3"
-            if n == 4: return "レベル4"
-            if n >= 5: return "習得済み"
-            return "未学習"
-        level = map_card_to_level(card)
-        days_until_due = None
-        if "next_review" in card:
-            try:
-                due_date = datetime.datetime.fromisoformat(card["next_review"])
-                days_until_due = (due_date - now_utc).days
-            except (ValueError, TypeError):
-                days_until_due = None
-        questions_data.append({
-            "id": q_num,
-            "year": int(q_num[:3]) if q_num[:3].isdigit() else None,
-            "region": q_num[3] if len(q_num) >= 4 and q_num[3] in "ABCD" else None,
-            "category": q.get("category", ""),
-            "subject": q.get("subject", ""),
-            "level": level,
-            "ef": card.get("EF"),
-            "interval": card.get("I"),
-            "repetitions": card.get("n"),
-            "history": card.get("history", []),
-            "days_until_due": days_until_due
-        })
-    df = pd.DataFrame(questions_data)
-    df["year"] = pd.to_numeric(df["year"], errors="coerce").astype('Int64')
-
-    years_sorted = sorted([int(x) for x in ALL_EXAM_NUMBERS if str(x).isdigit()])
-    regions_sorted = sorted([r for r in df["region"].dropna().unique() if r in ["A","B","C","D"]])
-    subjects_sorted = sorted(df["subject"].dropna().unique())
-    levels_sorted = ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "習得済み"]
-
-    if "search_filter_years" not in st.session_state:
-        st.session_state["search_filter_years"] = years_sorted.copy()
-    if "search_filter_regions" not in st.session_state:
-        st.session_state["search_filter_regions"] = regions_sorted.copy()
-    if "search_filter_subjects" not in st.session_state:
-        st.session_state["search_filter_subjects"] = subjects_sorted.copy()
-    if "search_filter_levels" not in st.session_state:
-        st.session_state["search_filter_levels"] = levels_sorted.copy()
-    if "applied_search_filters" not in st.session_state:
-        st.session_state["applied_search_filters"] = {
-            "years": years_sorted.copy(),
-            "regions": regions_sorted.copy(),
-            "subjects": subjects_sorted.copy(),
-            "levels": levels_sorted.copy()
-        }
-
+    
+    # --- サイドバーでモード選択 ---
     with st.sidebar:
-        st.header("絞り込み条件")
-        years = st.multiselect("回数", years_sorted, default=st.session_state["search_filter_years"], key="search_filter_years")
-        regions = st.multiselect("領域", regions_sorted, default=st.session_state["search_filter_regions"], key="search_filter_regions")
-        subjects = st.multiselect("科目", subjects_sorted, default=st.session_state["search_filter_subjects"], key="search_filter_subjects")
-        levels = st.multiselect("習熟度", levels_sorted, default=st.session_state["search_filter_levels"], key="search_filter_levels")
-        if st.button("この条件で表示する", key="apply_search_filters_btn"):
-            st.session_state["applied_search_filters"] = {
-                "years": years,
-                "regions": regions,
-                "subjects": subjects,
-                "levels": levels
-            }
+        st.header("検索モード")
+        username = st.session_state.get("username")
+        has_gakushi_permission = check_gakushi_permission(username)
+        mode_choices = ["国試全体"]
+        if has_gakushi_permission:
+            mode_choices.append("学士試験")
+        search_mode = st.radio("分析対象", mode_choices, key="search_mode_radio")
 
-    applied = st.session_state["applied_search_filters"]
-    filtered_df = df.copy()
-    if applied["years"]:
-        filtered_df = filtered_df[filtered_df["year"].isin(applied["years"])]
-    if applied["regions"]:
-        filtered_df = filtered_df[filtered_df["region"].isin(applied["regions"])]
-    if applied["subjects"]:
-        filtered_df = filtered_df[filtered_df["subject"].isin(applied["subjects"])]
-    if applied["levels"]:
-        filtered_df = filtered_df[filtered_df["level"].isin(applied["levels"])]
+    # --- モード別に処理を完全に分岐 ---
 
+    if search_mode == "学士試験":
+        # ▼▼▼ 学士試験モードの処理（科目リスト固定） ▼▼▼
+        GAKUSHI_SUBJECTS = [
+            "歯科矯正学", "歯科保存学", "口腔外科学1", "口腔外科学2", "小児歯科学", "口腔インプラント", "歯科麻酔学", "障がい者歯科", "歯科放射線学",
+            "有歯補綴咬合学", "欠損歯列補綴咬合学", "高齢者歯科学", "生物学", "化学", "歯周病学", "法医学教室", "内科学", "口腔病理学",
+            "口腔解剖学", "生理学", "生化学", "解剖学", "薬理学", "歯科理工学", "細菌学"
+        ]
+        with st.sidebar:
+            st.header("絞り込み条件")
+            gakushi_years = ["2025", "2024", "2023", "2022", "2021"]
+            gakushi_types = ["1-1", "1-2", "1-3", "1再", "2", "2再"]
+            gakushi_areas = ["A", "B", "C", "D"]
+            selected_year = st.selectbox("年度", gakushi_years, key="search_gakushi_year")
+            selected_type = st.selectbox("試験種別", gakushi_types, key="search_gakushi_type")
+            selected_area = st.selectbox("領域", gakushi_areas, key="search_gakushi_area")
+        prefix = f"G{selected_year[-2:]}-{selected_type}-{selected_area}-"
+        questions_data = []
+        for q in ALL_QUESTIONS:
+            if q.get("number", "").startswith(prefix):
+                q_num = q["number"]
+                card = st.session_state.get("cards", {}).get(q_num, {})
+                def map_card_to_level(card_data):
+                    n = card_data.get("n")
+                    if not card_data or n is None: return "未学習"
+                    if n == 0: return "レベル0"
+                    if n == 1: return "レベル1"
+                    if n == 2: return "レベル2"
+                    if n == 3: return "レベル3"
+                    if n == 4: return "レベル4"
+                    if n >= 5: return "習得済み"
+                    return "未学習"
+                level = map_card_to_level(card)
+                days_until_due = None
+                if "next_review" in card:
+                    try:
+                        due_date = datetime.datetime.fromisoformat(card["next_review"])
+                        days_until_due = (due_date - datetime.datetime.now(datetime.timezone.utc)).days
+                    except (ValueError, TypeError):
+                        days_until_due = None
+                # 必修判定: 1〜20番が必修
+                m = re.match(r'^G\d{2}-[\d\-再]+-[A-D]-(\d+)$', q_num)
+                is_hisshu = False
+                if m:
+                    try:
+                        num = int(m.group(1))
+                        if 1 <= num <= 20:
+                            is_hisshu = True
+                    except Exception:
+                        pass
+                subject = q.get("subject", "")
+                if subject not in GAKUSHI_SUBJECTS:
+                    subject = "その他"
+                questions_data.append({
+                    "id": q_num, "year": selected_year, "type": selected_type,
+                    "area": selected_area, "subject": subject, "level": level,
+                    "ef": card.get("EF"), "interval": card.get("I"), "repetitions": card.get("n"),
+                    "history": card.get("history", []), "days_until_due": days_until_due,
+                    "is_hisshu": is_hisshu
+                })
+        with st.sidebar:
+            selected_subjects = st.multiselect("科目", GAKUSHI_SUBJECTS + ["その他"], default=GAKUSHI_SUBJECTS + ["その他"])
+            hisshu_only = st.checkbox("必修問題のみ", value=False)
+        filtered_df = pd.DataFrame(questions_data)
+        if not filtered_df.empty:
+            if selected_subjects:
+                filtered_df = filtered_df[filtered_df["subject"].isin(selected_subjects)]
+            if hisshu_only:
+                filtered_df = filtered_df[filtered_df["is_hisshu"] == True]
+    else:
+        # ▼▼▼ 国試全体モードの処理 ▼▼▼
+        questions_data = []
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        for q in ALL_QUESTIONS:
+            if q.get("number", "").startswith("G"): continue
+            q_num = q["number"]
+            card = st.session_state.get("cards", {}).get(q_num, {})
+            def map_card_to_level(card_data):
+                n = card_data.get("n")
+                if not card_data or n is None: return "未学習"
+                if n == 0: return "レベル0"
+                if n == 1: return "レベル1"
+                if n == 2: return "レベル2"
+                if n == 3: return "レベル3"
+                if n == 4: return "レベル4"
+                if n >= 5: return "習得済み"
+                return "未学習"
+            level = map_card_to_level(card)
+            days_until_due = None
+            if "next_review" in card:
+                try:
+                    due_date = datetime.datetime.fromisoformat(card["next_review"])
+                    days_until_due = (due_date - now_utc).days
+                except (ValueError, TypeError):
+                    days_until_due = None
+            questions_data.append({
+                "id": q_num, "year": int(q_num[:3]) if q_num[:3].isdigit() else None,
+                "region": q_num[3] if len(q_num) >= 4 and q_num[3] in "ABCD" else None,
+                "category": q.get("category", ""), "subject": q.get("subject", ""), "level": level,
+                "ef": card.get("EF"), "interval": card.get("I"), "repetitions": card.get("n"),
+                "history": card.get("history", []), "days_until_due": days_until_due
+            })
+        
+        df = pd.DataFrame(questions_data)
+        
+        # 国試全体モードの絞り込み条件を作成・表示
+        years_sorted = sorted(df["year"].dropna().unique().astype(int)) if not df.empty else []
+        regions_sorted = sorted(df["region"].dropna().unique()) if not df.empty else []
+        subjects_sorted = sorted(df["subject"].dropna().unique()) if not df.empty else []
+        levels_sorted = ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "習得済み"]
+
+        with st.sidebar:
+            st.header("絞り込み条件")
+            # 1. session_stateに保存されているデフォルト値を取得
+            applied_filters = st.session_state.get("applied_search_filters", {})
+            default_years = applied_filters.get("years", years_sorted)
+            default_regions = applied_filters.get("regions", regions_sorted)
+            default_subjects = applied_filters.get("subjects", subjects_sorted)
+            default_levels = applied_filters.get("levels", levels_sorted)
+
+            # 2. デフォルト値を選択肢リストに存在する値のみにサニタイズ（無害化）する
+            sanitized_years = [y for y in default_years if y in years_sorted]
+            sanitized_regions = [r for r in default_regions if r in regions_sorted]
+            sanitized_subjects = [s for s in default_subjects if s in subjects_sorted]
+            sanitized_levels = [l for l in default_levels if l in levels_sorted]
+
+            # 3. サニタイズ済みの値をmultiselectのデフォルト値として使用する
+            years = st.multiselect("回数", years_sorted, default=sanitized_years)
+            regions = st.multiselect("領域", regions_sorted, default=sanitized_regions)
+            subjects = st.multiselect("科目", subjects_sorted, default=sanitized_subjects)
+            levels = st.multiselect("習熟度", levels_sorted, default=sanitized_levels)
+            
+            if st.button("この条件で表示する", key="apply_search_filters_btn"):
+                # 更新された選択値をsession_stateに保存する
+                st.session_state["applied_search_filters"] = {"years": years, "regions": regions, "subjects": subjects, "levels": levels}
+                # ページを再実行してフィルターを即時反映させる
+                st.rerun()
+
+        # 絞り込み処理
+        filtered_df = df.copy()
+        if not filtered_df.empty:
+            # session_stateから最新のフィルター条件を適用する
+            current_filters = st.session_state.get("applied_search_filters", {})
+            if current_filters.get("years"): 
+                filtered_df = filtered_df[filtered_df["year"].isin(current_filters["years"])]
+            if current_filters.get("regions"): 
+                filtered_df = filtered_df[filtered_df["region"].isin(current_filters["regions"])]
+            if current_filters.get("subjects"): 
+                filtered_df = filtered_df[filtered_df["subject"].isin(current_filters["subjects"])]
+            if current_filters.get("levels"): 
+                filtered_df = filtered_df[filtered_df["level"].isin(current_filters["levels"])]
+
+    # --- ▼▼▼ 以下は全モード共通の表示部分 ▼▼▼ ---
     tab1, tab2, tab3 = st.tabs(["概要", "グラフ分析", "問題リスト検索"])
     with tab1:
         st.subheader("学習状況サマリー")
@@ -379,6 +460,7 @@ def render_search_page():
             col1, col2 = st.columns(2)
             with col1:
                 st.markdown("##### カード習熟度分布")
+                levels_sorted = ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "習得済み"]
                 level_counts = filtered_df["level"].value_counts().reindex(levels_sorted).fillna(0).astype(int)
                 st.dataframe(level_counts)
             with col2:
@@ -393,7 +475,6 @@ def render_search_page():
                                 correct_reviews += 1
                 retention_rate = (correct_reviews / total_reviews * 100) if total_reviews > 0 else 0
                 st.metric(label="選択範囲の正解率", value=f"{retention_rate:.1f}%", delta=f"{correct_reviews} / {total_reviews} 回")
-                # --- 必修問題専用の正解率 ---
                 hisshu_df = filtered_df[filtered_df["id"].isin(HISSHU_Q_NUMBERS_SET)]
                 hisshu_total_reviews = 0
                 hisshu_correct_reviews = 0
@@ -405,6 +486,7 @@ def render_search_page():
                                 hisshu_correct_reviews += 1
                 hisshu_retention_rate = (hisshu_correct_reviews / hisshu_total_reviews * 100) if hisshu_total_reviews > 0 else 0
                 st.metric(label="【必修問題】の正解率 (目標: 80%以上)", value=f"{hisshu_retention_rate:.1f}%", delta=f"{hisshu_correct_reviews} / {hisshu_total_reviews} 回")
+
     with tab2:
         st.subheader("学習データの可視化")
         if filtered_df.empty:
@@ -430,6 +512,7 @@ def render_search_page():
             if not ease_df.empty and PLOTLY_AVAILABLE:
                 fig = px.histogram(ease_df, x="ef", nbins=20, title="Easiness Factor (EF) の分布")
                 st.plotly_chart(fig, use_container_width=True)
+
     with tab3:
         st.subheader("問題リストと絞り込み")
         level_colors = {
@@ -440,8 +523,12 @@ def render_search_page():
         st.markdown(f"**{len(filtered_df)}件の問題が見つかりました**")
         if not filtered_df.empty:
             def sort_key(row_id):
-                m = re.match(r"(\d+)([A-D])(\d+)", str(row_id))
-                return (int(m.group(1)), m.group(2), int(m.group(3))) if m else (0, '', 0)
+                m_gakushi = re.match(r'^(G)(\d+)-([\d\-再]+)-([A-Z])-(\d+)$', str(row_id))
+                if m_gakushi: return (m_gakushi.group(1), int(m_gakushi.group(2)), m_gakushi.group(3), m_gakushi.group(4), int(m_gakushi.group(5)))
+                m_normal = re.match(r"(\d+)([A-D])(\d+)", str(row_id))
+                if m_normal: return ('Z', int(m_normal.group(1)), m_normal.group(2), '', int(m_normal.group(3)))
+                return ('Z', 0, '', '', 0)
+
             filtered_sorted = filtered_df.copy()
             filtered_sorted['sort_key'] = filtered_sorted['id'].apply(sort_key)
             filtered_sorted = filtered_sorted.sort_values(by='sort_key').drop(columns=['sort_key'])
