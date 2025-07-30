@@ -24,6 +24,11 @@ except ImportError:
 st.set_page_config(layout="wide")
 
 # --- Firebase初期化 ---
+#【重要】Firebaseセキュリティルールを設定してください。
+# Firestore: ユーザーが自分のデータのみにアクセスできるように制限します。
+#   例: match /user_progress/{userId} { allow read, write: if request.auth.token.email == userId; }
+# Storage: 認証済みユーザーのみがアップロードできるようにし、必要に応じて読み取りを制限します。
+
 def to_dict(obj):
     if isinstance(obj, collections.abc.Mapping):
         return {k: to_dict(v) for k, v in obj.items()}
@@ -180,7 +185,7 @@ def save_user_data(user_id, session_state):
         doc_ref.set(payload)
 
 # --- ヘルパー関数 ---
-@st.cache_data
+# @st.cache_data # ← キャッシュが問題の可能性があるため、一時的に無効化
 def check_gakushi_permission(user_id):
     """
     Firestoreのuser_permissionsコレクションから権限を判定。
@@ -188,11 +193,18 @@ def check_gakushi_permission(user_id):
     """
     if not db or not user_id:
         return False
+    # デバッグログ：どのユーザーで権限チェックが実行されているか確認
+    st.write(f"DEBUG: Checking permission for user: {user_id}")
     doc_ref = db.collection("user_permissions").document(user_id)
     doc = doc_ref.get()
     if doc.exists:
         data = doc.to_dict()
+        # デバッグログ：取得した権限データを確認
+        st.write(f"DEBUG: Found permissions for {user_id}: {data}")
         return bool(data.get("can_access_gakushi", False))
+    else:
+        # デバッグログ：権限ドキュメントが見つからなかった場合
+        st.write(f"DEBUG: No permissions document found for user: {user_id}")
     return False
 
 def get_secure_image_url(path):
@@ -746,6 +758,8 @@ if not st.session_state.get("user_logged_in"):
                 st.session_state["username"] = login_email
                 st.session_state["id_token"] = result["idToken"]
                 st.session_state["user_logged_in"] = login_email
+                # ログイン成功ユーザーを明示
+                st.success(f"ログイン成功: {login_email}")
                 st.rerun()
             else:
                 st.error("ログインに失敗しました。メールアドレスまたはパスワードを確認してください。")
