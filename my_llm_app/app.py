@@ -73,7 +73,7 @@ def load_master_data():
     master_dir = os.path.join(script_dir, 'data')
     
     # 読み込むファイルを直接指定する
-    files_to_load = ['master_questions_final.json', 'gakushi-2024-1-1.json', 'gakushi-2024-2.json']
+    files_to_load = ['master_questions_final.json', 'gakushi-2024-1-1.json', 'gakushi-2024-2.json', 'gakushi-2025-1-1.json']
     target_files = [os.path.join(master_dir, f) for f in files_to_load]
 
     all_cases = {}
