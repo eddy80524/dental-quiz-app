@@ -594,10 +594,14 @@ def render_practice_page():
                 st.markdown(f"#### {q['number']}")
                 st.markdown(chem_latex(q.get('question', '')))
                 if is_ordering_question(q):
+                    # --- 修正箇所①：並び替え問題の選択肢表示 ---
+                    # 選択肢をシャッフルし、A, B, C...のラベルを付けて表示
+                    shuffled_choices, _ = get_shuffled_choices(q)
                     st.markdown("##### 選択肢")
-                    for choice in q.get("choices", []):
-                        st.markdown(f"- {choice}")
-                    st.text_input("解答を順番に入力してください（例: CBEAD）", key=f"order_input_{q['number']}")
+                    for i, choice_text in enumerate(shuffled_choices):
+                        st.markdown(f"**{chr(65 + i)}.** {choice_text}")
+                    # 解答例を固定のプレースホルダーに変更
+                    st.text_input("解答を順番に入力してください（例: ABCDE）", key=f"order_input_{q['number']}")
                 elif "choices" in q and q["choices"]:
                     shuffled_choices, _ = get_shuffled_choices(q)
                     user_selection_key = f"user_selection_{q['number']}"
@@ -619,9 +623,29 @@ def render_practice_page():
                 for q in q_objects:
                     answer_str = q.get("answer", "")
                     if is_ordering_question(q):
-                        user_input = st.session_state.get(f"order_input_{q['number']}", "").strip().upper().replace(" ", "")
-                        correct_answer = answer_str.strip().upper().replace(" ", "")
-                        st.session_state.result_log[q['number']] = (user_input == correct_answer)
+                        # --- 修正箇所②：並び替え問題の解答判定 ---
+                        try:
+                            # セッションからシャッフル情報を取得
+                            shuffle_indices = st.session_state.get(f"shuffled_{q['number']}", list(range(len(q.get("choices", [])))))
+                            # 元のインデックス→シャッフル後のインデックスのマッピングを作成
+                            reverse_shuffle_map = {orig_idx: new_idx for new_idx, orig_idx in enumerate(shuffle_indices)}
+                            
+                            # JSON内の元の正解順（例: "CEABD"）を取得
+                            original_answer_str = q.get("answer", "").strip().upper()
+                            # 元の正解順をインデックスのリストに変換
+                            original_indices_correct_order = [ord(c) - 65 for c in original_answer_str]
+                            
+                            # 元の正解順を、シャッフル後のインデックス順に変換
+                            shuffled_correct_indices = [reverse_shuffle_map[orig_idx] for orig_idx in original_indices_correct_order]
+                            # シャッフル後の正解文字列を作成 (例: "BDACE")
+                            correct_shuffled_answer_str = "".join([chr(65 + i) for i in shuffled_correct_indices])
+
+                            # ユーザー入力と比較
+                            user_input = st.session_state.get(f"order_input_{q['number']}", "").strip().upper().replace(" ", "")
+                            st.session_state.result_log[q['number']] = (user_input == correct_shuffled_answer_str)
+                        except (KeyError, TypeError, ValueError):
+                             # 正解データが不正な場合などは不正解とする
+                            st.session_state.result_log[q['number']] = False
                     elif "choices" in q and q["choices"]:
                         user_answers = []
                         shuffled_choices, shuffle_indices = get_shuffled_choices(q)
@@ -657,12 +681,32 @@ def render_practice_page():
             st.markdown(chem_latex(q.get('question', '')))
             is_correct = st.session_state.result_log.get(q['number'], False)
             if is_ordering_question(q):
+                # --- 修正箇所③：並び替え問題の正解表示 ---
+                # 正解を計算するためにシャッフル情報を取得
+                shuffled_choices, shuffle_indices = get_shuffled_choices(q)
+
+                # 正解を確認するために、シャッフルされた選択肢を再度表示
+                st.markdown("##### 選択肢")
+                for i, choice_text in enumerate(shuffled_choices):
+                    st.markdown(f"**{chr(65 + i)}.** {choice_text}")
+
                 st.text_input("あなたの解答", value=st.session_state.get(f"order_input_{q['number']}", ""), disabled=True)
                 if is_correct:
                     st.markdown("<span style='font-size:1.5em; color:green;'>✓ 正解！</span>", unsafe_allow_html=True)
                 else:
                     st.markdown("<span style='font-size:1.5em; color:red;'>× 不正解</span>", unsafe_allow_html=True)
-                    st.markdown(f"<span style='color:blue;'>正解: {q.get('answer', '')}</span>", unsafe_allow_html=True)
+                    # シャッフル後の正しい答えを計算して表示
+                    correct_shuffled_answer_str = ""
+                    try:
+                        reverse_shuffle_map = {orig_idx: new_idx for new_idx, orig_idx in enumerate(shuffle_indices)}
+                        original_answer_str = q.get("answer", "").strip().upper()
+                        original_indices_correct_order = [ord(c) - 65 for c in original_answer_str]
+                        shuffled_correct_indices = [reverse_shuffle_map[orig_idx] for orig_idx in original_indices_correct_order]
+                        correct_shuffled_answer_str = "".join([chr(65 + i) for i in shuffled_correct_indices])
+                    except (KeyError, TypeError, ValueError):
+                        correct_shuffled_answer_str = "エラー"
+                    st.markdown(f"<span style='color:blue;'>正解: {correct_shuffled_answer_str}</span>", unsafe_allow_html=True)
+
             elif "choices" in q and q["choices"]:
                 shuffled_choices, shuffle_indices = get_shuffled_choices(q)
                 answer_str = q.get("answer", "")
