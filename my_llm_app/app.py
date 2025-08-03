@@ -56,6 +56,7 @@ bucket = storage.bucket()
 FIREBASE_API_KEY = st.secrets["firebase_api_key"]
 FIREBASE_AUTH_SIGNUP_URL = f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={FIREBASE_API_KEY}"
 FIREBASE_AUTH_SIGNIN_URL = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={FIREBASE_API_KEY}"
+FIREBASE_REFRESH_TOKEN_URL = f"https://securetoken.googleapis.com/v1/token?key={FIREBASE_API_KEY}"
 
 def firebase_signup(email, password):
     payload = {"email": email, "password": password, "returnSecureToken": True}
@@ -66,6 +67,57 @@ def firebase_signin(email, password):
     payload = {"email": email, "password": password, "returnSecureToken": True}
     r = requests.post(FIREBASE_AUTH_SIGNIN_URL, json=payload)
     return r.json()
+
+def firebase_refresh_token(refresh_token):
+    """リフレッシュトークンを使って新しいidTokenを取得"""
+    payload = {
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token
+    }
+    try:
+        r = requests.post(FIREBASE_REFRESH_TOKEN_URL, json=payload)
+        result = r.json()
+        if "id_token" in result:
+            return {
+                "idToken": result["id_token"],
+                "refreshToken": result["refresh_token"],
+                "expiresIn": int(result.get("expires_in", 3600))
+            }
+    except Exception as e:
+        print(f"Token refresh error: {e}")
+    return None
+
+def is_token_expired(token_timestamp, expires_in=3600):
+    """トークンが期限切れかどうかをチェック（デフォルト1時間だが、30分でリフレッシュ）"""
+    if not token_timestamp:
+        return True
+    now = datetime.datetime.now(datetime.timezone.utc)
+    token_time = datetime.datetime.fromisoformat(token_timestamp)
+    # 30分（1800秒）で期限切れとして扱い、余裕を持ってリフレッシュ
+    return (now - token_time).total_seconds() > 1800
+
+def ensure_valid_session():
+    """セッションが有効かチェックし、必要に応じてトークンをリフレッシュ"""
+    if not st.session_state.get("user_logged_in"):
+        return False
+    
+    token_timestamp = st.session_state.get("token_timestamp")
+    refresh_token = st.session_state.get("refresh_token")
+    
+    # トークンが期限切れの場合はリフレッシュを試行
+    if is_token_expired(token_timestamp) and refresh_token:
+        refresh_result = firebase_refresh_token(refresh_token)
+        if refresh_result:
+            # トークンの更新
+            st.session_state["id_token"] = refresh_result["idToken"]
+            st.session_state["refresh_token"] = refresh_result["refreshToken"]
+            st.session_state["token_timestamp"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            return True
+        else:
+            # リフレッシュに失敗した場合はログアウト
+            return False
+    
+    return True
 
 @st.cache_data
 def load_master_data():
@@ -141,6 +193,10 @@ HISSHU_Q_NUMBERS_SET = {q['number'] for q in ALL_QUESTIONS if is_hisshu(q['numbe
 
 # --- Firestore連携 ---
 def load_user_data(user_id):
+    # セッションの有効性をチェック
+    if not ensure_valid_session():
+        return {"cards": {}, "main_queue": [], "short_term_review_queue": [], "current_q_group": []}
+    
     if db and user_id:
         doc_ref = db.collection("user_progress").document(user_id)
         doc = doc_ref.get()
@@ -173,6 +229,11 @@ def save_user_data(user_id, session_state):
             return []
         else:
             return [str(obj)]
+    
+    # セッションの有効性をチェック
+    if not ensure_valid_session():
+        return
+    
     if db and user_id:
         doc_ref = db.collection("user_progress").document(user_id)
         payload = {"cards": session_state.get("cards", {})}
@@ -193,18 +254,11 @@ def check_gakushi_permission(user_id):
     """
     if not db or not user_id:
         return False
-    # デバッグログ：どのユーザーで権限チェックが実行されているか確認
-    st.write(f"DEBUG: Checking permission for user: {user_id}")
     doc_ref = db.collection("user_permissions").document(user_id)
     doc = doc_ref.get()
     if doc.exists:
         data = doc.to_dict()
-        # デバッグログ：取得した権限データを確認
-        st.write(f"DEBUG: Found permissions for {user_id}: {data}")
         return bool(data.get("can_access_gakushi", False))
-    else:
-        # デバッグログ：権限ドキュメントが見つからなかった場合
-        st.write(f"DEBUG: No permissions document found for user: {user_id}")
     return False
 
 def get_secure_image_url(path):
@@ -789,7 +843,13 @@ def render_practice_page():
             st.image(secure_urls, use_container_width=True)
 
 # --- メイン ---
-if not st.session_state.get("user_logged_in"):
+if not st.session_state.get("user_logged_in") or not ensure_valid_session():
+    # セッションが無効の場合はログイン情報をクリア
+    if not ensure_valid_session():
+        for k in ["user_logged_in", "id_token", "refresh_token", "name", "username", "user_data_loaded", "token_timestamp"]:
+            if k in st.session_state:
+                del st.session_state[k]
+    
     st.title("ログイン／新規登録")
     tab_login, tab_signup = st.tabs(["ログイン", "新規登録"])
     with tab_login:
@@ -801,6 +861,8 @@ if not st.session_state.get("user_logged_in"):
                 st.session_state["name"] = login_email.split("@")[0]
                 st.session_state["username"] = login_email
                 st.session_state["id_token"] = result["idToken"]
+                st.session_state["refresh_token"] = result.get("refreshToken", "")
+                st.session_state["token_timestamp"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
                 st.session_state["user_logged_in"] = login_email
                 # ログイン成功ユーザーを明示
                 st.success(f"ログイン成功: {login_email}")
@@ -834,11 +896,23 @@ else:
     if "result_log" not in st.session_state:
         st.session_state.result_log = {}
     with st.sidebar:
-        st.success(f"{name} としてログイン中")
+        # セッション状態の表示
+        token_timestamp = st.session_state.get("token_timestamp")
+        if token_timestamp:
+            token_time = datetime.datetime.fromisoformat(token_timestamp)
+            elapsed = datetime.datetime.now(datetime.timezone.utc) - token_time
+            remaining_minutes = max(0, 30 - int(elapsed.total_seconds() / 60))
+            if remaining_minutes > 5:
+                st.success(f"{name} としてログイン中 (セッション: あと{remaining_minutes}分)")
+            else:
+                st.warning(f"{name} としてログイン中 (セッション: まもなく更新)")
+        else:
+            st.success(f"{name} としてログイン中")
+        
         page = st.radio("ページ選択", ["演習", "検索"], key="page_select")
         if st.button("ログアウト", key="logout_btn"):
             save_user_data(username, st.session_state)
-            for k in ["user_logged_in", "id_token", "refresh_token", "name", "username", "user_data_loaded"]:
+            for k in ["user_logged_in", "id_token", "refresh_token", "name", "username", "user_data_loaded", "token_timestamp"]:
                 if k in st.session_state:
                     del st.session_state[k]
             st.rerun()
