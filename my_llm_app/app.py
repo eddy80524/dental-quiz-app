@@ -125,7 +125,7 @@ def load_master_data():
     master_dir = os.path.join(script_dir, 'data')
     
     # 読み込むファイルを直接指定する
-    files_to_load = ['master_questions_final.json', 'gakushi-2024-1-1.json', 'gakushi-2024-2.json', 'gakushi-2025-1-1.json']
+    files_to_load = ['master_questions_final.json', 'gakushi-2022-1-1.json', 'gakushi-2024-1-1.json', 'gakushi-2024-2.json', 'gakushi-2025-1-1.json']
     target_files = [os.path.join(master_dir, f) for f in files_to_load]
 
     all_cases = {}
@@ -320,6 +320,57 @@ def is_ordering_question(q):
     keywords = ["順番に並べよ", "正しい順序", "適切な順序", "正しい順番", "順序で"]
     return any(k in text for k in keywords)
 
+def search_questions_by_keyword(keyword, gakushi_only=False):
+    """
+    キーワードで問題を検索する関数
+    問題文、選択肢、解説などからキーワードを検索
+    """
+    if not keyword:
+        return []
+    
+    keyword_lower = keyword.lower()
+    matching_questions = []
+    
+    for q in ALL_QUESTIONS:
+        # 学士試験限定の場合、学士試験の問題番号かチェック
+        if gakushi_only:
+            question_number = q.get("number", "")
+            # 学士試験の問題番号パターン（例：G22-1-1-A-1, G24-1-1-A-1など）
+            if not question_number.startswith("G"):
+                continue
+        
+        # 検索対象のテキストを収集
+        search_texts = []
+        
+        # 問題文
+        if q.get("question"):
+            search_texts.append(q["question"])
+        
+        # 選択肢
+        if q.get("choices"):
+            for choice in q["choices"]:
+                if isinstance(choice, dict):
+                    search_texts.append(choice.get("text", ""))
+                else:
+                    search_texts.append(str(choice))
+        
+        # 解説
+        if q.get("explanation"):
+            search_texts.append(q["explanation"])
+        
+        # 科目
+        if q.get("subject"):
+            search_texts.append(q["subject"])
+        
+        # すべてのテキストを結合して検索
+        combined_text = " ".join(search_texts).lower()
+        
+        # キーワードが含まれているかチェック
+        if keyword_lower in combined_text:
+            matching_questions.append(q)
+    
+    return matching_questions
+
 def sm2_update(card, quality, now=None):
     if now is None: now = datetime.datetime.now(datetime.timezone.utc)
     EF, n, I = card.get("EF", 2.5), card.get("n", 0), card.get("I", 0)
@@ -358,14 +409,92 @@ def render_search_page():
         st.header("検索モード")
         username = st.session_state.get("username")
         has_gakushi_permission = check_gakushi_permission(username)
-        mode_choices = ["国試全体"]
+        mode_choices = ["国試全体", "キーワード検索"]
         if has_gakushi_permission:
             mode_choices.append("学士試験")
         search_mode = st.radio("分析対象", mode_choices, key="search_mode_radio")
 
     # --- モード別に処理を完全に分岐 ---
 
-    if search_mode == "学士試験":
+    if search_mode == "キーワード検索":
+        # ▼▼▼ キーワード検索モードの処理 ▼▼▼
+        st.subheader("キーワード検索")
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            search_keyword = st.text_input("検索キーワード", placeholder="例: インプラント、根管治療、歯周病")
+        with col2:
+            search_btn = st.button("検索", type="primary")
+        
+        # 検索オプション
+        col1, col2 = st.columns(2)
+        with col1:
+            if has_gakushi_permission:
+                gakushi_only = st.checkbox("学士試験のみ検索", key="search_page_gakushi_only")
+            else:
+                gakushi_only = False
+                st.text("学士試験のみ検索")
+                st.caption("（権限なし）")
+        with col2:
+            shuffle_results = st.checkbox("結果をシャッフル", key="search_page_shuffle", value=True)
+        
+        if search_btn and search_keyword.strip():
+            keyword_results = search_questions_by_keyword(search_keyword.strip(), gakushi_only=gakushi_only)
+            
+            # シャッフルオプションが有効な場合
+            if shuffle_results and keyword_results:
+                import random
+                keyword_results = keyword_results.copy()
+                random.shuffle(keyword_results)
+            
+            st.session_state["search_results"] = keyword_results
+            st.session_state["search_query"] = search_keyword.strip()
+            st.session_state["search_page_gakushi_only"] = gakushi_only
+            st.session_state["search_page_shuffled"] = shuffle_results
+        
+        if "search_results" in st.session_state:
+            results = st.session_state["search_results"]
+            query = st.session_state.get("search_query", "")
+            search_type = "学士試験" if st.session_state.get("search_page_gakushi_only", False) else "全体"
+            shuffle_info = "（シャッフル済み）" if st.session_state.get("search_page_shuffled", False) else "（順番通り）"
+            
+            if results:
+                st.success(f"「{query}」で{len(results)}問見つかりました（{search_type}）{shuffle_info}")
+                
+                # 結果の統計を表示
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("検索結果", f"{len(results)}問")
+                with col2:
+                    subjects = [q.get("subject", "未分類") for q in results]
+                    unique_subjects = len(set(subjects))
+                    st.metric("関連科目", f"{unique_subjects}科目")
+                with col3:
+                    years = [q.get("number", "")[:3] for q in results if q.get("number", "")[:3].isdigit()]
+                    year_range = f"{min(years)}-{max(years)}" if years else "不明"
+                    st.metric("年度範囲", year_range)
+                
+                # 検索結果の詳細表示
+                st.subheader("検索結果")
+                for i, q in enumerate(results[:20]):  # 最初の20件を表示
+                    with st.expander(f"{q.get('number', 'N/A')} - {q.get('subject', '未分類')}"):
+                        st.markdown(f"**問題:** {q.get('question', '')[:100]}...")
+                        if q.get('choices'):
+                            st.markdown("**選択肢:**")
+                            for j, choice in enumerate(q['choices'][:3]):  # 最初の3つの選択肢
+                                choice_text = choice.get('text', str(choice)) if isinstance(choice, dict) else str(choice)
+                                st.markdown(f"  {chr(65+j)}. {choice_text[:50]}...")
+                
+                if len(results) > 20:
+                    st.info(f"表示は最初の20件です。全{len(results)}件中")
+            else:
+                st.warning(f"「{query}」に該当する問題が見つかりませんでした")
+        else:
+            st.info("キーワードを入力して検索してください")
+        
+        # この後の処理をスキップ
+        return
+
+    elif search_mode == "学士試験":
         # ▼▼▼ 学士試験モードの処理（科目リスト固定） ▼▼▼
         GAKUSHI_SUBJECTS = [
             "歯科矯正学", "歯科保存学", "口腔外科学1", "口腔外科学2", "小児歯科学", "口腔インプラント", "歯科麻酔学", "障がい者歯科", "歯科放射線学",
@@ -947,6 +1076,101 @@ else:
                             del st.session_state[key]
                     st.rerun()
                 st.markdown("---")
+            # --- キーワード検索機能 ---
+            st.markdown("---")
+            st.header("キーワード検索")
+            search_keyword = st.text_input("キーワードで問題を検索", placeholder="例: インプラント、根管治療、歯周病", key="search_keyword")
+            
+            # 検索オプション
+            username = st.session_state.get("username")
+            has_gakushi_permission = check_gakushi_permission(username)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if has_gakushi_permission:
+                    gakushi_only = st.checkbox("学士試験のみ", key="gakushi_only_checkbox")
+                else:
+                    gakushi_only = False
+                    st.text("学士試験のみ")
+                    st.caption("（権限なし）")
+            with col2:
+                shuffle_results = st.checkbox("シャッフル", key="shuffle_checkbox", value=True)
+            
+            # 検索実行ボタン
+            if st.button("キーワード検索", type="secondary", key="search_btn"):
+                if search_keyword.strip():
+                    # キーワードで問題を検索
+                    keyword_results = search_questions_by_keyword(search_keyword.strip(), gakushi_only=gakushi_only)
+                    if keyword_results:
+                        # シャッフルオプションが有効な場合
+                        if shuffle_results:
+                            import random
+                            keyword_results = keyword_results.copy()
+                            random.shuffle(keyword_results)
+                        
+                        st.session_state["keyword_search_results"] = keyword_results
+                        st.session_state["current_search_keyword"] = search_keyword.strip()
+                        st.session_state["search_gakushi_only"] = gakushi_only
+                        st.session_state["search_shuffled"] = shuffle_results
+                        
+                        search_type = "学士試験" if gakushi_only else "全体"
+                        shuffle_info = "（シャッフル済み）" if shuffle_results else "（順番通り）"
+                        st.success(f"「{search_keyword}」で{len(keyword_results)}問見つかりました（{search_type}）{shuffle_info}")
+                    else:
+                        st.warning(f"「{search_keyword}」に該当する問題が見つかりませんでした")
+                        st.session_state.pop("keyword_search_results", None)
+                        st.session_state.pop("current_search_keyword", None)
+                else:
+                    st.warning("検索キーワードを入力してください")
+            
+            # 検索結果がある場合の表示
+            if "keyword_search_results" in st.session_state:
+                keyword = st.session_state.get('current_search_keyword', '')
+                count = len(st.session_state['keyword_search_results'])
+                search_type = "学士試験" if st.session_state.get('search_gakushi_only', False) else "全体"
+                shuffle_info = "（シャッフル済み）" if st.session_state.get('search_shuffled', False) else "（順番通り）"
+                
+                st.info(f"検索結果: 「{keyword}」で{count}問（{search_type}）{shuffle_info}")
+                if st.button("検索結果で学習開始", type="primary", key="start_keyword_search"):
+                    questions_to_load = st.session_state["keyword_search_results"]
+                    # 学習開始処理
+                    grouped_queue = []
+                    processed_q_nums = set()
+                    for q in questions_to_load:
+                        q_num = str(q['number'])
+                        if q_num in processed_q_nums: continue
+                        case_id = q.get('case_id')
+                        if case_id and case_id in CASES:
+                            siblings = sorted([str(sq['number']) for sq in ALL_QUESTIONS if sq.get('case_id') == case_id])
+                            if siblings not in grouped_queue:
+                                grouped_queue.append(siblings)
+                            processed_q_nums.update(siblings)
+                        else:
+                            grouped_queue.append([q_num])
+                            processed_q_nums.add(q_num)
+                    st.session_state.main_queue = grouped_queue
+                    st.session_state.short_term_review_queue = []
+                    st.session_state.current_q_group = []
+                    for key in list(st.session_state.keys()):
+                        if key.startswith("checked_") or key.startswith("user_selection_") or key.startswith("shuffled_"):
+                            del st.session_state[key]
+                    st.session_state.pop("resume_requested", None)
+                    if "cards" not in st.session_state:
+                        st.session_state.cards = {}
+                    for q in questions_to_load:
+                        if q['number'] not in st.session_state.cards:
+                            st.session_state.cards[q['number']] = {}
+                    st.session_state.pop("today_due_cards", None)
+                    st.session_state.pop("current_q_num", None)
+                    st.rerun()
+                
+                if st.button("検索結果をクリア", key="clear_search_btn"):
+                    st.session_state.pop("keyword_search_results", None)
+                    st.session_state.pop("current_search_keyword", None)
+                    st.rerun()
+
+            st.markdown("---")
+
             # --- ここから出題形式の選択肢を権限で分岐 ---
             has_gakushi_permission = check_gakushi_permission(username)
             mode_choices = ["回数別", "科目別","必修問題のみ"]
