@@ -429,13 +429,13 @@ def render_search_page():
         col1, col2 = st.columns(2)
         with col1:
             if has_gakushi_permission:
-                gakushi_only = st.checkbox("学士試験のみ検索", key="search_page_gakushi_only")
+                gakushi_only = st.checkbox("学士試験のみ検索", key="search_page_gakushi_setting_checkbox")
             else:
                 gakushi_only = False
                 st.text("学士試験のみ検索")
                 st.caption("（権限なし）")
         with col2:
-            shuffle_results = st.checkbox("結果をシャッフル", key="search_page_shuffle", value=True)
+            shuffle_results = st.checkbox("結果をシャッフル", key="search_page_shuffle_setting_checkbox", value=True)
         
         if search_btn and search_keyword.strip():
             keyword_results = search_questions_by_keyword(search_keyword.strip(), gakushi_only=gakushi_only)
