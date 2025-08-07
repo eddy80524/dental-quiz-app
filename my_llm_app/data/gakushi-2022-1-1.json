@@ -68,7 +68,9 @@
       ],
       "answer": "D",
       "subject": "歯科保存学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-5a.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-6",
@@ -96,7 +98,9 @@
       ],
       "answer": "B",
       "subject": "有歯補綴咬合学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-7a.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-8",
@@ -306,7 +310,9 @@
       ],
       "answer": "E",
       "subject": "生理学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-22a.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-23",
@@ -488,7 +494,9 @@
       ],
       "answer": "C",
       "subject": "口腔衛生学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-35a.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-36",
@@ -572,7 +580,9 @@
       ],
       "answer": "C",
       "subject": "口腔病理学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-41a.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-42",
@@ -586,7 +596,9 @@
       ],
       "answer": "D",
       "subject": "口腔病理学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-42a.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-43",
@@ -796,7 +808,9 @@
       ],
       "answer": "BCE",
       "subject": "歯周病学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-57a.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-58",
@@ -824,7 +838,9 @@
       ],
       "answer": "D",
       "subject": "歯周病学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-59a.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-60",
@@ -922,7 +938,10 @@
       ],
       "answer": "E",
       "subject": "高齢者歯科学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-66a.jpg",
+        "gakushi/2022/1-1/G22-1-1-A-66b.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-67",
@@ -936,7 +955,11 @@
       ],
       "answer": "BD",
       "subject": "歯周病学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-67a.jpg",
+        "gakushi/2022/1-1/G22-1-1-A-67b.jpg",
+        "gakushi/2022/1-1/G22-1-1-A-67c.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-68",
@@ -950,7 +973,10 @@
       ],
       "answer": "B",
       "subject": "有歯補綴咬合学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-68a.jpg",
+        "gakushi/2022/1-1/G22-1-1-A-68b.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-69",
@@ -964,7 +990,9 @@
       ],
       "answer": "CE",
       "subject": "歯科保存学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-69a.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-70",
@@ -978,7 +1006,9 @@
       ],
       "answer": "C",
       "subject": "欠損歯列補綴咬合学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-70a.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-71",
@@ -992,7 +1022,11 @@
       ],
       "answer": "E",
       "subject": "高齢者歯科学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-71a.jpg",
+        "gakushi/2022/1-1/G22-1-1-A-71b.jpg",
+        "gakushi/2022/1-1/G22-1-1-A-71c.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-72",
@@ -1006,7 +1040,9 @@
       ],
       "answer": "B",
       "subject": "口腔外科学１",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-72a.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-73",
@@ -1020,7 +1056,12 @@
       ],
       "answer": "DE",
       "subject": "歯周病学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-73a.jpg",
+        "gakushi/2022/1-1/G22-1-1-A-73b.jpg",
+        "gakushi/2022/1-1/G22-1-1-A-73c.jpg",
+        "gakushi/2022/1-1/G22-1-1-A-73d.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-74",
@@ -1034,7 +1075,10 @@
       ],
       "answer": "AB",
       "subject": "口腔外科学２",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-74a.jpg",
+        "gakushi/2022/1-1/G22-1-1-A-74b.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-75",
@@ -1048,7 +1092,11 @@
       ],
       "answer": "AD",
       "subject": "口腔治療学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-75a.jpg",
+        "gakushi/2022/1-1/G22-1-1-A-75b.jpg",
+        "gakushi/2022/1-1/G22-1-1-A-75c.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-76",
@@ -1062,7 +1110,11 @@
       ],
       "answer": "CE",
       "subject": "歯科保存学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-76a.jpg",
+        "gakushi/2022/1-1/G22-1-1-A-76b.jpg",
+        "gakushi/2022/1-1/G22-1-1-A-76c.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-77",
@@ -1076,7 +1128,10 @@
       ],
       "answer": "AD",
       "subject": "歯科保存学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-77a.jpg",
+        "gakushi/2022/1-1/G22-1-1-A-77b.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-78",
@@ -1090,7 +1145,9 @@
       ],
       "answer": "D",
       "subject": "有歯補綴咬合学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-78a.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-79",
@@ -1104,7 +1161,9 @@
       ],
       "answer": "A",
       "subject": "障がい者歯科",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-79a.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-80",
@@ -1118,7 +1177,10 @@
       ],
       "answer": "A",
       "subject": "口腔治療学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-80a.jpg",
+        "gakushi/2022/1-1/G22-1-1-A-80b.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-81",
@@ -1132,7 +1194,9 @@
       ],
       "answer": "BC",
       "subject": "歯科保存学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-81a.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-82",
@@ -1146,7 +1210,11 @@
       ],
       "answer": "BC",
       "subject": "口腔外科１",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-82a.jpg",
+        "gakushi/2022/1-1/G22-1-1-A-82b.jpg",
+        "gakushi/2022/1-1/G22-1-1-A-82c.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-83",
@@ -1160,7 +1228,11 @@
       ],
       "answer": "CD",
       "subject": "歯周病学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-83a.jpg",
+        "gakushi/2022/1-1/G22-1-1-A-83b.jpg",
+        "gakushi/2022/1-1/G22-1-1-A-83c.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-84",
@@ -1174,7 +1246,11 @@
       ],
       "answer": "B",
       "subject": "口腔外科学２",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-84a.jpg",
+        "gakushi/2022/1-1/G22-1-1-A-84b.jpg",
+        "gakushi/2022/1-1/G22-1-1-A-84c.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-85",
@@ -1188,7 +1264,9 @@
       ],
       "answer": "B",
       "subject": "口腔治療学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-85a.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-86",
@@ -1202,7 +1280,10 @@
       ],
       "answer": "BCE",
       "subject": "高齢者歯科学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-86a.jpg",
+        "gakushi/2022/1-1/G22-1-1-A-86b.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-87",
@@ -1216,7 +1297,9 @@
       ],
       "answer": "A",
       "subject": "欠損歯列補綴咬合学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-87a.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-88",
@@ -1230,7 +1313,9 @@
       ],
       "answer": "C",
       "subject": "欠損歯列補綴咬合学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-88a.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-89",
@@ -1244,7 +1329,11 @@
       ],
       "answer": "AB",
       "subject": "口腔外科学１",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-89a.jpg",
+        "gakushi/2022/1-1/G22-1-1-A-89b.jpg",
+        "gakushi/2022/1-1/G22-1-1-A-89c.jpg"
+      ]
     },
     {
       "number": "G22-1-1-A-90",
@@ -1258,7 +1347,11 @@
       ],
       "answer": "ABDCE",
       "subject": "有歯補綴咬合学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-A-90a.jpg",
+        "gakushi/2022/1-1/G22-1-1-A-90b.jpg",
+        "gakushi/2022/1-1/G22-1-1-A-90c.jpg"
+      ]
     },
     {
       "number": "G22-1-1-B-1",
@@ -1286,7 +1379,9 @@
       ],
       "answer": "A",
       "subject": "歯科放射線学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-B-2a.jpg"
+      ]
     },
     {
       "number": "G22-1-1-B-3",
@@ -1664,7 +1759,9 @@
       ],
       "answer": "A",
       "subject": "口腔外科学2",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-B-29a.jpg"
+      ]
     },
     {
       "number": "G22-1-1-B-30",
@@ -1860,7 +1957,9 @@
       ],
       "answer": "D",
       "subject": "有歯補綴咬合学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-B-43a.jpg"
+      ]
     },
     {
       "number": "G22-1-1-B-44",
@@ -2154,7 +2253,10 @@
       ],
       "answer": "C",
       "subject": "有歯補綴咬合学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-B-64a.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-64b.jpg"
+      ]
     },
     {
       "number": "G22-1-1-B-65",
@@ -2182,7 +2284,10 @@
       ],
       "answer": "CDE",
       "subject": "歯科矯正学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-B-66a.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-66b.jpg"
+      ]
     },
     {
       "number": "G22-1-1-B-67",
@@ -2196,7 +2301,12 @@
       ],
       "answer": "ABCDE",
       "subject": "小児歯科学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-B-67a.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-67b.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-67c.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-67d.jpg"
+      ]
     },
     {
       "number": "G22-1-1-B-68",
@@ -2210,7 +2320,10 @@
       ],
       "answer": "BDE",
       "subject": "口腔外科学1",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-B-68a.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-68b.jpg"
+      ]
     },
     {
       "number": "G22-1-1-B-69",
@@ -2224,7 +2337,11 @@
       ],
       "answer": "BD",
       "subject": "口腔外科学2",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-B-69a.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-69b.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-69c.jpg"
+      ]
     },
     {
       "number": "G22-1-1-B-70",
@@ -2238,7 +2355,11 @@
       ],
       "answer": "D",
       "subject": "小児歯科学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-B-70a.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-70b.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-70c.jpg"
+      ]
     },
     {
       "number": "G22-1-1-B-71",
@@ -2252,7 +2373,11 @@
       ],
       "answer": "CD",
       "subject": "歯科矯正学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-B-71a.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-71b.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-71c.jpg"
+      ]
     },
     {
       "number": "G22-1-1-B-72",
@@ -2266,7 +2391,10 @@
       ],
       "answer": "C",
       "subject": "歯科保存学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-B-72a.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-72b.jpg"
+      ]
     },
     {
       "number": "G22-1-1-B-73",
@@ -2280,7 +2408,9 @@
       ],
       "answer": "BE",
       "subject": "歯科麻酔学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-B-73a.jpg"
+      ]
     },
     {
       "number": "G22-1-1-B-74",
@@ -2294,7 +2424,10 @@
       ],
       "answer": "C",
       "subject": "小児歯科学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-B-74a.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-74b.jpg"
+      ]
     },
     {
       "number": "G22-1-1-B-75",
@@ -2308,7 +2441,12 @@
       ],
       "answer": "D",
       "subject": "歯科矯正学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-B-75a.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-75b.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-75c.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-75d.jpg"
+      ]
     },
     {
       "number": "G22-1-1-B-76",
@@ -2322,7 +2460,9 @@
       ],
       "answer": "DE",
       "subject": "小児歯科学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-B-76a.jpg"
+      ]
     },
     {
       "number": "G22-1-1-B-77",
@@ -2336,7 +2476,11 @@
       ],
       "answer": "B",
       "subject": "小児歯科学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-B-77a.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-77b.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-77c.jpg"
+      ]
     },
     {
       "number": "G22-1-1-B-78",
@@ -2350,7 +2494,11 @@
       ],
       "answer": "E",
       "subject": "口腔外科学1",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-B-78a.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-78b.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-78c.jpg"
+      ]
     },
     {
       "number": "G22-1-1-B-79",
@@ -2364,7 +2512,9 @@
       ],
       "answer": "AE",
       "subject": "口腔インプラント",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-B-79a.jpg"
+      ]
     },
     {
       "number": "G22-1-1-B-80",
@@ -2378,7 +2528,10 @@
       ],
       "answer": "AB",
       "subject": "歯科矯正学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-B-80a.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-80b.jpg"
+      ]
     },
     {
       "number": "G22-1-1-B-81",
@@ -2392,7 +2545,12 @@
       ],
       "answer": "B",
       "subject": "口腔インプラント",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-B-81a.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-81b.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-81c.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-81d.jpg"
+      ]
     },
     {
       "number": "G22-1-1-B-82",
@@ -2406,7 +2564,9 @@
       ],
       "answer": "A",
       "subject": "障がい者歯科",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-B-82a.jpg"
+      ]
     },
     {
       "number": "G22-1-1-B-83",
@@ -2420,7 +2580,11 @@
       ],
       "answer": "CDE",
       "subject": "口腔外科学2",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-B-83a.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-83b.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-83c.jpg"
+      ]
     },
     {
       "number": "G22-1-1-B-84",
@@ -2434,7 +2598,10 @@
       ],
       "answer": "D",
       "subject": "歯科保存学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-B-84a.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-84b.jpg"
+      ]
     },
     {
       "number": "G22-1-1-B-85",
@@ -2448,7 +2615,11 @@
       ],
       "answer": "E",
       "subject": "口腔外科学2",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-B-85a.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-85b.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-85c.jpg"
+      ]
     },
     {
       "number": "G22-1-1-B-86",
@@ -2462,7 +2633,10 @@
       ],
       "answer": "BC",
       "subject": "歯科矯正学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-B-86a.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-86b.jpg"
+      ]
     },
     {
       "number": "G22-1-1-B-87",
@@ -2476,7 +2650,10 @@
       ],
       "answer": "A",
       "subject": "歯科保存学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-B-87a.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-87b.jpg"
+      ]
     },
     {
       "number": "G22-1-1-B-88",
@@ -2490,7 +2667,10 @@
       ],
       "answer": "D",
       "subject": "歯科放射線学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-B-88a.jpg",
+        "gakushi/2022/1-1/G22-1-1-B-88b.jpg"
+      ]
     },
     {
       "number": "G22-1-1-B-89",
@@ -2504,7 +2684,9 @@
       ],
       "answer": "C",
       "subject": "歯科麻酔学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-B-89a.jpg"
+      ]
     },
     {
       "number": "G22-1-1-B-90",
@@ -2518,7 +2700,9 @@
       ],
       "answer": "B",
       "subject": "小児歯科学",
-      "image_paths": []
+      "image_paths": [
+        "gakushi/2022/1-1/G22-1-1-B-90a.jpg"
+      ]
     },
     {
       "number": "G22-1-1-C-1",
@@ -3703,7 +3887,7 @@
         "完全焼結",
         "レイキャリング",
         "グレージング",
-        "アイキャッシング",
+        "ディギャッシング",
         "加熱加圧（プレス）成形"
       ],
       "answer": "A",
@@ -3732,7 +3916,7 @@
         "メトトレキサートの内服投与",
         "ピロクロロキン含有軟膏の投与",
         "クエン酸第二鉄ナトリウム製剤の内服投与",
-        "アスピリンスルホン酸ナトリウム含嗽薬の投与"
+        "アズレンスルホン酸ナトリウム含嗽薬の投与"
       ],
       "answer": "A",
       "subject": "口腔外科学2",
