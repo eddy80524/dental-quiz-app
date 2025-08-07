@@ -284,6 +284,27 @@ def get_shuffled_choices(q):
         st.session_state[key] = indices
     return [q["choices"][i] for i in st.session_state[key]], st.session_state[key]
 
+def extract_year_from_question_number(q_num):
+    """
+    問題番号から年度を抽出する
+    従来形式: "112A5" -> 112
+    学士試験形式: "G22-1-1-A-1" -> 2022
+    """
+    if not q_num:
+        return None
+    
+    # 従来形式（例：112A5）
+    if q_num[:3].isdigit():
+        return int(q_num[:3])
+    
+    # 学士試験形式（例：G22-1-1-A-1）
+    if q_num.startswith("G") and len(q_num) >= 3 and q_num[1:3].isdigit():
+        year_2digit = int(q_num[1:3])
+        # 2桁年を4桁年に変換（22 -> 2022）
+        return 2000 + year_2digit if year_2digit <= 30 else 1900 + year_2digit
+    
+    return None
+
 def get_natural_sort_key(q_dict):
     """
     問題辞書を受け取り、自然順ソート用のキー（タプル）を返す。
@@ -469,7 +490,12 @@ def render_search_page():
                     unique_subjects = len(set(subjects))
                     st.metric("関連科目", f"{unique_subjects}科目")
                 with col3:
-                    years = [q.get("number", "")[:3] for q in results if q.get("number", "")[:3].isdigit()]
+                    years = []
+                    for q in results:
+                        year = extract_year_from_question_number(q.get("number", ""))
+                        if year:
+                            years.append(str(year))
+                    
                     year_range = f"{min(years)}-{max(years)}" if years else "不明"
                     st.metric("年度範囲", year_range)
                 
@@ -589,7 +615,7 @@ def render_search_page():
                 except (ValueError, TypeError):
                     days_until_due = None
             questions_data.append({
-                "id": q_num, "year": int(q_num[:3]) if q_num[:3].isdigit() else None,
+                "id": q_num, "year": extract_year_from_question_number(q_num),
                 "region": q_num[3] if len(q_num) >= 4 and q_num[3] in "ABCD" else None,
                 "category": q.get("category", ""), "subject": q.get("subject", ""), "level": level,
                 "ef": card.get("EF"), "interval": card.get("I"), "repetitions": card.get("n"),
