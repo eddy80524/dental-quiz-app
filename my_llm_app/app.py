@@ -292,8 +292,8 @@ def get_natural_sort_key(q_dict):
     """
     q_num_str = q_dict.get('number', '0')
     # 学士試験形式: G24-1-1-A-1 や G24-2再-A-1 に対応
-    # 試験タイプ部分の正規表現 `([\d\-再]+)` が、数字・ハイフン・「再」の文字を捉える
-    m_gakushi = re.match(r'^(G)(\d+)-([\d\-再]+)-([A-Z])-(\d+)$', q_num_str)
+    # エンダッシュ（–）とハイフン（-）の両方に対応
+    m_gakushi = re.match(r'^(G)(\d+)[–-]([\d–\-再]+)[–-]([A-Z])[–-](\d+)$', q_num_str)
     if m_gakushi:
         return (
             m_gakushi.group(1),      # G
@@ -534,7 +534,7 @@ def render_search_page():
                     except (ValueError, TypeError):
                         days_until_due = None
                 # 必修判定: 1〜20番が必修
-                m = re.match(r'^G\d{2}-[\d\-再]+-[A-D]-(\d+)$', q_num)
+                m = re.match(r'^G\d{2}[–\-][\d–\-再]+[–\-][A-D][–\-](\d+)$', q_num)
                 is_hisshu = False
                 if m:
                     try:
@@ -718,7 +718,7 @@ def render_search_page():
         st.markdown(f"**{len(filtered_df)}件の問題が見つかりました**")
         if not filtered_df.empty:
             def sort_key(row_id):
-                m_gakushi = re.match(r'^(G)(\d+)-([\d\-再]+)-([A-Z])-(\d+)$', str(row_id))
+                m_gakushi = re.match(r'^(G)(\d+)[–\-]([\d–\-再]+)[–\-]([A-Z])[–\-](\d+)$', str(row_id))
                 if m_gakushi: return (m_gakushi.group(1), int(m_gakushi.group(2)), m_gakushi.group(3), m_gakushi.group(4), int(m_gakushi.group(5)))
                 m_normal = re.match(r"(\d+)([A-D])(\d+)", str(row_id))
                 if m_normal: return ('Z', int(m_normal.group(1)), m_normal.group(2), '', int(m_normal.group(3)))
