@@ -292,8 +292,8 @@ def get_natural_sort_key(q_dict):
     """
     q_num_str = q_dict.get('number', '0')
     # 学士試験形式: G24-1-1-A-1 や G24-2再-A-1 に対応
-    # エンダッシュ（–）とハイフン（-）の両方に対応
-    m_gakushi = re.match(r'^(G)(\d+)[–-]([\d–\-再]+)[–-]([A-Z])[–-](\d+)$', q_num_str)
+    # データ正規化済みでハイフンのみ使用
+    m_gakushi = re.match(r'^(G)(\d+)-([\d\-再]+)-([A-Z])-(\d+)$', q_num_str)
     if m_gakushi:
         return (
             m_gakushi.group(1),      # G
