@@ -133,6 +133,9 @@ def load_master_data():
     seen_numbers = set()
     missing_files = []
 
+    # デバッグ情報
+    loaded_files_info = []
+
     for file_path in target_files:
         # ファイルが存在するか念のため確認
         if not os.path.exists(file_path):
@@ -141,6 +144,10 @@ def load_master_data():
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
+
+            filename = os.path.basename(file_path)
+            questions_count = 0
+            gakushi_2022_1_2_count = 0
 
             if isinstance(data, dict):
                 # 'cases'キーがない場合もエラーにならないように.get()を使用
@@ -155,6 +162,9 @@ def load_master_data():
                         if num and num not in seen_numbers:
                             all_questions.append(q)
                             seen_numbers.add(num)
+                            questions_count += 1
+                            if num.startswith('G22-1-2-'):
+                                gakushi_2022_1_2_count += 1
             
             elif isinstance(data, list):
                 for q in data:
@@ -162,10 +172,26 @@ def load_master_data():
                     if num and num not in seen_numbers:
                         all_questions.append(q)
                         seen_numbers.add(num)
+                        questions_count += 1
+                        if num.startswith('G22-1-2-'):
+                            gakushi_2022_1_2_count += 1
+
+            loaded_files_info.append(f"{filename}: {questions_count}問 (G22-1-2: {gakushi_2022_1_2_count}問)")
 
         except Exception as e:
             # ログだけ残してUIには表示しない
             print(f"{file_path} の読み込みでエラー: {e}")
+            loaded_files_info.append(f"{os.path.basename(file_path)}: エラー - {e}")
+    
+    # デバッグ情報を表示
+    if st.session_state.get('show_debug_info', False):
+        st.write("📄 ファイル読み込み状況:")
+        for info in loaded_files_info:
+            st.write(f"  {info}")
+        st.write(f"総問題数: {len(all_questions)}")
+        gakushi_2022_1_2_total = len([q for q in all_questions if q.get('number', '').startswith('G22-1-2-')])
+        st.write(f"G22-1-2問題数: {gakushi_2022_1_2_total}")
+    
     # ファイルが足りない場合は警告をUIに出さない
     return all_cases, all_questions
 
@@ -1273,6 +1299,11 @@ else:
                     st.rerun()
             if "cards" not in st.session_state:
                 st.session_state.cards = {}
+            
+            # デバッグ情報トグル
+            st.markdown("---")
+            st.session_state["show_debug_info"] = st.checkbox("デバッグ情報を表示", value=st.session_state.get("show_debug_info", False))
+            
             st.markdown("---"); st.header("学習記録")
             if st.session_state.cards:
                 quality_to_mark = {1: "×", 2: "△", 4: "◯", 5: "◎"}
