@@ -271,8 +271,25 @@ def get_secure_image_url(path):
     try:
         if path:
             blob = bucket.blob(path)
-            return blob.generate_signed_url(expiration=datetime.timedelta(minutes=15))
-    except Exception:
+            # デバッグ: ファイル存在確認
+            exists = blob.exists()
+            if not exists:
+                print(f"画像ファイルが存在しません: {path}")
+                # デバッグ: 周辺ファイルを確認
+                try:
+                    dir_path = '/'.join(path.split('/')[:-1]) + '/'
+                    blobs = list(bucket.list_blobs(prefix=dir_path, max_results=5))
+                    print(f"  ディレクトリ {dir_path} 内のファイル例:")
+                    for b in blobs:
+                        print(f"    {b.name}")
+                except:
+                    pass
+                return None
+            url = blob.generate_signed_url(expiration=datetime.timedelta(minutes=15))
+            print(f"画像URL生成成功: {path} -> {url[:50]}...")
+            return url
+    except Exception as e:
+        print(f"画像URL生成エラー: {path} - {e}")
         pass
     return None
 
@@ -993,9 +1010,13 @@ def render_practice_page():
     if display_images:
         # 重複を除去して、万が一同じパスが複数あってもエラーを防ぐ
         unique_images = list(dict.fromkeys(display_images))
+        print(f"📷 画像パス検出: {unique_images}")
         secure_urls = [url for path in unique_images if path and (url := get_secure_image_url(path))]
+        print(f"📷 生成されたURL数: {len(secure_urls)}/{len(unique_images)}")
         if secure_urls:
             st.image(secure_urls, use_container_width=True)
+        else:
+            st.warning("🚫 画像が見つかりませんでした")
 
 # --- メイン ---
 if not st.session_state.get("user_logged_in") or not ensure_valid_session():
