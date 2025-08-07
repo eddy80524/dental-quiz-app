@@ -448,14 +448,14 @@ def render_search_page():
             
             st.session_state["search_results"] = keyword_results
             st.session_state["search_query"] = search_keyword.strip()
-            st.session_state["search_page_gakushi_only"] = gakushi_only
-            st.session_state["search_page_shuffled"] = shuffle_results
+            st.session_state["search_page_gakushi_setting"] = gakushi_only
+            st.session_state["search_page_shuffle_setting"] = shuffle_results
         
         if "search_results" in st.session_state:
             results = st.session_state["search_results"]
             query = st.session_state.get("search_query", "")
-            search_type = "学士試験" if st.session_state.get("search_page_gakushi_only", False) else "全体"
-            shuffle_info = "（シャッフル済み）" if st.session_state.get("search_page_shuffled", False) else "（順番通り）"
+            search_type = "学士試験" if st.session_state.get("search_page_gakushi_setting", False) else "全体"
+            shuffle_info = "（シャッフル済み）" if st.session_state.get("search_page_shuffle_setting", False) else "（順番通り）"
             
             if results:
                 st.success(f"「{query}」で{len(results)}問見つかりました（{search_type}）{shuffle_info}")
