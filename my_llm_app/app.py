@@ -1294,6 +1294,19 @@ else:
             st.markdown("---")
             st.session_state["show_image_debug"] = st.checkbox("画像デバッグ情報を表示", value=st.session_state.get("show_image_debug", False))
             
+            # キャッシュクリアボタン
+            if st.button("🔄 キャッシュをクリア", help="問題データとキャッシュをリロードします"):
+                # Streamlitのキャッシュをクリア
+                st.cache_data.clear()
+                st.cache_resource.clear()
+                
+                # セッション状態の問題データをクリア
+                if 'questions_loaded' in st.session_state:
+                    del st.session_state['questions_loaded']
+                
+                st.success("キャッシュをクリアしました。ページを再読み込みします...")
+                st.rerun()
+            
             st.markdown("---"); st.header("学習記録")
             if st.session_state.cards:
                 quality_to_mark = {1: "×", 2: "△", 4: "◯", 5: "◎"}
