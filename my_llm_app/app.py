@@ -994,9 +994,25 @@ def render_practice_page():
     if display_images:
         # 重複を除去して、万が一同じパスが複数あってもエラーを防ぐ
         unique_images = list(dict.fromkeys(display_images))
+        
+        # デバッグ情報を表示
+        if st.session_state.get("show_image_debug", False):
+            st.write("🔍 画像デバッグ情報:")
+            st.write(f"検出されたパス: {unique_images}")
+        
         secure_urls = [url for path in unique_images if path and (url := get_secure_image_url(path))]
+        
+        if st.session_state.get("show_image_debug", False):
+            st.write(f"生成されたURL数: {len(secure_urls)}")
+            if not secure_urls:
+                st.write("⚠️ URLの生成に失敗しました")
+            for i, url in enumerate(secure_urls[:2]):  # 最初の2つのURLを表示
+                st.write(f"URL {i+1}: {url[:100]}...")
+        
         if secure_urls:
             st.image(secure_urls, use_container_width=True)
+        elif st.session_state.get("show_image_debug", False):
+            st.write("❌ 表示可能な画像URLがありません")
 
 # --- メイン ---
 if not st.session_state.get("user_logged_in") or not ensure_valid_session():
@@ -1273,6 +1289,11 @@ else:
                     st.rerun()
             if "cards" not in st.session_state:
                 st.session_state.cards = {}
+            
+            # 画像デバッグトグル
+            st.markdown("---")
+            st.session_state["show_image_debug"] = st.checkbox("画像デバッグ情報を表示", value=st.session_state.get("show_image_debug", False))
+            
             st.markdown("---"); st.header("学習記録")
             if st.session_state.cards:
                 quality_to_mark = {1: "×", 2: "△", 4: "◯", 5: "◎"}
