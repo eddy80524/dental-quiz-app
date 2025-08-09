@@ -3,6 +3,7 @@
 streamlit
 firebase-admin
 streamlit-authenticator
+streamlit-cookies-manager
 pandas
 requests
 PyYAML

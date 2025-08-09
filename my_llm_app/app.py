@@ -13,6 +13,7 @@ import tempfile
 import collections.abc
 import pandas as pd
 import glob
+from streamlit_cookies_manager import EncryptedCookieManager
 
 # plotlyインポート（未インストール時の案内付き）
 try:
@@ -45,13 +46,30 @@ def initialize_firebase():
         temp_path = f.name
     creds = credentials.Certificate(temp_path)
     if not firebase_admin._apps:
-        firebase_admin.initialize_app(creds, {'storageBucket': 'dent-ai-4d8d8.firebasestorage.app'})
-    # 何も返さない
+        # 修正：バケットは appspot.com
+        firebase_admin.initialize_app(
+            creds,
+            {'storageBucket': 'dent-ai-4d8d8.appspot.com'}
+        )
     return None
 
 initialize_firebase()
 db = firestore.client()
 bucket = storage.bucket()
+
+# --- Cookies（自動ログイン用） ---
+try:
+    cookie_password = st.secrets.get("cookie_password", "default_insecure_password_change_in_production")
+    cookies = EncryptedCookieManager(
+        prefix="dentai_",
+        password=cookie_password
+    )
+    if not cookies.ready():
+        st.stop()  # 初回レンダ時に初期化、以降は通る
+except Exception as e:
+    # secrets.tomlにcookie_passwordがない場合のフォールバック
+    st.error("⚠️ 自動ログイン機能を有効にするには、secrets.tomlに'cookie_password'を追加してください。")
+    cookies = None
 
 FIREBASE_API_KEY = st.secrets["firebase_api_key"]
 FIREBASE_AUTH_SIGNUP_URL = f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={FIREBASE_API_KEY}"
@@ -70,12 +88,10 @@ def firebase_signin(email, password):
 
 def firebase_refresh_token(refresh_token):
     """リフレッシュトークンを使って新しいidTokenを取得"""
-    payload = {
-        "grant_type": "refresh_token",
-        "refresh_token": refresh_token
-    }
+    payload = {"grant_type": "refresh_token", "refresh_token": refresh_token}
     try:
-        r = requests.post(FIREBASE_REFRESH_TOKEN_URL, json=payload)
+        # 修正：JSONではなくx-www-form-urlencoded
+        r = requests.post(FIREBASE_REFRESH_TOKEN_URL, data=payload)
         result = r.json()
         if "id_token" in result:
             return {
@@ -95,6 +111,33 @@ def is_token_expired(token_timestamp, expires_in=3600):
     token_time = datetime.datetime.fromisoformat(token_timestamp)
     # 30分（1800秒）で期限切れとして扱い、余裕を持ってリフレッシュ
     return (now - token_time).total_seconds() > 1800
+
+def try_auto_login_from_cookie():
+    """クッキーに refresh_token があれば自動でトークン更新し、セッションを復元する。"""
+    if not cookies or st.session_state.get("user_logged_in"):
+        return False
+    
+    rt = cookies.get("refresh_token")
+    if not rt:
+        return False
+    
+    result = firebase_refresh_token(rt)
+    if not result:
+        return False
+    
+    uid = cookies.get("uid") or result.get("user_id")
+    email = cookies.get("email") or ""
+    
+    st.session_state["name"] = (email.split("@")[0] if email else "user")
+    st.session_state["username"] = email or uid
+    st.session_state["email"] = email
+    st.session_state["uid"] = uid
+    st.session_state["id_token"] = result["idToken"]
+    st.session_state["refresh_token"] = result["refreshToken"]
+    st.session_state["token_timestamp"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    st.session_state["user_logged_in"] = uid
+    
+    return True
 
 def ensure_valid_session():
     """セッションが有効かチェックし、必要に応じてトークンをリフレッシュ"""
@@ -194,30 +237,54 @@ HISSHU_Q_NUMBERS_SET = {q['number'] for q in ALL_QUESTIONS if is_hisshu(q['numbe
 
 # --- Firestore連携 ---
 def load_user_data(user_id):
-    # セッションの有効性をチェック
+    """user_id には UID を渡す"""
     if not ensure_valid_session():
-        return {"cards": {}, "main_queue": [], "short_term_review_queue": [], "current_q_group": []}
-    
+        return {"cards": {}, "main_queue": [], "short_term_review_queue": [], "current_q_group": [], "new_cards_per_day": 10}
+
     if db and user_id:
-        doc_ref = db.collection("user_progress").document(user_id)
+        doc_ref = db.collection("user_progress").document(user_id)  # uid
         doc = doc_ref.get()
         if doc.exists:
             data = doc.to_dict()
             main_queue_str_list = data.get("main_queue", [])
-            short_term_review_queue_str_list = data.get("short_term_review_queue", [])
             current_q_group_str = data.get("current_q_group", "")
             main_queue = [item.split(',') for item in main_queue_str_list if item]
-            short_term_review_queue = [item.split(',') for item in short_term_review_queue_str_list if item]
             current_q_group = current_q_group_str.split(',') if current_q_group_str else []
+            
+            # ★ 短期復習キューの新形式対応（ready_at付き）
+            raw = data.get("short_term_review_queue", [])
+            short_term_review_queue = []
+            now_utc = datetime.datetime.now(datetime.timezone.utc)
+
+            def _parse_ready_at(v):
+                if isinstance(v, datetime.datetime): return v
+                if isinstance(v, str):
+                    try: return datetime.datetime.fromisoformat(v)
+                    except Exception: return now_utc
+                return now_utc
+
+            for item in raw:
+                if isinstance(item, dict):
+                    grp = item.get("group", [])
+                    ra = _parse_ready_at(item.get("ready_at"))
+                    short_term_review_queue.append({"group": grp, "ready_at": ra})
+                elif isinstance(item, str):
+                    grp = item.split(",") if item else []
+                    short_term_review_queue.append({"group": grp, "ready_at": now_utc})
+                elif isinstance(item, list):
+                    short_term_review_queue.append({"group": item, "ready_at": now_utc})
+            
             return {
                 "cards": data.get("cards", {}),
                 "main_queue": main_queue,
                 "short_term_review_queue": short_term_review_queue,
-                "current_q_group": current_q_group
+                "current_q_group": current_q_group,
+                "new_cards_per_day": data.get("new_cards_per_day", 10),
             }
-    return {"cards": {}, "main_queue": [], "short_term_review_queue": [], "current_q_group": []}
+    return {"cards": {}, "main_queue": [], "short_term_review_queue": [], "current_q_group": [], "new_cards_per_day": 10}
 
 def save_user_data(user_id, session_state):
+    """user_id には UID を渡す"""
     def flatten_and_str(obj):
         if isinstance(obj, (list, set)):
             result = []
@@ -230,21 +297,65 @@ def save_user_data(user_id, session_state):
             return []
         else:
             return [str(obj)]
-    
-    # セッションの有効性をチェック
+
     if not ensure_valid_session():
         return
-    
+
     if db and user_id:
-        doc_ref = db.collection("user_progress").document(user_id)
+        doc_ref = db.collection("user_progress").document(user_id)  # uid
         payload = {"cards": session_state.get("cards", {})}
         if "main_queue" in session_state:
-            payload["main_queue"] = [','.join(flatten_and_str(group)) for group in session_state.get("main_queue", [])]
+            payload["main_queue"] = [','.join(flatten_and_str(g)) for g in session_state.get("main_queue", [])]
+        # ★ 短期復習キューの新形式保存（ready_at付きMap配列）
         if "short_term_review_queue" in session_state:
-            payload["short_term_review_queue"] = [','.join(flatten_and_str(group)) for group in session_state.get("short_term_review_queue", [])]
+            ser = []
+            for item in session_state.get("short_term_review_queue", []):
+                if isinstance(item, dict):
+                    grp = item.get("group", [])
+                    ra = item.get("ready_at")
+                    if isinstance(ra, datetime.datetime):
+                        ra = ra.isoformat()
+                    ser.append({"group": [str(x) for x in grp], "ready_at": ra})
+                else:
+                    # 後方互換（古い形式が残っていても壊さない）
+                    grp = item if isinstance(item, list) else [str(item)]
+                    ser.append({"group": grp, "ready_at": datetime.datetime.now(datetime.timezone.utc).isoformat()})
+            payload["short_term_review_queue"] = ser
         if "current_q_group" in session_state:
             payload["current_q_group"] = ','.join(flatten_and_str(session_state.get("current_q_group", [])))
-        doc_ref.set(payload)
+        if "new_cards_per_day" in session_state:
+            payload["new_cards_per_day"] = session_state["new_cards_per_day"]
+        doc_ref.set(payload, merge=True)
+
+def migrate_progress_doc_if_needed(uid: str, email: str):
+    """初回ログイン時などに email Doc を UID Doc へコピー（冪等）"""
+    if not db or not uid or not email:
+        return
+    
+    uid_ref = db.collection("user_progress").document(uid)
+    if uid_ref.get().exists:
+        return
+        
+    email_ref = db.collection("user_progress").document(email)
+    snap = email_ref.get()
+    
+    if snap.exists:
+        uid_ref.set(snap.to_dict(), merge=True)
+        # 旧ドキュメントに移行メタ（必要なら後で削除可能）
+        email_ref.set({
+            "__migrated_to": uid,
+            "__migrated_at": datetime.datetime.utcnow().isoformat()
+        }, merge=True)
+
+def migrate_permission_if_needed(uid: str, email: str):
+    """user_permissions も email → uid を一度だけ複製（冪等）"""
+    if not db or not uid or not email:
+        return
+    src = db.collection("user_permissions").document(email).get()
+    if src.exists:
+        dst = db.collection("user_permissions").document(uid)
+        if not dst.get().exists:
+            dst.set(src.to_dict(), merge=True)
 
 # --- ヘルパー関数 ---
 # @st.cache_data # ← キャッシュが問題の可能性があるため、一時的に無効化
@@ -252,15 +363,100 @@ def check_gakushi_permission(user_id):
     """
     Firestoreのuser_permissionsコレクションから権限を判定。
     can_access_gakushi: trueならTrue, それ以外はFalse
+    uidとemailの両方でチェックする（移行期間対応）
     """
     if not db or not user_id:
         return False
+    
+    # まずuidでチェック
     doc_ref = db.collection("user_permissions").document(user_id)
     doc = doc_ref.get()
     if doc.exists:
         data = doc.to_dict()
-        return bool(data.get("can_access_gakushi", False))
+        if bool(data.get("can_access_gakushi", False)):
+            return True
+    
+    # uidで見つからない場合、emailでもチェック（後方互換性）
+    username = st.session_state.get("username")  # email
+    if username and username != user_id:
+        doc_ref_email = db.collection("user_permissions").document(username)
+        doc_email = doc_ref_email.get()
+        if doc_email.exists:
+            data_email = doc_email.to_dict()
+            return bool(data_email.get("can_access_gakushi", False))
+    
     return False
+
+def _subject_of(q):
+    return (q.get("subject") or "未分類").strip()
+
+def _make_subject_index(all_questions):
+    qid_to_subject, subj_to_qids = {}, {}
+    for q in all_questions:
+        qid = q.get("number")
+        if not qid: continue
+        s = _subject_of(q)
+        qid_to_subject[qid] = s
+        subj_to_qids.setdefault(s, set()).add(qid)
+    return qid_to_subject, subj_to_qids
+
+def _recent_subject_penalty(q_subject, recent_qids, qid_to_subject):
+    if not recent_qids: return 0.0
+    recent_subjects = [qid_to_subject.get(r) for r in recent_qids if r in qid_to_subject]
+    return 0.15 if q_subject in recent_subjects else 0.0
+
+def pick_new_cards_for_today(all_questions, cards, N=10, recent_qids=None):
+    recent_qids = recent_qids or []
+    qid_to_subject, subj_to_qids = _make_subject_index(all_questions)
+
+    # 科目ごとの導入済み枚数
+    introduced_counts = {subj: 0 for subj in subj_to_qids.keys()}
+    for qid, card in cards.items():
+        if qid in qid_to_subject:
+            if card.get("n") is not None or card.get("history"):
+                introduced_counts[qid_to_subject[qid]] += 1
+
+    # 目標は当面「均等配分」
+    target_ratio = {subj: 1/len(subj_to_qids) for subj in subj_to_qids.keys()} if subj_to_qids else {}
+
+    # 全体正答率（subject別が無くても動く簡易版）
+    global_correct = global_total = 0
+    for card in cards.values():
+        for h in card.get("history", []):
+            if isinstance(h, dict) and "quality" in h:
+                global_total += 1
+                if h["quality"] >= 4: global_correct += 1
+    global_mastery = (global_correct / global_total) if global_total else 0.0
+
+    # 候補は未演習のみ
+    seen_qids = set(cards.keys())
+    candidates = []
+    for q in all_questions:
+        qid = q.get("number")
+        if not qid: continue
+        c = cards.get(qid, {})
+        if qid not in seen_qids or (not c.get("history") and c.get("n") in (None, 0)):
+            candidates.append(q)
+
+    def score_of(q):
+        qid = q["number"]; subj = qid_to_subject.get(qid, "未分類")
+        mastery_term = 1.0 - global_mastery
+        subj_pool = len(subj_to_qids.get(subj, [])) or 1
+        introduced_ratio = introduced_counts.get(subj, 0) / subj_pool
+        gap = max(0.0, target_ratio.get(subj, 0.0) - introduced_ratio)
+        difficulty_prior = 0.5
+        penalty = _recent_subject_penalty(subj, recent_qids, qid_to_subject)
+        return 0.6*mastery_term + 0.2*gap + 0.2*difficulty_prior - penalty
+
+    # case_id がある問題は代表1問のみ（兄弟を同時に出さない）
+    case_groups, singles = {}, []
+    for q in candidates:
+        cid = q.get("case_id")
+        (case_groups.setdefault(cid, []).append(q)) if cid else singles.append(q)
+
+    case_reps = [max(qs, key=score_of) for qs in case_groups.values()]
+    pool_sorted = sorted(singles + case_reps, key=score_of, reverse=True)
+    return [q["number"] for q in pool_sorted[:N]]
 
 def get_secure_image_url(path):
     """
@@ -422,6 +618,23 @@ def sm2_update(card, quality, now=None):
     card.update({"EF": EF, "n": n, "I": I, "next_review": next_review_dt.isoformat(), "quality": quality})
     return card
 
+def sm2_update_with_policy(card: dict, quality: int, q_num_str: str, now=None):
+    """必修は q==2 を lapse 扱い。それ以外は既存 sm2_update を適用。"""
+    if now is None:
+        now = datetime.datetime.now(datetime.timezone.utc)
+    if is_hisshu(q_num_str) and quality == 2:
+        # ★ 必修で「難しい」の場合は lapse 扱い
+        EF = max(card.get("EF", 2.5) - 0.2, 1.3)
+        n = 0
+        I = 10 / 1440  # 10分
+        next_review_dt = now + datetime.timedelta(minutes=10)
+        hist = card.get("history", [])
+        hist = hist + [{"timestamp": now.isoformat(), "quality": quality, "interval": I, "EF": EF}]
+        card.update({"EF": EF, "n": n, "I": I, "next_review": next_review_dt.isoformat(), "quality": quality, "history": hist})
+        return card
+    else:
+        return sm2_update(card, quality, now=now)
+
 # --- 検索ページ ---
 def render_search_page():
     st.title("検索・進捗ページ")
@@ -429,8 +642,8 @@ def render_search_page():
     # --- サイドバーでモード選択 ---
     with st.sidebar:
         st.header("検索モード")
-        username = st.session_state.get("username")
-        has_gakushi_permission = check_gakushi_permission(username)
+        uid = st.session_state.get("uid")
+        has_gakushi_permission = check_gakushi_permission(uid)
         mode_choices = ["国試全体", "キーワード検索"]
         if has_gakushi_permission:
             mode_choices.append("学士試験")
@@ -454,8 +667,7 @@ def render_search_page():
                 gakushi_only = st.checkbox("学士試験のみ検索", key="search_page_gakushi_setting_checkbox")
             else:
                 gakushi_only = False
-                st.text("学士試験のみ検索")
-                st.caption("（権限なし）")
+                # 権限がない場合は何も表示しない
         with col2:
             shuffle_results = st.checkbox("結果をシャッフル", key="search_page_shuffle_setting_checkbox", value=True)
         
@@ -591,6 +803,7 @@ def render_search_page():
                 filtered_df = filtered_df[filtered_df["is_hisshu"] == True]
     else:
         # ▼▼▼ 国試全体モードの処理 ▼▼▼
+        
         questions_data = []
         now_utc = datetime.datetime.now(datetime.timezone.utc)
         for q in ALL_QUESTIONS:
@@ -763,11 +976,30 @@ def render_search_page():
                     unsafe_allow_html=True
                 )
 
+# --- 短期復習キュー管理関数 ---
+SHORT_REVIEW_COOLDOWN_MIN_Q1 = 5        # もう一度
+SHORT_REVIEW_COOLDOWN_MIN_Q2_HISSHU = 10 # 必修で「難しい」
+
+def enqueue_short_review(group, minutes: int):
+    ready_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=minutes)
+    st.session_state.short_term_review_queue = st.session_state.get("short_term_review_queue", [])
+    st.session_state.short_term_review_queue.append({"group": group, "ready_at": ready_at})
+
 # --- 演習ページ ---
 def render_practice_page():
     def get_next_q_group():
-        if st.session_state.get("short_term_review_queue"):
-            return st.session_state.short_term_review_queue.pop(0)
+        now = datetime.datetime.now(datetime.timezone.utc)
+        # ★ 1) 短期復習: ready_at <= now のものを優先
+        stq = st.session_state.get("short_term_review_queue", [])
+        for i, item in enumerate(stq):
+            ra = item.get("ready_at")
+            if isinstance(ra, str):
+                try: ra = datetime.datetime.fromisoformat(ra)
+                except Exception: ra = now
+            if not ra or ra <= now:
+                grp = stq.pop(i).get("group", [])
+                return grp
+        # ★ 2) メインキュー
         if st.session_state.get("main_queue"):
             return st.session_state.main_queue.pop(0)
         return []
@@ -953,22 +1185,24 @@ def render_practice_page():
             if st.form_submit_button("次の問題へ", type="primary"):
                 with st.spinner('学習記録を保存中...'):
                     quality = eval_map[selected_eval_label]
-                    # --- 修正ここから ---
-                    # 1. 先に次の問題グループを確保
+                    # ★ 評価送信の処理内（quality を決めた後）
                     next_group = get_next_q_group()
-                    # 2. sm2_updateは従来通り
+                    now_utc = datetime.datetime.now(datetime.timezone.utc)
+
+                    has_hisshu = any(is_hisshu(qn) for qn in current_q_group)
+
                     for q_num_str in current_q_group:
                         card = st.session_state.cards.get(q_num_str, {})
-                        updated_card = sm2_update(card, quality)
-                        st.session_state.cards[q_num_str] = updated_card
-                    # 3. 「もう一度」なら今解いたグループをshort_term_review_queue末尾に追加
+                        st.session_state.cards[q_num_str] = sm2_update_with_policy(card, quality, q_num_str, now=now_utc)
+
+                    # ★ 短期復習キュー積み直し
                     if quality == 1:
-                        if current_q_group not in st.session_state.short_term_review_queue:
-                            st.session_state.short_term_review_queue.append(current_q_group)
-                    # 4. 保存
-                    save_user_data(st.session_state.username, st.session_state)
-                # 5. 先に確保したnext_groupをcurrent_q_groupにセット
-                st.session_state.current_q_group = next_group
+                        enqueue_short_review(current_q_group, SHORT_REVIEW_COOLDOWN_MIN_Q1)
+                    elif quality == 2 and has_hisshu:
+                        enqueue_short_review(current_q_group, SHORT_REVIEW_COOLDOWN_MIN_Q2_HISSHU)
+
+                    save_user_data(st.session_state.get("uid"), st.session_state)
+                    st.session_state.current_q_group = next_group
                 for key in list(st.session_state.keys()):
                     if key.startswith(("checked_", "user_selection_", "shuffled_", "free_input_", "order_input_")):
                         del st.session_state[key]
@@ -999,28 +1233,52 @@ def render_practice_page():
             st.image(secure_urls, use_container_width=True)
 
 # --- メイン ---
+# 自動ログインを試行
+_ = try_auto_login_from_cookie()
+
 if not st.session_state.get("user_logged_in") or not ensure_valid_session():
     # セッションが無効の場合はログイン情報をクリア
     if not ensure_valid_session():
-        for k in ["user_logged_in", "id_token", "refresh_token", "name", "username", "user_data_loaded", "token_timestamp"]:
+        for k in ["user_logged_in", "id_token", "refresh_token", "name", "username", "email", "uid", "user_data_loaded", "token_timestamp"]:
             if k in st.session_state:
                 del st.session_state[k]
     
     st.title("ログイン／新規登録")
     tab_login, tab_signup = st.tabs(["ログイン", "新規登録"])
     with tab_login:
-        login_email = st.text_input("メールアドレス", key="login_email")
+        login_email = st.text_input("メールアドレス", key="login_email", autocomplete="email")
         login_password = st.text_input("パスワード", type="password", key="login_password")
+        remember_me = st.checkbox("ログイン状態を保存する", value=True, help="このブラウザで次回から自動ログインします。")
         if st.button("ログイン", key="login_btn"):
             result = firebase_signin(login_email, login_password)
             if "idToken" in result:
                 st.session_state["name"] = login_email.split("@")[0]
                 st.session_state["username"] = login_email
+                st.session_state["email"] = login_email  # ★ 追加：email をセッションに保存
+                st.session_state["uid"] = result.get("localId")  # ★ 追加：UID
                 st.session_state["id_token"] = result["idToken"]
                 st.session_state["refresh_token"] = result.get("refreshToken", "")
                 st.session_state["token_timestamp"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-                st.session_state["user_logged_in"] = login_email
-                # ログイン成功ユーザーを明示
+                st.session_state["user_logged_in"] = st.session_state["uid"]
+                
+                # 既存の移行処理を必ず呼ぶ
+                migrate_progress_doc_if_needed(st.session_state["uid"], login_email)
+                migrate_permission_if_needed(st.session_state["uid"], login_email)
+                
+                # Remember me: クッキー保存
+                if remember_me and cookies and st.session_state.get("refresh_token"):
+                    try:
+                        cookies["refresh_token"] = st.session_state["refresh_token"]
+                        cookies["uid"] = st.session_state["uid"]
+                        cookies["email"] = login_email
+                        # 30日保持（必要なら調整）
+                        cookies.set("refresh_token", cookies["refresh_token"], max_age=60*60*24*30, same_site="Lax", secure=True)
+                        cookies.set("uid", cookies["uid"], max_age=60*60*24*30, same_site="Lax", secure=True)
+                        cookies.set("email", cookies["email"], max_age=60*60*24*30, same_site="Lax", secure=True)
+                        cookies.save()
+                    except Exception as e:
+                        st.warning(f"自動ログイン設定の保存に失敗しました: {e}")
+                
                 st.success(f"ログイン成功: {login_email}")
                 st.rerun()
             else:
@@ -1038,11 +1296,12 @@ if not st.session_state.get("user_logged_in") or not ensure_valid_session():
 else:
     name = st.session_state.get("name")
     username = st.session_state.get("username")
+    uid = st.session_state.get("uid")  # ★ 追加
     if not name or not username:
         st.warning("ログイン情報が見つかりません。再度ログインしてください。")
         st.stop()
     if "user_data_loaded" not in st.session_state:
-        user_data = load_user_data(username)
+        user_data = load_user_data(uid)  # ★ uid で読む
         st.session_state.cards = user_data.get("cards", {})
         st.session_state.main_queue = user_data.get("main_queue", [])
         st.session_state.short_term_review_queue = user_data.get("short_term_review_queue", [])
@@ -1067,22 +1326,61 @@ else:
         
         page = st.radio("ページ選択", ["演習", "検索"], key="page_select")
         if st.button("ログアウト", key="logout_btn"):
-            save_user_data(username, st.session_state)
-            for k in ["user_logged_in", "id_token", "refresh_token", "name", "username", "user_data_loaded", "token_timestamp"]:
+            save_user_data(uid, st.session_state)  # ★ username ではなく uid
+            for k in ["user_logged_in", "id_token", "refresh_token", "name", "username", "email", "uid", "user_data_loaded", "token_timestamp"]:
                 if k in st.session_state:
                     del st.session_state[k]
+            
+            # クッキー破棄
+            if cookies:
+                try:
+                    for ck in ["refresh_token", "uid", "email"]:
+                        cookies[ck] = ""
+                        cookies.delete(ck)
+                    cookies.save()
+                except Exception as e:
+                    print(f"Cookie deletion error: {e}")
+            
             st.rerun()
         if page == "演習":
             DEFAULT_NEW_CARDS_PER_DAY = 10
             if "new_cards_per_day" not in st.session_state:
-                user_data = load_user_data(username)
+                user_data = load_user_data(uid)  # ★ uid で読む
                 st.session_state["new_cards_per_day"] = user_data.get("new_cards_per_day", DEFAULT_NEW_CARDS_PER_DAY)
             new_cards_per_day = st.number_input("新規カード/日", min_value=1, max_value=100, value=st.session_state["new_cards_per_day"], step=1, key="new_cards_per_day_input")
             if new_cards_per_day != st.session_state["new_cards_per_day"]:
                 st.session_state["new_cards_per_day"] = new_cards_per_day
-                user_data = load_user_data(username)
+                user_data = load_user_data(uid)  # ★ uid で読む
                 user_data["new_cards_per_day"] = new_cards_per_day
-                db.collection("user_progress").document(username).set(user_data, merge=True)
+                db.collection("user_progress").document(uid).set(user_data, merge=True)  # ★ uid
+            
+            # TODO: 新規カード自動選定機能は一時的に無効化
+            # # 今日の新規カードを自動選定
+            # if st.button("今日の新規カードを自動選定", key="auto_pick_new_cards_btn"):
+            #     # 直近の履歴から類似抑制用に最近の出題IDを拾う（最大15件）
+            #     recent_ids = []
+            #     for q_num, card in sorted(st.session_state.cards.items(),
+            #                               key=lambda kv: kv[1].get('history', [{}])[-1].get('timestamp', ''),
+            #                               reverse=True):
+            #         recent_ids.append(q_num)
+            #         if len(recent_ids) >= 15: break
+            # 
+            #     N = int(st.session_state.get("new_cards_per_day", 10))
+            #     picked_qids = pick_new_cards_for_today(ALL_QUESTIONS, st.session_state.cards, N=N, recent_qids=recent_ids)
+            # 
+            #     if not picked_qids:
+            #         st.info("選べる未演習カードがありません。")
+            #     else:
+            #         grouped_queue = st.session_state.get("main_queue", [])
+            #         for qid in picked_qids:
+            #             grouped_queue.append([qid])
+            #             if qid not in st.session_state.cards:
+            #                 st.session_state.cards[qid] = {}
+            #         st.session_state.main_queue = grouped_queue
+            #         save_user_data(st.session_state.get("uid"), st.session_state)  # uid で保存
+            #         st.success(f"{len(picked_qids)}枚の新規カードを追加しました")
+            #         st.rerun()
+                    
             has_progress = (
                 st.session_state.get("main_queue") or
                 st.session_state.get("short_term_review_queue") or
@@ -1093,7 +1391,7 @@ else:
                     st.session_state["resume_requested"] = True
                     st.rerun()
                 if st.button("演習を終了", key="end_session_btn", type="secondary"):
-                    save_user_data(username, st.session_state)
+                    save_user_data(uid, st.session_state)  # ★ username ではなく uid
                     st.session_state["main_queue"] = []
                     st.session_state["short_term_review_queue"] = []
                     st.session_state["current_q_group"] = []
@@ -1102,14 +1400,15 @@ else:
                         if key.startswith("checked_") or key.startswith("user_selection_") or key.startswith("shuffled_") or key.startswith("free_input_"):
                             del st.session_state[key]
                     st.rerun()
+            
             # --- キーワード検索機能 ---
             st.markdown("---")
             st.header("キーワード検索")
             search_keyword = st.text_input("キーワードで問題を検索", placeholder="例: インプラント、根管治療、歯周病", key="search_keyword")
             
             # 検索オプション
-            username = st.session_state.get("username")
-            has_gakushi_permission = check_gakushi_permission(username)
+            uid = st.session_state.get("uid")
+            has_gakushi_permission = check_gakushi_permission(uid)
             
             col1, col2 = st.columns(2)
             with col1:
@@ -1117,8 +1416,7 @@ else:
                     gakushi_only = st.checkbox("学士試験のみ", key="gakushi_only_checkbox")
                 else:
                     gakushi_only = False
-                    st.text("学士試験のみ")
-                    st.caption("（権限なし）")
+                    # 権限がない場合は何も表示しない
             with col2:
                 shuffle_results = st.checkbox("シャッフル", key="shuffle_checkbox", value=True)
             
@@ -1198,7 +1496,7 @@ else:
             st.markdown("---")
 
             # --- ここから出題形式の選択肢を権限で分岐 ---
-            has_gakushi_permission = check_gakushi_permission(username)
+            has_gakushi_permission = check_gakushi_permission(uid)
             mode_choices = ["回数別", "科目別","必修問題のみ"]
             if has_gakushi_permission:
                 mode_choices.append("学士試験")
