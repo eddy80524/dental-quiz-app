@@ -530,6 +530,14 @@ def load_user_data_minimal(user_id):
                     print(f"[DEBUG] load_user_data_minimal - 成功: {time.time() - start:.3f}s, カード数: {len(result['cards'])}")
                     return result
                 else:
+                    # UIDでデータが見つからない場合、emailベースの旧データを検索・移行
+                    print(f"[DEBUG] UIDでデータなし、emailベース旧データを検索: {email}")
+                    if email:
+                        migrated_data = migrate_email_based_data_to_uid(db, email, uid)
+                        if migrated_data:
+                            print(f"[DEBUG] 旧データマイグレーション成功: {len(migrated_data.get('cards', {}))}カード")
+                            return migrated_data
+                    
                     # 新規ユーザーの場合、emailメタデータ付きで初期化
                     if email:
                         initial_data = {
@@ -548,6 +556,85 @@ def load_user_data_minimal(user_id):
     
     print(f"[DEBUG] load_user_data_minimal - デフォルト: {time.time() - start:.3f}s")
     return {"cards": {}, "new_cards_per_day": 10}
+
+def migrate_email_based_data_to_uid(db, email, uid):
+    """emailベースの旧データをUIDベースに移行する"""
+    try:
+        # emailをドキュメントIDとして使用していた旧データを検索
+        email_doc_ref = db.collection("user_progress").document(email)
+        email_doc = email_doc_ref.get(timeout=10)
+        
+        if email_doc.exists:
+            old_data = email_doc.to_dict()
+            print(f"[DEBUG] 旧emailベースデータ発見: {len(old_data.get('cards', {}))}カード")
+            
+            # UIDベースの新しいドキュメントに移行
+            new_data = {
+                "cards": old_data.get("cards", {}),
+                "new_cards_per_day": old_data.get("new_cards_per_day", 10),
+                "email": email,
+                "migrated_from": email,
+                "migrated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "last_login": datetime.datetime.now(datetime.timezone.utc).isoformat()
+            }
+            
+            # 新しいUIDドキュメントに保存
+            uid_doc_ref = db.collection("user_progress").document(uid)
+            uid_doc_ref.set(new_data)
+            
+            # 旧データに移行済みマークを付けて保持（バックアップとして）
+            email_doc_ref.update({
+                "migrated_to_uid": uid,
+                "migrated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "migration_status": "completed"
+            })
+            
+            print(f"[DEBUG] データマイグレーション完了: {email} -> {uid}")
+            return {
+                "cards": new_data.get("cards", {}),
+                "new_cards_per_day": new_data.get("new_cards_per_day", 10),
+            }
+        else:
+            # emailでもemailを正規化した形（ドット、@マーク変換など）での検索を試行
+            normalized_email = email.replace(".", "_").replace("@", "_at_")
+            normalized_doc_ref = db.collection("user_progress").document(normalized_email)
+            normalized_doc = normalized_doc_ref.get(timeout=10)
+            
+            if normalized_doc.exists:
+                old_data = normalized_doc.to_dict()
+                print(f"[DEBUG] 正規化email旧データ発見: {len(old_data.get('cards', {}))}カード")
+                
+                # 同様の移行処理
+                new_data = {
+                    "cards": old_data.get("cards", {}),
+                    "new_cards_per_day": old_data.get("new_cards_per_day", 10),
+                    "email": email,
+                    "migrated_from": normalized_email,
+                    "migrated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    "last_login": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                }
+                
+                uid_doc_ref = db.collection("user_progress").document(uid)
+                uid_doc_ref.set(new_data)
+                
+                normalized_doc_ref.update({
+                    "migrated_to_uid": uid,
+                    "migrated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    "migration_status": "completed"
+                })
+                
+                print(f"[DEBUG] 正規化データマイグレーション完了: {normalized_email} -> {uid}")
+                return {
+                    "cards": new_data.get("cards", {}),
+                    "new_cards_per_day": new_data.get("new_cards_per_day", 10),
+                }
+            
+        print(f"[DEBUG] emailベース旧データなし: {email}")
+        return None
+        
+    except Exception as e:
+        print(f"[DEBUG] データマイグレーションエラー: {e}")
+        return None
 
 @st.cache_data(ttl=900)  # 15分キャッシュ
 def load_user_data_full(user_id):
