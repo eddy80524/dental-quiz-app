@@ -45,12 +45,19 @@ def initialize_firebase():
         json.dump(firebase_creds, f)
         temp_path = f.name
     creds = credentials.Certificate(temp_path)
-    if not firebase_admin._apps:
-        # 修正：正しいFirebase Storageバケット名に変更
-        firebase_admin.initialize_app(
-            creds,
-            {'storageBucket': 'dent-ai-4d8d8.firebasestorage.app'}
-        )
+    
+    # 既存のアプリがあれば削除して再初期化
+    if firebase_admin._apps:
+        for app in firebase_admin._apps.values():
+            firebase_admin.delete_app(app)
+        firebase_admin._apps.clear()
+    
+    # 正しいFirebase Storageバケット名で初期化
+    firebase_admin.initialize_app(
+        creds,
+        {'storageBucket': 'dent-ai-4d8d8.firebasestorage.app'}
+    )
+    print(f"Firebase initialized with bucket: dent-ai-4d8d8.firebasestorage.app")
     return None
 
 initialize_firebase()
@@ -1640,6 +1647,16 @@ else:
                 # Streamlitのキャッシュをクリア
                 st.cache_data.clear()
                 st.cache_resource.clear()
+                
+                # Firebase接続もリセット
+                try:
+                    if firebase_admin._apps:
+                        for app in firebase_admin._apps.values():
+                            firebase_admin.delete_app(app)
+                        firebase_admin._apps.clear()
+                    st.success("Firebase接続もリセットしました")
+                except Exception as e:
+                    st.warning(f"Firebase接続リセット中にエラー: {e}")
                 
                 # セッション状態の問題データをクリア
                 if 'questions_loaded' in st.session_state:
