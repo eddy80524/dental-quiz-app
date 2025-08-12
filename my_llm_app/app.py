@@ -508,27 +508,31 @@ def get_natural_sort_key(q_dict):
     例: "112A5" -> (112, 'A', 5)
     学士試験形式: "G24-1-1-A-1" や "G24-2再-A-1" -> ('G', 24, '1-1', 'A', 1)
     """
-    q_num_str = q_dict.get('number', '0')
-    # 学士試験形式: G24-1-1-A-1 や G24-2再-A-1 に対応
-    # データ正規化済みでハイフンのみ使用
-    m_gakushi = re.match(r'^(G)(\d+)-([\d\-再]+)-([A-Z])-(\d+)$', q_num_str)
-    if m_gakushi:
-        return (
-            m_gakushi.group(1),      # G
-            int(m_gakushi.group(2)), # 24
-            m_gakushi.group(3),      # '1-1' や '2再' など（文字列としてソート）
-            m_gakushi.group(4),      # A
-            int(m_gakushi.group(5))  # 1
-        )
-    # 従来形式: 112A5
-    m_normal = re.match(r'^(\d+)([A-Z]*)(\d+)$', q_num_str)
-    if m_normal:
-        part1 = int(m_normal.group(1))
-        part2 = m_normal.group(2)
-        part3 = int(m_normal.group(3))
-        return (part1, part2, part3)
-    # フォールバック
-    return (0, q_num_str, 0)
+    try:
+        q_num_str = q_dict.get('number', '0')
+        # 学士試験形式: G24-1-1-A-1 や G24-2再-A-1 に対応
+        # データ正規化済みでハイフンのみ使用
+        m_gakushi = re.match(r'^(G)(\d+)-([\d\-再]+)-([A-Z])-(\d+)$', q_num_str)
+        if m_gakushi:
+            return (
+                m_gakushi.group(1),      # G
+                int(m_gakushi.group(2)), # 24
+                m_gakushi.group(3),      # '1-1' や '2再' など（文字列としてソート）
+                m_gakushi.group(4),      # A
+                int(m_gakushi.group(5))  # 1
+            )
+        # 従来形式: 112A5
+        m_normal = re.match(r'^(\d+)([A-Z]*)(\d+)$', q_num_str)
+        if m_normal:
+            part1 = int(m_normal.group(1))
+            part2 = m_normal.group(2)
+            part3 = int(m_normal.group(3))
+            return (part1, part2, part3)
+        # フォールバック
+        return (0, q_num_str, 0)
+    except Exception as e:
+        # エラーが発生した場合のフォールバック
+        return (0, str(q_dict), 0)
 
 def chem_latex(text):
     return text.replace('Ca2+', '$\\mathrm{Ca^{2+}}$')
@@ -1535,7 +1539,16 @@ else:
             if order_mode == "シャッフル":
                 random.shuffle(questions_to_load)
             else:
-                questions_to_load = sorted(questions_to_load, key=get_natural_sort_key)
+                try:
+                    questions_to_load = sorted(questions_to_load, key=get_natural_sort_key)
+                except Exception as e:
+                    st.error(f"ソート中にエラーが発生しました: {str(e)}")
+                    st.write(f"questions_to_load の型: {type(questions_to_load)}")
+                    if questions_to_load:
+                        st.write(f"最初の要素: {questions_to_load[0]}")
+                        st.write(f"最初の要素の型: {type(questions_to_load[0])}")
+                    # フォールバック: エラーが発生した場合はそのまま使用
+                    pass
             if st.button("この条件で学習開始", type="primary"):
                 if not questions_to_load:
                     st.warning("該当する問題がありません。")
