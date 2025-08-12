@@ -515,6 +515,7 @@ def get_natural_sort_key(q_dict):
         m_gakushi = re.match(r'^(G)(\d+)-([\d\-再]+)-([A-Z])-(\d+)$', q_num_str)
         if m_gakushi:
             return (
+                0,                       # 学士試験は先頭に0を置いて従来形式と区別
                 m_gakushi.group(1),      # G
                 int(m_gakushi.group(2)), # 24
                 m_gakushi.group(3),      # '1-1' や '2再' など（文字列としてソート）
@@ -527,12 +528,12 @@ def get_natural_sort_key(q_dict):
             part1 = int(m_normal.group(1))
             part2 = m_normal.group(2)
             part3 = int(m_normal.group(3))
-            return (part1, part2, part3)
-        # フォールバック
-        return (0, q_num_str, 0)
+            return (1, part1, part2, part3, "", 0)  # 従来形式は1から始めて構造を統一
+        # フォールバック: すべて文字列として扱う
+        return (2, q_num_str, "", 0, "", 0)
     except Exception as e:
-        # エラーが発生した場合のフォールバック
-        return (0, str(q_dict), 0)
+        # エラーが発生した場合のフォールバック: すべて文字列として扱う
+        return (3, str(q_dict.get('number', 'unknown')), "", 0, "", 0)
 
 def chem_latex(text):
     return text.replace('Ca2+', '$\\mathrm{Ca^{2+}}$')
