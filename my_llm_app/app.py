@@ -537,8 +537,40 @@ def load_user_data_minimal(user_id):
                     return result
                 else:
                     # UIDでデータが見つからない場合、emailベースの旧データを検索・移行
-                    print(f"[DEBUG] UIDでデータなし、emailベース旧データを検索: {email}")
+                    print(f"[DEBUG] load_user_data_minimal - UIDでデータなし、emailベース旧データを検索: {email}")
                     print(f"[DEBUG] 検索対象UID: {uid}")
+                    
+                    # 既にマイグレーション済みかチェック
+                    if email:
+                        email_doc_ref = db.collection("user_progress").document(email)
+                        email_doc = email_doc_ref.get(timeout=10)
+                        if email_doc.exists:
+                            email_data = email_doc.to_dict()
+                            if email_data.get("migrated_to_uid") == uid:
+                                print(f"[DEBUG] マイグレーション済みだが、UIDドキュメントが見つからない。再作成を試行。")
+                                # マイグレーション済みだが、UIDドキュメントが消失している場合の対処
+                                new_data = {
+                                    "cards": email_data.get("cards", {}),
+                                    "new_cards_per_day": email_data.get("new_cards_per_day", 10),
+                                    "email": email,
+                                    "migrated_from": email,
+                                    "migrated_at": email_data.get("migrated_at", datetime.datetime.now(datetime.timezone.utc).isoformat()),
+                                    "last_login": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                                    "recreated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                                }
+                                
+                                # その他のフィールドも復元
+                                for key in ["main_queue", "short_term_review_queue", "current_q_group"]:
+                                    if key in email_data:
+                                        new_data[key] = email_data[key]
+                                
+                                doc_ref.set(new_data)
+                                print(f"[DEBUG] UIDドキュメント再作成完了: {len(new_data.get('cards', {}))}カード")
+                                return {
+                                    "cards": new_data.get("cards", {}),
+                                    "new_cards_per_day": new_data.get("new_cards_per_day", 10),
+                                }
+                    
                     if email:
                         migrated_data = migrate_email_based_data_to_uid(db, email, uid)
                         if migrated_data:
@@ -571,13 +603,19 @@ def load_user_data_minimal(user_id):
 def migrate_email_based_data_to_uid(db, email, uid):
     """emailベースの旧データをUIDベースに移行する"""
     try:
+        print(f"[DEBUG] マイグレーション開始: {email} -> {uid}")
+        
         # emailをドキュメントIDとして使用していた旧データを検索
         email_doc_ref = db.collection("user_progress").document(email)
         email_doc = email_doc_ref.get(timeout=10)
         
         if email_doc.exists:
             old_data = email_doc.to_dict()
-            print(f"[DEBUG] 旧emailベースデータ発見: {len(old_data.get('cards', {}))}カード")
+            print(f"[DEBUG] 旧emailベースデータ発見:")
+            print(f"[DEBUG]   - カード数: {len(old_data.get('cards', {}))}")
+            print(f"[DEBUG]   - main_queue: {len(old_data.get('main_queue', []))}")
+            print(f"[DEBUG]   - 新規カード/日: {old_data.get('new_cards_per_day', 10)}")
+            print(f"[DEBUG]   - その他のキー: {list(old_data.keys())}")
             
             # UIDベースの新しいドキュメントに移行
             new_data = {
@@ -589,9 +627,16 @@ def migrate_email_based_data_to_uid(db, email, uid):
                 "last_login": datetime.datetime.now(datetime.timezone.utc).isoformat()
             }
             
+            # その他のフィールドも移行
+            for key in ["main_queue", "short_term_review_queue", "current_q_group"]:
+                if key in old_data:
+                    new_data[key] = old_data[key]
+                    print(f"[DEBUG]   - {key} を移行: {type(old_data[key])}")
+            
             # 新しいUIDドキュメントに保存
             uid_doc_ref = db.collection("user_progress").document(uid)
             uid_doc_ref.set(new_data)
+            print(f"[DEBUG] UIDドキュメント作成完了: {uid}")
             
             # 旧データに移行済みマークを付けて保持（バックアップとして）
             email_doc_ref.update({
@@ -608,12 +653,15 @@ def migrate_email_based_data_to_uid(db, email, uid):
         else:
             # emailでもemailを正規化した形（ドット、@マーク変換など）での検索を試行
             normalized_email = email.replace(".", "_").replace("@", "_at_")
+            print(f"[DEBUG] 正規化email検索: {normalized_email}")
             normalized_doc_ref = db.collection("user_progress").document(normalized_email)
             normalized_doc = normalized_doc_ref.get(timeout=10)
             
             if normalized_doc.exists:
                 old_data = normalized_doc.to_dict()
-                print(f"[DEBUG] 正規化email旧データ発見: {len(old_data.get('cards', {}))}カード")
+                print(f"[DEBUG] 正規化email旧データ発見:")
+                print(f"[DEBUG]   - カード数: {len(old_data.get('cards', {}))}")
+                print(f"[DEBUG]   - その他のキー: {list(old_data.keys())}")
                 
                 # 同様の移行処理
                 new_data = {
@@ -624,6 +672,11 @@ def migrate_email_based_data_to_uid(db, email, uid):
                     "migrated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                     "last_login": datetime.datetime.now(datetime.timezone.utc).isoformat()
                 }
+                
+                # その他のフィールドも移行
+                for key in ["main_queue", "short_term_review_queue", "current_q_group"]:
+                    if key in old_data:
+                        new_data[key] = old_data[key]
                 
                 uid_doc_ref = db.collection("user_progress").document(uid)
                 uid_doc_ref.set(new_data)
@@ -922,11 +975,14 @@ def check_gakushi_permission(user_id):
         # UIDで権限が見つからない場合、emailベースの旧権限を検索・移行
         print(f"[DEBUG] UID権限なし、emailベース権限検索: {email}")
         if email:
+            # 直接email検索
             email_doc_ref = db.collection("user_permissions").document(email)
             email_doc = email_doc_ref.get()
             if email_doc.exists:
                 old_data = email_doc.to_dict()
-                print(f"[DEBUG] 旧email権限発見、マイグレーション実行")
+                print(f"[DEBUG] 旧email権限発見:")
+                print(f"[DEBUG]   - can_access_gakushi: {old_data.get('can_access_gakushi', False)}")
+                print(f"[DEBUG]   - 権限データ: {old_data}")
                 
                 # 権限をUIDベースに移行
                 new_permission_data = {
@@ -935,6 +991,12 @@ def check_gakushi_permission(user_id):
                     "migrated_from": email,
                     "migrated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
                 }
+                
+                # その他の権限フィールドも移行
+                for key, value in old_data.items():
+                    if key not in ["email", "migrated_from", "migrated_at", "migrated_to_uid"]:
+                        new_permission_data[key] = value
+                
                 doc_ref.set(new_permission_data)
                 
                 # 旧データに移行済みマーク
@@ -945,6 +1007,36 @@ def check_gakushi_permission(user_id):
                 
                 print(f"[DEBUG] 権限マイグレーション完了: {bool(old_data.get('can_access_gakushi', False))}")
                 return bool(old_data.get("can_access_gakushi", False))
+            else:
+                # 正規化されたemail形式でも検索
+                normalized_email = email.replace(".", "_").replace("@", "_at_")
+                print(f"[DEBUG] 正規化email権限検索: {normalized_email}")
+                normalized_doc_ref = db.collection("user_permissions").document(normalized_email)
+                normalized_doc = normalized_doc_ref.get()
+                if normalized_doc.exists:
+                    old_data = normalized_doc.to_dict()
+                    print(f"[DEBUG] 正規化email権限発見: {old_data}")
+                    
+                    new_permission_data = {
+                        "can_access_gakushi": old_data.get("can_access_gakushi", False),
+                        "email": email,
+                        "migrated_from": normalized_email,
+                        "migrated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    }
+                    
+                    # その他の権限フィールドも移行
+                    for key, value in old_data.items():
+                        if key not in ["email", "migrated_from", "migrated_at", "migrated_to_uid"]:
+                            new_permission_data[key] = value
+                    
+                    doc_ref.set(new_permission_data)
+                    normalized_doc_ref.update({
+                        "migrated_to_uid": uid,
+                        "migrated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    })
+                    
+                    print(f"[DEBUG] 正規化権限マイグレーション完了: {bool(old_data.get('can_access_gakushi', False))}")
+                    return bool(old_data.get("can_access_gakushi", False))
     
     print(f"[DEBUG] 学士権限なし")
     return False
