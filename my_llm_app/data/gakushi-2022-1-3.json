@@ -215,7 +215,7 @@
         "関節突起"
       ],
       "answer": "CE",
-      "subject": "保存学",
+      "subject": "歯科保存学",
       "image_paths": []
     },
     {
@@ -938,7 +938,7 @@
         "1┴1 2 部歯槽骨整復"
       ],
       "answer": "DE",
-      "subject": "口腔病理学1",
+      "subject": "口腔外科学1",
       "image_paths": [
         "gakushi/2022/1-3/G22-1-3-A-66a.jpg",
         "gakushi/2022/1-3/G22-1-3-A-66b.jpg",
@@ -2249,7 +2249,7 @@
         "急性化膿性唾液腺炎"
       ],
       "answer": "D",
-      "subject": "口腔病理学1",
+      "subject": "口腔外科学1",
       "image_paths": []
     },
     {
@@ -4758,7 +4758,7 @@
         "播種性血管内凝固症候群"
       ],
       "answer": "CE",
-      "subject": "口腔外科学",
+      "subject": "口腔外科学2",
       "image_paths": []
     },
     {

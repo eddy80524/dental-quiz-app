@@ -653,7 +653,7 @@
         "オーラルアプライアンス療法"
       ],
       "answer": "AE",
-      "subject": "口腔外科学２",
+      "subject": "口腔外科学2",
       "image_paths": []
     },
     {
@@ -881,7 +881,7 @@
         "術後性上顎嚢胞"
       ],
       "answer": "AD",
-      "subject": "口腔外科１",
+      "subject": "口腔外科学1",
       "image_paths": []
     },
     {
@@ -1039,7 +1039,7 @@
         "オ"
       ],
       "answer": "B",
-      "subject": "口腔外科学１",
+      "subject": "口腔外科学1",
       "image_paths": [
         "gakushi/2022/1-1/G22-1-1-A-72a.jpg"
       ]
@@ -1074,7 +1074,7 @@
         "下顎に使用した材料より力学的強度が高い。"
       ],
       "answer": "AB",
-      "subject": "口腔外科学２",
+      "subject": "口腔外科学2",
       "image_paths": [
         "gakushi/2022/1-1/G22-1-1-A-74a.jpg",
         "gakushi/2022/1-1/G22-1-1-A-74b.jpg"
@@ -1209,7 +1209,7 @@
         "口腔–上顎洞瘻閉鎖"
       ],
       "answer": "BC",
-      "subject": "口腔外科１",
+      "subject": "口腔外科学1",
       "image_paths": [
         "gakushi/2022/1-1/G22-1-1-A-82a.jpg",
         "gakushi/2022/1-1/G22-1-1-A-82b.jpg",
@@ -1245,7 +1245,7 @@
         "外頸動脈"
       ],
       "answer": "B",
-      "subject": "口腔外科学２",
+      "subject": "口腔外科学2",
       "image_paths": [
         "gakushi/2022/1-1/G22-1-1-A-84a.jpg",
         "gakushi/2022/1-1/G22-1-1-A-84b.jpg",
@@ -1328,7 +1328,7 @@
         "下顎区域切除"
       ],
       "answer": "AB",
-      "subject": "口腔外科学１",
+      "subject": "口腔外科学1",
       "image_paths": [
         "gakushi/2022/1-1/G22-1-1-A-89a.jpg",
         "gakushi/2022/1-1/G22-1-1-A-89b.jpg",
@@ -2871,7 +2871,7 @@
         "すりガラス状像"
       ],
       "answer": "D",
-      "subject": "口腔外科1",
+      "subject": "口腔外科学1",
       "image_paths": []
     },
     {
@@ -3714,7 +3714,7 @@
         "放射線治療"
       ],
       "answer": "A",
-      "subject": "口腔外科1",
+      "subject": "口腔外科学1",
       "image_paths": [
         "gakushi/2022/1-1/G22-1-1-C-70a.jpg",
         "gakushi/2022/1-1/G22-1-1-C-70b.jpg",
@@ -3733,7 +3733,7 @@
         "周囲小唾液腺摘出"
       ],
       "answer": "E",
-      "subject": "口腔外科1",
+      "subject": "口腔外科学1",
       "image_paths": [
         "gakushi/2022/1-1/G22-1-1-C-71a.jpg",
         "gakushi/2022/1-1/G22-1-1-C-71b.jpg"

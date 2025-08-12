@@ -407,7 +407,7 @@
         "地域包括支援センター"
       ],
       "answer": "AC",
-      "subject": "公衆衛生学",
+      "subject": "口腔衛生学",
       "image_paths": []
     },
     {
@@ -521,7 +521,7 @@
         "クリプトコッカス症"
       ],
       "answer": "BD",
-      "subject": "微生物学",
+      "subject": "内科学",
       "image_paths": []
     },
     {
@@ -549,7 +549,7 @@
         "後期高齢者健康診査"
       ],
       "answer": "C",
-      "subject": "公衆衛生学",
+      "subject": "口腔衛生学",
       "image_paths": []
     },
     {
@@ -563,7 +563,7 @@
         "脊髄神経節"
       ],
       "answer": "A",
-      "subject": "神経解剖学",
+      "subject": "生理学",
       "image_paths": []
     },
     {
@@ -719,7 +719,7 @@
         "後頭葉"
       ],
       "answer": "B",
-      "subject": "神経解剖学",
+      "subject": "高齢者歯科学",
       "image_paths": []
     },
     {
@@ -1477,7 +1477,7 @@
         "サブジンジバルカントゥアの調整"
       ],
       "answer": "E",
-      "subject": "口腔インプラント学",
+      "subject": "口腔インプラント",
       "image_paths": [
         "gakushi/2024/1-1/G24-1-1-B-9a.jpg"
       ]
@@ -2454,8 +2454,8 @@
         "齲蝕除去",
         "レジンコーティング"
       ],
-      "answer": "C",
-      "subject": "口腔保存学",
+      "answer": "E",
+      "subject": "歯科保存学",
       "image_paths": [
         "gakushi/2024/1-1/G24-1-1-B-75a.jpg",
         "gakushi/2024/1-1/G24-1-1-B-75b.jpg",
@@ -3122,8 +3122,8 @@
         "抗けいれん薬",
         "抗パーキンソン病薬"
       ],
-      "answer": "BD",
-      "subject": "神経解剖学"
+      "answer": "BE",
+      "subject": "薬理学"
     },
     {
       "number": "G24-1-1-C-31",
@@ -3295,7 +3295,7 @@
         "約267 万人"
       ],
       "answer": "B",
-      "subject": "公衆衛生学"
+      "subject": "口腔衛生学"
     },
     {
       "number": "G24-1-1-C-44",
@@ -3321,7 +3321,7 @@
         "気中有害物質濃度の測定"
       ],
       "answer": "DE",
-      "subject": "公衆衛生学"
+      "subject": "口腔衛生学"
     },
     {
       "number": "G24-1-1-C-46",
