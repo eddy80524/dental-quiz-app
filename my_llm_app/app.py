@@ -730,40 +730,44 @@ def save_user_data(user_id, session_state):
         else:
             return [str(obj)]
 
-    if not ensure_valid_session():
-        return
+    try:
+        if not ensure_valid_session():
+            return
 
-    # 安全にDB取得
-    db = get_db()
-    if db and user_id:
-        doc_ref = db.collection("user_progress").document(user_id)  # UIDを主キーとして使用
-        payload = {
-            "cards": session_state.get("cards", {}),
-            "email": session_state.get("email"),  # emailメタデータを保存
-            "last_save": datetime.datetime.now(datetime.timezone.utc).isoformat()  # 最終保存時刻
-        }
-        if "main_queue" in session_state:
-            payload["main_queue"] = [','.join(flatten_and_str(g)) for g in session_state.get("main_queue", [])]
-        # ★ 短期復習キューの新形式保存（ready_at付きMap配列）
-        if "short_term_review_queue" in session_state:
-            ser = []
-            for item in session_state.get("short_term_review_queue", []):
-                if isinstance(item, dict):
-                    grp = item.get("group", [])
-                    ra = item.get("ready_at")
-                    if isinstance(ra, datetime.datetime):
-                        ra = ra.isoformat()
-                    ser.append({"group": [str(x) for x in grp], "ready_at": ra})
-                else:
-                    # 後方互換（古い形式が残っていても壊さない）
-                    grp = item if isinstance(item, list) else [str(item)]
-                    ser.append({"group": grp, "ready_at": datetime.datetime.now(datetime.timezone.utc).isoformat()})
-            payload["short_term_review_queue"] = ser
-        if "current_q_group" in session_state:
-            payload["current_q_group"] = ','.join(flatten_and_str(session_state.get("current_q_group", [])))
-        if "new_cards_per_day" in session_state:
-            payload["new_cards_per_day"] = session_state["new_cards_per_day"]
-        doc_ref.set(payload, merge=True)
+        # 安全にDB取得
+        db = get_db()
+        if db and user_id:
+            doc_ref = db.collection("user_progress").document(user_id)  # UIDを主キーとして使用
+            payload = {
+                "cards": session_state.get("cards", {}),
+                "email": session_state.get("email"),  # emailメタデータを保存
+                "last_save": datetime.datetime.now(datetime.timezone.utc).isoformat()  # 最終保存時刻
+            }
+            if "main_queue" in session_state:
+                payload["main_queue"] = [','.join(flatten_and_str(g)) for g in session_state.get("main_queue", [])]
+            # ★ 短期復習キューの新形式保存（ready_at付きMap配列）
+            if "short_term_review_queue" in session_state:
+                ser = []
+                for item in session_state.get("short_term_review_queue", []):
+                    if isinstance(item, dict):
+                        grp = item.get("group", [])
+                        ra = item.get("ready_at")
+                        if isinstance(ra, datetime.datetime):
+                            ra = ra.isoformat()
+                        ser.append({"group": [str(x) for x in grp], "ready_at": ra})
+                    else:
+                        # 後方互換（古い形式が残っていても壊さない）
+                        grp = item if isinstance(item, list) else [str(item)]
+                        ser.append({"group": grp, "ready_at": datetime.datetime.now(datetime.timezone.utc).isoformat()})
+                payload["short_term_review_queue"] = ser
+            if "current_q_group" in session_state:
+                payload["current_q_group"] = ','.join(flatten_and_str(session_state.get("current_q_group", [])))
+            if "new_cards_per_day" in session_state:
+                payload["new_cards_per_day"] = session_state["new_cards_per_day"]
+            doc_ref.set(payload, merge=True)
+    except Exception as e:
+        print(f"[ERROR] save_user_data エラー: {e}")
+        # エラーが発生してもアプリケーションを停止させない
 
 def migrate_progress_doc_if_needed(uid: str, email: str):
     """初回ログイン時などに email Doc を UID Doc へコピー（冪等）"""
