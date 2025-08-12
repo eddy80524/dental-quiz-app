@@ -53,11 +53,12 @@ def initialize_firebase():
     firebase_admin._apps.clear()
     
     # 正しいFirebase Storageバケット名で初期化
+    project_id = firebase_creds.get("project_id", "dent-ai-4d8d8")
     firebase_admin.initialize_app(
         creds,
-        {'storageBucket': 'dent-ai-4d8d8.firebasestorage.app'}
+        {'storageBucket': f'{project_id}.appspot.com'}
     )
-    print(f"Firebase initialized with bucket: dent-ai-4d8d8.firebasestorage.app")
+    print(f"Firebase initialized with bucket: {project_id}.appspot.com")
     
     # FirestoreクライアントとStorageバケットもここで初期化
     db = firestore.client()
@@ -647,7 +648,8 @@ def migrate_email_based_data_to_uid(db, email, uid):
         return None
 
 @st.cache_data(ttl=900)  # 15分キャッシュ
-def load_user_data_full(user_id):
+@st.cache_data(ttl=900)
+def load_user_data_full(user_id, cache_buster: int = 0):
     """演習開始時に全データを読み込む完全版（UIDベース＋emailメタデータ）"""
     import time
     start = time.time()
@@ -679,24 +681,24 @@ def load_user_data_full(user_id):
                     short_term_review_queue = []
                     now_utc = datetime.datetime.now(datetime.timezone.utc)
 
-                def _parse_ready_at(v):
-                    if isinstance(v, datetime.datetime): return v
-                    if isinstance(v, str):
-                        try: return datetime.datetime.fromisoformat(v)
-                        except Exception: return now_utc
-                    return now_utc
+                    def _parse_ready_at(v):
+                        if isinstance(v, datetime.datetime): return v
+                        if isinstance(v, str):
+                            try: return datetime.datetime.fromisoformat(v)
+                            except Exception: return now_utc
+                        return now_utc
 
-                for item in raw:
-                    if isinstance(item, dict):
-                        grp = item.get("group", [])
-                        ra = _parse_ready_at(item.get("ready_at"))
-                        short_term_review_queue.append({"group": grp, "ready_at": ra})
-                    elif isinstance(item, str):
-                        grp = item.split(",") if item else []
-                        short_term_review_queue.append({"group": grp, "ready_at": now_utc})
-                    elif isinstance(item, list):
-                        short_term_review_queue.append({"group": item, "ready_at": now_utc})
-                
+                    for item in raw:
+                        if isinstance(item, dict):
+                            grp = item.get("group", [])
+                            ra = _parse_ready_at(item.get("ready_at"))
+                            short_term_review_queue.append({"group": grp, "ready_at": ra})
+                        elif isinstance(item, str):
+                            grp = item.split(",") if item else []
+                            short_term_review_queue.append({"group": grp, "ready_at": now_utc})
+                        elif isinstance(item, list):
+                            short_term_review_queue.append({"group": item, "ready_at": now_utc})
+                    
                     result = {
                         "cards": data.get("cards", {}),
                         "main_queue": main_queue,
@@ -704,11 +706,31 @@ def load_user_data_full(user_id):
                         "current_q_group": current_q_group,
                         "new_cards_per_day": data.get("new_cards_per_day", 10),
                     }
-                    print(f"[DEBUG] load_user_data_full - 成功: {time.time() - start:.3f}s")
+                    print(f"[DEBUG] load_user_data_full - 成功: {time.time() - start:.3f}s, カード数: {len(result['cards'])}")
                     return result
+                else:
+                    # UIDでデータが見つからない場合、emailベースの旧データを検索・移行
+                    print(f"[DEBUG] load_user_data_full - UIDでデータなし、emailベース旧データを検索: {email}")
+                    if email:
+                        migrated_data = migrate_email_based_data_to_uid(db, email, uid)
+                        if migrated_data:
+                            print(f"[DEBUG] load_user_data_full - 旧データマイグレーション成功: {len(migrated_data.get('cards', {}))}カード")
+                            # マイグレーションしたデータに空のキューを追加して完全版として返す
+                            result = {
+                                "cards": migrated_data.get("cards", {}),
+                                "main_queue": [],
+                                "short_term_review_queue": [],
+                                "current_q_group": [],
+                                "new_cards_per_day": migrated_data.get("new_cards_per_day", 10),
+                            }
+                            return result
+                        else:
+                            print(f"[DEBUG] load_user_data_full - emailベース旧データ見つからず: {email}")
+                            
             except Exception as e:
                 print(f"[DEBUG] load_user_data_full - エラー: {e}, 時間: {time.time() - start:.3f}s")
     
+    print(f"[DEBUG] load_user_data_full - デフォルト: {time.time() - start:.3f}s")
     return {"cards": {}, "main_queue": [], "short_term_review_queue": [], "current_q_group": [], "new_cards_per_day": 10}
 
 def load_user_data(user_id):
@@ -765,6 +787,10 @@ def save_user_data(user_id, session_state):
             if "new_cards_per_day" in session_state:
                 payload["new_cards_per_day"] = session_state["new_cards_per_day"]
             doc_ref.set(payload, merge=True)
+            
+            # キャッシュをクリアして最新データが読み込まれるようにする
+            st.cache_data.clear()
+            
     except Exception as e:
         print(f"[ERROR] save_user_data エラー: {e}")
         # エラーが発生してもアプリケーションを停止させない
@@ -2077,7 +2103,8 @@ else:
                 with st.spinner("演習データを読み込み中..."):
                     full_data_start = time.time()
                     uid = st.session_state.get("uid")  # UIDを主キーとして使用
-                    full_user_data = load_user_data_full(uid)  # UIDを使用
+                    cache_buster = st.session_state.get("cache_buster", 0)
+                    full_user_data = load_user_data_full(uid, cache_buster=cache_buster)  # UIDを使用
                     full_data_time = time.time() - full_data_start
                     
                     # 完全版データでセッション更新
@@ -2085,20 +2112,42 @@ else:
                     st.session_state.main_queue = full_user_data.get("main_queue", [])
                     st.session_state.short_term_review_queue = full_user_data.get("short_term_review_queue", [])
                     st.session_state.current_q_group = full_user_data.get("current_q_group", [])
-                    st.session_state.full_data_loaded = True
                     
-                    print(f"[DEBUG] 演習データ読み込み完了: {full_data_time:.3f}s")
-                    st.success(f"演習データ読み込み完了: {full_data_time:.2f}秒")
+                    # 空でないデータがある場合のみfull_data_loadedをTrueにする
+                    has_data = (len(st.session_state.cards) > 0 or 
+                               len(st.session_state.main_queue) > 0 or 
+                               len(st.session_state.short_term_review_queue) > 0)
+                    
+                    if has_data:
+                        st.session_state.full_data_loaded = True
+                        print(f"[DEBUG] 演習データ読み込み完了: {full_data_time:.3f}s")
+                        st.success(f"演習データ読み込み完了: {full_data_time:.2f}秒")
+                    else:
+                        print(f"[DEBUG] 演習データが空のため再読み込み可能状態を維持: {full_data_time:.3f}s")
+                        st.info("演習データが見つかりませんでした。再読込ボタンで最新データを確認できます。")
             
             DEFAULT_NEW_CARDS_PER_DAY = 10
             # 初回ログイン時に設定済み。未設定ならデフォルト。
             if "new_cards_per_day" not in st.session_state:
                 st.session_state["new_cards_per_day"] = DEFAULT_NEW_CARDS_PER_DAY
-            new_cards_per_day = st.number_input(
-                "新規カード/日", min_value=1, max_value=100,
-                value=st.session_state["new_cards_per_day"], step=1,
-                key="new_cards_per_day_input"
-            )
+            
+            # コントロール行：新規カード数と再読込ボタン
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                new_cards_per_day = st.number_input(
+                    "新規カード/日", min_value=1, max_value=100,
+                    value=st.session_state["new_cards_per_day"], step=1,
+                    key="new_cards_per_day_input"
+                )
+            with col2:
+                if st.button("再読込", key="refresh_data_btn", help="最新の演習データを強制読み込み"):
+                    # キャッシュバスターを増やして強制更新
+                    if "cache_buster" not in st.session_state:
+                        st.session_state["cache_buster"] = 0
+                    st.session_state["cache_buster"] += 1
+                    st.session_state["full_data_loaded"] = False
+                    st.rerun()
+            
             if new_cards_per_day != st.session_state["new_cards_per_day"]:
                 st.session_state["new_cards_per_day"] = new_cards_per_day
                 # 余計な再読込を避けて差分だけ保存
