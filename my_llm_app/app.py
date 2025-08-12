@@ -64,10 +64,6 @@ initialize_firebase()
 db = firestore.client()
 bucket = storage.bucket()
 
-# バケット情報をデバッグ表示
-print(f"Firebase Storage bucket name: {bucket.name}")
-print(f"Firebase Storage bucket configured: {bucket is not None}")
-
 # --- Cookies（自動ログイン用） ---
 try:
     cookie_password = st.secrets.get("cookie_password", "default_insecure_password_change_in_production")
@@ -484,27 +480,19 @@ def get_secure_image_url(path):
                 project_id = st.secrets['firebase_credentials']['project_id']
                 client = cloud_storage.Client(project=project_id)
                 bucket_to_use = client.bucket(st.session_state["correct_bucket"])
-                st.write(f"🔄 動的バケット使用: {st.session_state['correct_bucket']}")
             else:
                 bucket_to_use = bucket
             
             blob = bucket_to_use.blob(path)
             # ファイルが存在するかチェック
             if not blob.exists():
-                st.warning(f"⚠️ ファイルが存在しません: {path} (バケット: {bucket_to_use.name})")
-                print(f"File does not exist in Firebase Storage: {path} (bucket: {bucket_to_use.name})")
                 return None
             
             url = blob.generate_signed_url(expiration=datetime.timedelta(minutes=15))
-            print(f"Generated signed URL for {path}: {url[:100]}...")
             return url
     except Exception as e:
-        # デバッグ用: エラーの詳細を表示
-        st.error(f"画像URL生成エラー - パス: {path}, エラー: {str(e)}")
-        print(f"Image URL generation error - Path: {path}, Error: {str(e)}")
-        import traceback
-        print(f"Full traceback: {traceback.format_exc()}")
-    return None
+        # エラーが発生した場合は None を返す
+        return None
 
 def get_shuffled_choices(q):
     key = f"shuffled_{q['number']}"
@@ -1263,44 +1251,12 @@ def render_practice_page():
             if image_list:  # 値がNoneや空リストでないことを確認
                 display_images.extend(image_list)
 
-    # デバッグ情報を表示
     if display_images:
-        st.write(f"🔍 デバッグ: 検出された画像パス: {display_images}")
         # 重複を除去して、万が一同じパスが複数あってもエラーを防ぐ
         unique_images = list(dict.fromkeys(display_images))
-        st.write(f"🔍 デバッグ: ユニーク化後: {unique_images}")
-        
-        secure_urls = []
-        for path in unique_images:
-            if path:
-                url = get_secure_image_url(path)
-                if url:
-                    secure_urls.append(url)
-                    st.write(f"✅ 成功: {path} -> URL生成成功")
-                    # URLの詳細を表示（デバッグ用）
-                    st.code(f"生成されたURL: {url[:100]}..." if len(url) > 100 else f"生成されたURL: {url}")
-                else:
-                    st.write(f"❌ 失敗: {path} -> URL生成失敗")
-        
+        secure_urls = [url for path in unique_images if path and (url := get_secure_image_url(path))]
         if secure_urls:
-            st.write(f"🖼️ 表示する画像数: {len(secure_urls)}")
-            try:
-                st.image(secure_urls, use_container_width=True)
-                st.success("画像表示処理が正常に実行されました")
-            except Exception as e:
-                st.error(f"画像表示エラー: {str(e)}")
-                # 個別に画像を表示してみる
-                st.write("個別表示を試行中...")
-                for i, url in enumerate(secure_urls):
-                    try:
-                        st.image(url, caption=f"画像 {i+1}", use_container_width=True)
-                        st.write(f"画像 {i+1} 表示成功")
-                    except Exception as img_err:
-                        st.error(f"画像 {i+1} 表示失敗: {str(img_err)}")
-        else:
-            st.warning("⚠️ 表示可能な画像がありません")
-    else:
-        st.write("🔍 デバッグ: 画像パスが見つかりませんでした")
+            st.image(secure_urls, use_container_width=True)
 
 # --- メイン ---
 # 自動ログインを試行
@@ -1664,7 +1620,6 @@ else:
                         for app in firebase_admin._apps.values():
                             firebase_admin.delete_app(app)
                         firebase_admin._apps.clear()
-                    st.success("Firebase接続もリセットしました")
                 except Exception as e:
                     st.warning(f"Firebase接続リセット中にエラー: {e}")
                 
@@ -1674,107 +1629,6 @@ else:
                 
                 st.success("キャッシュをクリアしました。ページを再読み込みします...")
                 st.rerun()
-            
-            # Firebase Storageデバッグ機能
-            if st.button("🔍 Firebase Storage確認", help="画像ファイルの存在確認"):
-                try:
-                    # バケット情報を詳細表示
-                    st.write(f"**現在のバケット名**: {bucket.name}")
-                    st.write(f"**プロジェクトID**: {st.secrets['firebase_credentials']['project_id']}")
-                    
-                    # 複数のバケット名パターンを試す
-                    possible_buckets = [
-                        f"{st.secrets['firebase_credentials']['project_id']}.appspot.com",
-                        f"{st.secrets['firebase_credentials']['project_id']}.firebasestorage.app"
-                    ]
-                    
-                    st.write("**可能なバケット名パターン**:")
-                    for bucket_name in possible_buckets:
-                        st.write(f"  - {bucket_name}")
-                    
-                    # 現在のバケットでファイル検索
-                    st.write("---")
-                    st.write(f"**{bucket.name} での検索結果**:")
-                    
-                    # ルートレベルで検索
-                    blobs_root = list(bucket.list_blobs(max_results=20))
-                    if blobs_root:
-                        st.success(f"✅ ルートレベルに {len(blobs_root)} 個のファイルが見つかりました:")
-                        for blob in blobs_root[:10]:  # 最初の10個だけ表示
-                            st.write(f"  - {blob.name}")
-                        if len(blobs_root) > 10:
-                            st.write(f"  ... および {len(blobs_root) - 10} 個のその他のファイル")
-                    else:
-                        st.warning("ルートレベルにファイルが見つかりません")
-                    
-                    # gakushi/ フォルダで検索
-                    prefix = "gakushi/"
-                    blobs_gakushi = list(bucket.list_blobs(prefix=prefix, max_results=20))
-                    if blobs_gakushi:
-                        st.success(f"✅ {prefix} フォルダに {len(blobs_gakushi)} 個のファイルが見つかりました:")
-                        for blob in blobs_gakushi[:10]:
-                            st.write(f"  - {blob.name}")
-                            if "G25-1-1-A-" in blob.name:
-                                st.success(f"🎯 対象ファイル発見: {blob.name}")
-                        if len(blobs_gakushi) > 10:
-                            st.write(f"  ... および {len(blobs_gakushi) - 10} 個のその他のファイル")
-                    else:
-                        st.warning(f"⚠️ {prefix} フォルダにファイルが見つかりません")
-                    
-                    # gakushi/2025/1-1/ フォルダで詳細検索
-                    prefix_specific = "gakushi/2025/1-1/"
-                    blobs_specific = list(bucket.list_blobs(prefix=prefix_specific, max_results=50))
-                    if blobs_specific:
-                        st.success(f"✅ {prefix_specific} フォルダに {len(blobs_specific)} 個のファイルが見つかりました:")
-                        for blob in blobs_specific:
-                            st.write(f"  - {blob.name} (サイズ: {blob.size} bytes)")
-                            if "G25-1-1-A-77" in blob.name or "G25-1-1-A-68" in blob.name:
-                                st.success(f"🎯 対象ファイル発見: {blob.name}")
-                    else:
-                        st.warning(f"⚠️ {prefix_specific} フォルダにファイルが見つかりません")
-                        
-                except Exception as e:
-                    st.error(f"Firebase Storage確認エラー: {str(e)}")
-                    import traceback
-                    st.code(traceback.format_exc())
-            
-            # 異なるバケット設定を試すボタン
-            if st.button("🔧 バケット設定を切り替えてテスト", help="appspot.com バケットを試す"):
-                try:
-                    # 一時的に appspot.com バケットを試す
-                    from google.cloud import storage as cloud_storage
-                    project_id = st.secrets['firebase_credentials']['project_id']
-                    test_bucket_name = f"{project_id}.appspot.com"
-                    
-                    # Cloud Storage クライアントを直接作成
-                    client = cloud_storage.Client(project=project_id)
-                    test_bucket = client.bucket(test_bucket_name)
-                    
-                    st.write(f"**テスト中のバケット**: {test_bucket_name}")
-                    
-                    # gakushi/2025/1-1/ フォルダで検索
-                    prefix = "gakushi/2025/1-1/"
-                    blobs = list(test_bucket.list_blobs(prefix=prefix, max_results=20))
-                    
-                    if blobs:
-                        st.success(f"✅ {test_bucket_name} の {prefix} フォルダに {len(blobs)} 個のファイルが見つかりました:")
-                        for blob in blobs:
-                            st.write(f"  - {blob.name}")
-                            if "G25-1-1-A-77" in blob.name or "G25-1-1-A-68" in blob.name:
-                                st.success(f"🎯 対象ファイル発見: {blob.name}")
-                        
-                        # 見つかった場合、設定を更新するオプションを提供
-                        if st.button("このバケット設定を適用", key="apply_appspot_bucket"):
-                            # 一時的にセッション状態に保存（完全な修正は次のステップで）
-                            st.session_state["correct_bucket"] = test_bucket_name
-                            st.success(f"バケット設定を {test_bucket_name} に変更しました。画像表示を再試行してください。")
-                    else:
-                        st.warning(f"⚠️ {test_bucket_name} にもファイルが見つかりません")
-                        
-                except Exception as e:
-                    st.error(f"バケットテストエラー: {str(e)}")
-                    import traceback
-                    st.code(traceback.format_exc())
             
             st.markdown("---"); st.header("学習記録")
             if st.session_state.cards:
