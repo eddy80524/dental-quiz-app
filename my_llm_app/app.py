@@ -46,10 +46,10 @@ def initialize_firebase():
         temp_path = f.name
     creds = credentials.Certificate(temp_path)
     if not firebase_admin._apps:
-        # 修正：バケットは appspot.com
+        # 修正：正しいFirebase Storageバケット名に変更
         firebase_admin.initialize_app(
             creds,
-            {'storageBucket': 'dent-ai-4d8d8.appspot.com'}
+            {'storageBucket': 'dent-ai-4d8d8.firebasestorage.app'}
         )
     return None
 
