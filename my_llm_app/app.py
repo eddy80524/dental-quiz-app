@@ -537,11 +537,16 @@ def load_user_data_minimal(user_id):
                 else:
                     # UIDでデータが見つからない場合、emailベースの旧データを検索・移行
                     print(f"[DEBUG] UIDでデータなし、emailベース旧データを検索: {email}")
+                    print(f"[DEBUG] 検索対象UID: {uid}")
                     if email:
                         migrated_data = migrate_email_based_data_to_uid(db, email, uid)
                         if migrated_data:
                             print(f"[DEBUG] 旧データマイグレーション成功: {len(migrated_data.get('cards', {}))}カード")
                             return migrated_data
+                        else:
+                            print(f"[DEBUG] emailベース旧データ見つからず: {email}")
+                    else:
+                        print(f"[DEBUG] email情報なし、マイグレーション不可")
                     
                     # 新規ユーザーの場合、emailメタデータ付きで初期化
                     if email:
@@ -859,7 +864,7 @@ def check_gakushi_permission(user_id):
     """
     Firestoreのuser_permissionsコレクションから権限を判定。
     can_access_gakushi: trueならTrue, それ以外はFalse
-    UIDベース管理＋emailメタデータ併用
+    UIDベース管理＋emailメタデータ併用＋旧データマイグレーション対応
     """
     db = get_db()  # 安全にDB取得
     if not db:
@@ -879,8 +884,37 @@ def check_gakushi_permission(user_id):
         # emailメタデータも更新
         if email and data.get("email") != email:
             doc_ref.update({"email": email})
+        print(f"[DEBUG] 学士権限チェック(UID): {bool(data.get('can_access_gakushi', False))}")
         return bool(data.get("can_access_gakushi", False))
+    else:
+        # UIDで権限が見つからない場合、emailベースの旧権限を検索・移行
+        print(f"[DEBUG] UID権限なし、emailベース権限検索: {email}")
+        if email:
+            email_doc_ref = db.collection("user_permissions").document(email)
+            email_doc = email_doc_ref.get()
+            if email_doc.exists:
+                old_data = email_doc.to_dict()
+                print(f"[DEBUG] 旧email権限発見、マイグレーション実行")
+                
+                # 権限をUIDベースに移行
+                new_permission_data = {
+                    "can_access_gakushi": old_data.get("can_access_gakushi", False),
+                    "email": email,
+                    "migrated_from": email,
+                    "migrated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                }
+                doc_ref.set(new_permission_data)
+                
+                # 旧データに移行済みマーク
+                email_doc_ref.update({
+                    "migrated_to_uid": uid,
+                    "migrated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                })
+                
+                print(f"[DEBUG] 権限マイグレーション完了: {bool(old_data.get('can_access_gakushi', False))}")
+                return bool(old_data.get("can_access_gakushi", False))
     
+    print(f"[DEBUG] 学士権限なし")
     return False
 
 def _subject_of(q):
