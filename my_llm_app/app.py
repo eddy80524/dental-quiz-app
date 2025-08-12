@@ -57,6 +57,10 @@ initialize_firebase()
 db = firestore.client()
 bucket = storage.bucket()
 
+# バケット情報をデバッグ表示
+print(f"Firebase Storage bucket name: {bucket.name}")
+print(f"Firebase Storage bucket configured: {bucket is not None}")
+
 # --- Cookies（自動ログイン用） ---
 try:
     cookie_password = st.secrets.get("cookie_password", "default_insecure_password_change_in_production")
@@ -468,9 +472,12 @@ def get_secure_image_url(path):
     try:
         if path:
             blob = bucket.blob(path)
-            return blob.generate_signed_url(expiration=datetime.timedelta(minutes=15))
-    except Exception:
-        pass
+            url = blob.generate_signed_url(expiration=datetime.timedelta(minutes=15))
+            return url
+    except Exception as e:
+        # デバッグ用: エラーの詳細を表示
+        st.error(f"画像URL生成エラー - パス: {path}, エラー: {str(e)}")
+        print(f"Image URL generation error - Path: {path}, Error: {str(e)}")
     return None
 
 def get_shuffled_choices(q):
@@ -1230,12 +1237,30 @@ def render_practice_page():
             if image_list:  # 値がNoneや空リストでないことを確認
                 display_images.extend(image_list)
 
+    # デバッグ情報を表示
     if display_images:
+        st.write(f"🔍 デバッグ: 検出された画像パス: {display_images}")
         # 重複を除去して、万が一同じパスが複数あってもエラーを防ぐ
         unique_images = list(dict.fromkeys(display_images))
-        secure_urls = [url for path in unique_images if path and (url := get_secure_image_url(path))]
+        st.write(f"🔍 デバッグ: ユニーク化後: {unique_images}")
+        
+        secure_urls = []
+        for path in unique_images:
+            if path:
+                url = get_secure_image_url(path)
+                if url:
+                    secure_urls.append(url)
+                    st.write(f"✅ 成功: {path} -> URL生成成功")
+                else:
+                    st.write(f"❌ 失敗: {path} -> URL生成失敗")
+        
         if secure_urls:
+            st.write(f"🖼️ 表示する画像数: {len(secure_urls)}")
             st.image(secure_urls, use_container_width=True)
+        else:
+            st.warning("⚠️ 表示可能な画像がありません")
+    else:
+        st.write("🔍 デバッグ: 画像パスが見つかりませんでした")
 
 # --- メイン ---
 # 自動ログインを試行
