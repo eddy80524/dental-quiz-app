@@ -512,6 +512,11 @@ def load_user_data_minimal(user_id):
         db = get_db()  # 安全にDB取得
         if db:
             try:
+                # デバッグ: Firebaseプロジェクト情報を表示
+                project_id = getattr(db._client, 'project', 'unknown')
+                print(f"[DEBUG] Firebase接続先プロジェクト: {project_id}")
+                print(f"[DEBUG] UID: {uid}, Email: {email}")
+                
                 # UIDベースでデータ検索
                 doc_ref = db.collection("user_progress").document(uid)
                 doc = doc_ref.get(timeout=10)
