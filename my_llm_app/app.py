@@ -733,6 +733,8 @@ def save_user_data(user_id, session_state):
     if not ensure_valid_session():
         return
 
+    # 安全にDB取得
+    db = get_db()
     if db and user_id:
         doc_ref = db.collection("user_progress").document(user_id)  # UIDを主キーとして使用
         payload = {
