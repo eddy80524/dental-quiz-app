@@ -1997,6 +1997,8 @@ else:
         st.session_state.result_log = {}
     with st.sidebar:
         # セッション状態の表示
+        # トークンタイムスタンプの確認と表示（安全なname取得）
+        name = st.session_state.get("name", "ユーザー")  # デフォルト値を設定
         token_timestamp = st.session_state.get("token_timestamp")
         if token_timestamp:
             token_time = datetime.datetime.fromisoformat(token_timestamp)
