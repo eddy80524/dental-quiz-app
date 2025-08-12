@@ -472,12 +472,21 @@ def get_secure_image_url(path):
     try:
         if path:
             blob = bucket.blob(path)
+            # ファイルが存在するかチェック
+            if not blob.exists():
+                st.warning(f"⚠️ ファイルが存在しません: {path}")
+                print(f"File does not exist in Firebase Storage: {path}")
+                return None
+            
             url = blob.generate_signed_url(expiration=datetime.timedelta(minutes=15))
+            print(f"Generated signed URL for {path}: {url[:100]}...")
             return url
     except Exception as e:
         # デバッグ用: エラーの詳細を表示
         st.error(f"画像URL生成エラー - パス: {path}, エラー: {str(e)}")
         print(f"Image URL generation error - Path: {path}, Error: {str(e)}")
+        import traceback
+        print(f"Full traceback: {traceback.format_exc()}")
     return None
 
 def get_shuffled_choices(q):
@@ -1251,12 +1260,26 @@ def render_practice_page():
                 if url:
                     secure_urls.append(url)
                     st.write(f"✅ 成功: {path} -> URL生成成功")
+                    # URLの詳細を表示（デバッグ用）
+                    st.code(f"生成されたURL: {url[:100]}..." if len(url) > 100 else f"生成されたURL: {url}")
                 else:
                     st.write(f"❌ 失敗: {path} -> URL生成失敗")
         
         if secure_urls:
             st.write(f"🖼️ 表示する画像数: {len(secure_urls)}")
-            st.image(secure_urls, use_container_width=True)
+            try:
+                st.image(secure_urls, use_container_width=True)
+                st.success("画像表示処理が正常に実行されました")
+            except Exception as e:
+                st.error(f"画像表示エラー: {str(e)}")
+                # 個別に画像を表示してみる
+                st.write("個別表示を試行中...")
+                for i, url in enumerate(secure_urls):
+                    try:
+                        st.image(url, caption=f"画像 {i+1}", use_container_width=True)
+                        st.write(f"画像 {i+1} 表示成功")
+                    except Exception as img_err:
+                        st.error(f"画像 {i+1} 表示失敗: {str(img_err)}")
         else:
             st.warning("⚠️ 表示可能な画像がありません")
     else:
@@ -1624,6 +1647,31 @@ else:
                 
                 st.success("キャッシュをクリアしました。ページを再読み込みします...")
                 st.rerun()
+            
+            # Firebase Storageデバッグ機能
+            if st.button("🔍 Firebase Storage確認", help="画像ファイルの存在確認"):
+                try:
+                    # gakushi/2025/1-1/ フォルダの内容を確認
+                    prefix = "gakushi/2025/1-1/"
+                    blobs = list(bucket.list_blobs(prefix=prefix, max_results=10))
+                    
+                    if blobs:
+                        st.success(f"✅ {prefix} フォルダに {len(blobs)} 個のファイルが見つかりました:")
+                        for blob in blobs:
+                            st.write(f"  - {blob.name} (サイズ: {blob.size} bytes)")
+                            # 特定のファイルをチェック
+                            if "G25-1-1-A-68a.jpg" in blob.name:
+                                st.success(f"🎯 対象ファイル発見: {blob.name}")
+                    else:
+                        st.warning(f"⚠️ {prefix} フォルダにファイルが見つかりません")
+                        
+                    # バケット全体の情報も表示
+                    st.write(f"バケット名: {bucket.name}")
+                    
+                except Exception as e:
+                    st.error(f"Firebase Storage確認エラー: {str(e)}")
+                    import traceback
+                    st.code(traceback.format_exc())
             
             st.markdown("---"); st.header("学習記録")
             if st.session_state.cards:
