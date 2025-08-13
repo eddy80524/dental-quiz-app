@@ -56,9 +56,9 @@ def initialize_firebase():
     project_id = firebase_creds.get("project_id", "dent-ai-4d8d8")
     firebase_admin.initialize_app(
         creds,
-        {'storageBucket': f'{project_id}.appspot.com'}
+        {'storageBucket': f'{project_id}.firebasestorage.app'}
     )
-    print(f"Firebase initialized with bucket: {project_id}.appspot.com")
+    print(f"Firebase initialized with bucket: {project_id}.firebasestorage.app")
     
     # FirestoreクライアントとStorageバケットもここで初期化
     db = firestore.client()
@@ -483,9 +483,74 @@ def build_gakushi_indices(all_questions):
     gakushi_subjects = sorted(list(subjects))
     return years_sorted, areas_map, gakushi_subjects
 
+def build_gakushi_indices_with_sessions(all_questions):
+    """学士試験の年度、回数、領域の情報を整理する"""
+    years = set()
+    sessions_by_year = defaultdict(set)
+    areas_by_year_session = defaultdict(lambda: defaultdict(set))
+    subjects = set()
+    
+    for q in all_questions:
+        qn = q.get("number", "")
+        if not qn.startswith("G"):
+            continue
+            
+        # G23-2-A-1, G25-1-1-A-1, G22-1再-A-1 などの形式に対応
+        m = re.match(r'^G(\d{2})-([^-]+(?:-[^-]+)*)-([A-D])-\d+$', qn)
+        if m:
+            y2 = int(m.group(1))
+            year = 2000 + y2 if y2 <= 30 else 1900 + y2
+            session = m.group(2)  # 1-1, 1-2, 1-3, 1再, 2, 2再 など
+            area = m.group(3)
+            
+            years.add(year)
+            sessions_by_year[year].add(session)
+            areas_by_year_session[year][session].add(area)
+            
+        s = (q.get("subject") or "").strip()
+        if qn.startswith("G") and s:
+            subjects.add(s)
+    
+    years_sorted = sorted(years, reverse=True)
+    
+    # セッションをソート（1-1, 1-2, 1-3, 1再, 2, 2再 の順序）
+    def sort_sessions(sessions):
+        def session_key(s):
+            if s == "1-1": return (1, 1, 0)
+            elif s == "1-2": return (1, 2, 0)
+            elif s == "1-3": return (1, 3, 0)
+            elif s == "1再": return (1, 99, 0)
+            elif s == "2": return (2, 0, 0)
+            elif s == "2再": return (2, 99, 0)
+            else: return (99, 0, 0)
+        return sorted(sessions, key=session_key)
+    
+    sessions_map = {y: sort_sessions(list(sessions_by_year[y])) for y in years_sorted}
+    areas_map = {}
+    for year in years_sorted:
+        areas_map[year] = {}
+        for session in sessions_map[year]:
+            areas_map[year][session] = sorted(list(areas_by_year_session[year][session]))
+    
+    gakushi_subjects = sorted(list(subjects))
+    return years_sorted, sessions_map, areas_map, gakushi_subjects
+
 def filter_gakushi_by_year_area(all_questions, year, area):
     yy = str(year)[2:]  # 2024 -> "24"
     pat = re.compile(rf'^G{yy}-[^-]+(?:-[^-]+)*-{area}-\d+$')
+    res = []
+    for q in all_questions:
+        qn = q.get("number", "")
+        if qn.startswith("G") and pat.match(qn):
+            res.append(q)
+    return res
+
+def filter_gakushi_by_year_session_area(all_questions, year, session, area):
+    """学士試験の年度、回数、領域で問題をフィルタリング"""
+    yy = str(year)[2:]  # 2024 -> "24"
+    # セッション部分をエスケープして正確にマッチさせる
+    escaped_session = re.escape(session)
+    pat = re.compile(rf'^G{yy}-{escaped_session}-{area}-\d+$')
     res = []
     for q in all_questions:
         qn = q.get("number", "")
@@ -1123,26 +1188,24 @@ def get_secure_image_url(path):
         return path
     try:
         if path:
-            # セッション状態で正しいバケットが指定されている場合はそれを使用
-            from google.cloud import storage as cloud_storage
-            project_id = st.secrets['firebase_credentials']['project_id']
-            client = cloud_storage.Client(project=project_id)
-            
-            if "correct_bucket" in st.session_state:
-                bucket_to_use = client.bucket(st.session_state["correct_bucket"])
-            else:
-                # デフォルトバケット名を使用
-                bucket_to_use = client.bucket(f"{project_id}.appspot.com")
-            
+            print(f"[DEBUG] Attempting to get URL for image: {path}")
+            # Firebase Admin SDKのstorage.bucket()を使用（既に初期化済み）
+            bucket_to_use = storage.bucket()
             blob = bucket_to_use.blob(path)
+            
             # ファイルが存在するかチェック
-            if not blob.exists():
+            exists = blob.exists()
+            print(f"[DEBUG] Image {path} exists: {exists}")
+            if not exists:
+                print(f"[DEBUG] Image not found: {path}")
                 return None
             
             url = blob.generate_signed_url(expiration=datetime.timedelta(minutes=15))
+            print(f"[DEBUG] Generated URL for {path}: {url[:100]}...")
             return url
     except Exception as e:
         # エラーが発生した場合は None を返す
+        print(f"[ERROR] 画像URL生成エラー for {path}: {e}")
         return None
 
 def get_shuffled_choices(q):
@@ -2419,16 +2482,23 @@ else:
                             selected_session = f"{selected_exam_num}{selected_section_char}"
                             questions_to_load = [q for q in ALL_QUESTIONS if q.get("number", "").startswith(selected_session)]
                 else:
-                    # ★ 学士：年度×領域
-                    g_years, g_areas_map, _ = build_gakushi_indices(ALL_QUESTIONS)
+                    # ★ 学士：年度×回数×領域の3段階選択
+                    g_years, g_sessions_map, g_areas_map, _ = build_gakushi_indices_with_sessions(ALL_QUESTIONS)
                     if not g_years:
                         st.warning("学士の年度情報が見つかりません。")
                     else:
                         g_year = st.selectbox("年度", g_years)
-                        areas = g_areas_map.get(g_year, ["A", "B", "C", "D"])
-                        g_area = st.selectbox("領域", areas)
-                        if g_year and g_area:
-                            questions_to_load = filter_gakushi_by_year_area(ALL_QUESTIONS, g_year, g_area)
+                        if g_year:
+                            sessions = g_sessions_map.get(g_year, [])
+                            if sessions:
+                                g_session = st.selectbox("回数", sessions)
+                                if g_session:
+                                    areas = g_areas_map.get(g_year, {}).get(g_session, ["A", "B", "C", "D"])
+                                    g_area = st.selectbox("領域", areas)
+                                    if g_area:
+                                        questions_to_load = filter_gakushi_by_year_session_area(ALL_QUESTIONS, g_year, g_session, g_area)
+                            else:
+                                st.warning(f"{g_year}年度の回数情報が見つかりません。")
 
             elif mode == "科目別":
                 if target_exam == "国試":
@@ -2443,7 +2513,7 @@ else:
                         questions_to_load = [q for q in ALL_QUESTIONS if q.get("subject") == selected_subject and not str(q.get("number","")).startswith("G")]
                 else:
                     # ★ 学士：科目指定（系統フィルタなし）
-                    g_years, g_areas_map, g_subjects = build_gakushi_indices(ALL_QUESTIONS)
+                    _, _, _, g_subjects = build_gakushi_indices_with_sessions(ALL_QUESTIONS)
                     if not g_subjects:
                         st.warning("学士の科目が見つかりません。")
                     else:
