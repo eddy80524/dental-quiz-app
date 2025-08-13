@@ -352,9 +352,10 @@ def load_master_data():
         'gakushi-2022-1-1.json', 
         'gakushi-2022-1-2.json', 
         'gakushi-2022-1-3.json', 
-        'gakushi-2022-1再.json',  # 追加
+        'gakushi-2022-1再.json',  
         'gakushi-2022-2.json', 
-        'gakushi-2023-2.json',  # 追加
+        'gakushi-2023-1-2.json', 
+        'gakushi-2023-2.json',  
         'gakushi-2024-1-1.json', 
         'gakushi-2024-2.json', 
         'gakushi-2025-1-1.json'
