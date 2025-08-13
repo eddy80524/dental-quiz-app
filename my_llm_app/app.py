@@ -354,6 +354,7 @@ def load_master_data():
         'gakushi-2022-1-3.json', 
         'gakushi-2022-1再.json',  # 追加
         'gakushi-2022-2.json', 
+        'gakushi-2023-2.json',  # 追加
         'gakushi-2024-1-1.json', 
         'gakushi-2024-2.json', 
         'gakushi-2025-1-1.json'
@@ -466,11 +467,12 @@ def build_gakushi_indices(all_questions):
         qn = q.get("number", "")
         if not qn.startswith("G"):
             continue
-        m = re.match(r'^G(\d{2})-.*-([A-D])-\d+$', qn)
+        # 2つの形式に対応: G23-2-A-1 と G25-1-1-A-1
+        m = re.match(r'^G(\d{2})-([^-]+(?:-[^-]+)*)-([A-D])-\d+$', qn)
         if m:
             y2 = int(m.group(1))
             year = 2000 + y2 if y2 <= 30 else 1900 + y2
-            area = m.group(2)
+            area = m.group(3)
             years.add(year)
             areas_by_year[year].add(area)
         s = (q.get("subject") or "").strip()
@@ -483,7 +485,7 @@ def build_gakushi_indices(all_questions):
 
 def filter_gakushi_by_year_area(all_questions, year, area):
     yy = str(year)[2:]  # 2024 -> "24"
-    pat = re.compile(rf'^G{yy}-.*-{area}-\d+$')
+    pat = re.compile(rf'^G{yy}-[^-]+(?:-[^-]+)*-{area}-\d+$')
     res = []
     for q in all_questions:
         qn = q.get("number", "")
