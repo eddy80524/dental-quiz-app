@@ -1289,10 +1289,11 @@ def is_ordering_question(q):
     keywords = ["順番に並べよ", "正しい順序", "適切な順序", "正しい順番", "順序で"]
     return any(k in text for k in keywords)
 
-def search_questions_by_keyword(keyword, gakushi_only=False):
+def search_questions_by_keyword(keyword, gakushi_only=False, has_gakushi_permission=True):
     """
     キーワードで問題を検索する関数
     問題文、選択肢、解説などからキーワードを検索
+    has_gakushi_permission: 学士試験の問題を表示する権限があるかどうか
     """
     if not keyword:
         return []
@@ -1301,12 +1302,18 @@ def search_questions_by_keyword(keyword, gakushi_only=False):
     matching_questions = []
     
     for q in ALL_QUESTIONS:
-        # 学士試験限定の場合、学士試験の問題番号かチェック
-        if gakushi_only:
-            question_number = q.get("number", "")
-            # 学士試験の問題番号パターン（例：G22-1-1-A-1, G24-1-1-A-1など）
-            if not question_number.startswith("G"):
-                continue
+        question_number = q.get("number", "")
+        
+        # 学士試験の問題かどうかをチェック
+        is_gakushi_question = question_number.startswith("G")
+        
+        # 権限チェック：学士試験の問題で権限がない場合はスキップ
+        if is_gakushi_question and not has_gakushi_permission:
+            continue
+        
+        # 学士試験限定検索の場合、学士試験の問題のみに絞る
+        if gakushi_only and not is_gakushi_question:
+            continue
         
         # 検索対象のテキストを収集
         search_texts = []
@@ -1424,7 +1431,11 @@ def render_search_page():
             shuffle_results = st.checkbox("結果をシャッフル", key="search_page_shuffle_setting_checkbox", value=True)
         
         if search_btn and search_keyword.strip():
-            keyword_results = search_questions_by_keyword(search_keyword.strip(), gakushi_only=gakushi_only)
+            keyword_results = search_questions_by_keyword(
+                search_keyword.strip(), 
+                gakushi_only=gakushi_only,
+                has_gakushi_permission=has_gakushi_permission
+            )
             
             # シャッフルオプションが有効な場合
             if shuffle_results and keyword_results:
@@ -1467,6 +1478,11 @@ def render_search_page():
                 # 検索結果の詳細表示
                 st.subheader("検索結果")
                 for i, q in enumerate(results[:20]):  # 最初の20件を表示
+                    # 権限チェック：学士試験の問題で権限がない場合はスキップ
+                    question_number = q.get('number', '')
+                    if question_number.startswith("G") and not has_gakushi_permission:
+                        continue
+                        
                     with st.expander(f"{q.get('number', 'N/A')} - {q.get('subject', '未分類')}"):
                         st.markdown(f"**問題:** {q.get('question', '')[:100]}...")
                         if q.get('choices'):
@@ -1599,7 +1615,12 @@ def render_search_page():
         questions_data = []
         now_utc = datetime.datetime.now(datetime.timezone.utc)
         for q in ALL_QUESTIONS:
-            if q.get("number", "").startswith("G"): continue
+            # 権限のないユーザーには学士試験の問題を含めない
+            if q.get("number", "").startswith("G") and not has_gakushi_permission:
+                continue
+            # 国試全体モードでは学士試験問題を除外
+            if q.get("number", "").startswith("G"):
+                continue
             q_num = q["number"]
             card = st.session_state.get("cards", {}).get(q_num, {})
             def map_card_to_level(card_data):
@@ -1785,6 +1806,10 @@ def render_search_page():
             filtered_sorted['sort_key'] = filtered_sorted['id'].apply(sort_key)
             filtered_sorted = filtered_sorted.sort_values(by='sort_key').drop(columns=['sort_key'])
             for _, row in filtered_sorted.iterrows():
+                # 権限チェック：学士試験の問題で権限がない場合はスキップ
+                if str(row.id).startswith("G") and not has_gakushi_permission:
+                    continue
+                    
                 st.markdown(
                     f"<div style='margin-bottom: 5px; padding: 5px; border-left: 5px solid {level_colors.get(row.level, '#888')};'>"
                     f"<span style='display:inline-block;width:80px;font-weight:bold;color:{level_colors.get(row.level, '#888')};'>{row.level}</span>"
@@ -1829,7 +1854,16 @@ def render_practice_page():
         st.info("学習を開始するには、サイドバーで問題を選択してください。")
         st.stop()
 
-    q_objects = [ALL_QUESTIONS_DICT.get(q_num) for q_num in current_q_group if q_num in ALL_QUESTIONS_DICT]
+    q_objects = []
+    uid = st.session_state.get("uid")
+    has_gakushi_permission = check_gakushi_permission(uid)
+    
+    for q_num in current_q_group:
+        if q_num in ALL_QUESTIONS_DICT:
+            # 権限チェック：学士試験の問題で権限がない場合はスキップ
+            if q_num.startswith("G") and not has_gakushi_permission:
+                continue
+            q_objects.append(ALL_QUESTIONS_DICT[q_num])
     if not q_objects:
         st.success("🎉 このセッションの学習はすべて完了しました！")
         st.balloons()
@@ -2369,8 +2403,20 @@ else:
                             recent_ids.append(q_num)
                             if len(recent_ids) >= 15: break
                         
+                        # ユーザーの権限に応じて問題リストをフィルタリング
+                        uid = st.session_state.get("uid")
+                        has_gakushi_permission = check_gakushi_permission(uid)
+                        
+                        # 権限に応じて問題をフィルタリング
+                        if has_gakushi_permission:
+                            # 学士試験権限があるユーザーは全ての問題を対象
+                            available_questions = ALL_QUESTIONS
+                        else:
+                            # 権限がないユーザーは学士試験問題を除外
+                            available_questions = [q for q in ALL_QUESTIONS if not q.get("number", "").startswith("G")]
+                        
                         N = int(st.session_state.get("new_cards_per_day", 10))
-                        picked_qids = pick_new_cards_for_today(ALL_QUESTIONS, st.session_state.cards, N=N, recent_qids=recent_ids)
+                        picked_qids = pick_new_cards_for_today(available_questions, st.session_state.cards, N=N, recent_qids=recent_ids)
                         
                         if not picked_qids:
                             st.info("選べる未演習カードがありません。")
@@ -2387,8 +2433,20 @@ else:
                 
                 with col2:
                     if st.button("必修問題から開始", key="start_hisshu_btn", type="secondary"):
-                        # 必修問題をランダムに10問選択
-                        hisshu_questions = [q for q in ALL_QUESTIONS if is_hisshu(q.get("number", ""))]
+                        # ユーザーの権限を確認
+                        uid = st.session_state.get("uid")
+                        has_gakushi_permission = check_gakushi_permission(uid)
+                        
+                        # 必修問題をランダムに10問選択（権限に応じて国試または学士試験の必修問題）
+                        if has_gakushi_permission:
+                            # 学士試験の必修問題（"G"で始まる番号の1〜20番）
+                            hisshu_questions = [q for q in ALL_QUESTIONS 
+                                              if q.get("number", "").startswith("G") and is_hisshu(q.get("number", ""))]
+                        else:
+                            # 国試の必修問題のみ（学士試験問題を除外）
+                            hisshu_questions = [q for q in ALL_QUESTIONS 
+                                              if not q.get("number", "").startswith("G") and is_hisshu(q.get("number", ""))]
+                        
                         if hisshu_questions:
                             import random
                             selected_questions = random.sample(hisshu_questions, min(10, len(hisshu_questions)))
@@ -2432,8 +2490,12 @@ else:
             # 検索実行ボタン
             if st.button("キーワード検索", type="secondary", key="search_btn"):
                 if search_keyword.strip():
-                    # キーワードで問題を検索
-                    keyword_results = search_questions_by_keyword(search_keyword.strip(), gakushi_only=gakushi_only)
+                    # キーワードで問題を検索（権限情報を渡す）
+                    keyword_results = search_questions_by_keyword(
+                        search_keyword.strip(), 
+                        gakushi_only=gakushi_only,
+                        has_gakushi_permission=has_gakushi_permission
+                    )
                     if keyword_results:
                         # シャッフルオプションが有効な場合
                         if shuffle_results:
@@ -2466,36 +2528,52 @@ else:
                 st.info(f"検索結果: 「{keyword}」で{count}問（{search_type}）{shuffle_info}")
                 if st.button("検索結果で学習開始", type="primary", key="start_keyword_search"):
                     questions_to_load = st.session_state["keyword_search_results"]
-                    # 学習開始処理
-                    grouped_queue = []
-                    processed_q_nums = set()
+                    
+                    # 権限チェック：学士試験の問題がある場合は権限を確認
+                    uid = st.session_state.get("uid")
+                    has_gakushi_permission = check_gakushi_permission(uid)
+                    
+                    # 権限に応じて問題をフィルタリング
+                    filtered_questions = []
                     for q in questions_to_load:
-                        q_num = str(q['number'])
-                        if q_num in processed_q_nums: continue
-                        case_id = q.get('case_id')
-                        if case_id and case_id in CASES:
-                            siblings = sorted([str(sq['number']) for sq in ALL_QUESTIONS if sq.get('case_id') == case_id])
-                            if siblings not in grouped_queue:
-                                grouped_queue.append(siblings)
-                            processed_q_nums.update(siblings)
-                        else:
-                            grouped_queue.append([q_num])
-                            processed_q_nums.add(q_num)
-                    st.session_state.main_queue = grouped_queue
-                    st.session_state.short_term_review_queue = []
-                    st.session_state.current_q_group = []
-                    for key in list(st.session_state.keys()):
-                        if key.startswith("checked_") or key.startswith("user_selection_") or key.startswith("shuffled_"):
-                            del st.session_state[key]
-                    st.session_state.pop("resume_requested", None)
-                    if "cards" not in st.session_state:
-                        st.session_state.cards = {}
-                    for q in questions_to_load:
-                        if q['number'] not in st.session_state.cards:
-                            st.session_state.cards[q['number']] = {}
-                    st.session_state.pop("today_due_cards", None)
-                    st.session_state.pop("current_q_num", None)
-                    st.rerun()
+                        question_number = q.get('number', '')
+                        if question_number.startswith("G") and not has_gakushi_permission:
+                            continue  # 学士試験の問題で権限がない場合はスキップ
+                        filtered_questions.append(q)
+                    
+                    if not filtered_questions:
+                        st.warning("権限のある問題が見つかりませんでした")
+                    else:
+                        # 学習開始処理
+                        grouped_queue = []
+                        processed_q_nums = set()
+                        for q in filtered_questions:
+                            q_num = str(q['number'])
+                            if q_num in processed_q_nums: continue
+                            case_id = q.get('case_id')
+                            if case_id and case_id in CASES:
+                                siblings = sorted([str(sq['number']) for sq in ALL_QUESTIONS if sq.get('case_id') == case_id])
+                                if siblings not in grouped_queue:
+                                    grouped_queue.append(siblings)
+                                processed_q_nums.update(siblings)
+                            else:
+                                grouped_queue.append([q_num])
+                                processed_q_nums.add(q_num)
+                        st.session_state.main_queue = grouped_queue
+                        st.session_state.short_term_review_queue = []
+                        st.session_state.current_q_group = []
+                        for key in list(st.session_state.keys()):
+                            if key.startswith("checked_") or key.startswith("user_selection_") or key.startswith("shuffled_"):
+                                del st.session_state[key]
+                        st.session_state.pop("resume_requested", None)
+                        if "cards" not in st.session_state:
+                            st.session_state.cards = {}
+                        for q in filtered_questions:
+                            if q['number'] not in st.session_state.cards:
+                                st.session_state.cards[q['number']] = {}
+                        st.session_state.pop("today_due_cards", None)
+                        st.session_state.pop("current_q_num", None)
+                        st.rerun()
                 
                 if st.button("検索結果をクリア", key="clear_search_btn"):
                     st.session_state.pop("keyword_search_results", None)
