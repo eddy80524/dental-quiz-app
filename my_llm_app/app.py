@@ -45,24 +45,28 @@ def initialize_firebase():
         json.dump(firebase_creds, f)
         temp_path = f.name
     creds = credentials.Certificate(temp_path)
-    
-    # 既存のアプリがあれば削除して再初期化（辞書の変更中エラーを回避）
-    apps_to_delete = list(firebase_admin._apps.values())
-    for app in apps_to_delete:
-        firebase_admin.delete_app(app)
-    firebase_admin._apps.clear()
-    
-    # 正しいFirebase Storageバケット名で初期化
+
+    # バケット名の決定ロジック：
+    # 1) secrets: firebase_storage_bucket があれば最優先（例: dent-ai-4d8d8.firebasestorage.app）
+    # 2) creds に storage_bucket があれば使用
+    # 3) 無ければ <project_id>.firebasestorage.app を既定とする
     project_id = firebase_creds.get("project_id", "dent-ai-4d8d8")
-    firebase_admin.initialize_app(
-        creds,
-        {'storageBucket': f'{project_id}.firebasestorage.app'}
+    storage_bucket = st.secrets.get(
+        "firebase_storage_bucket",
+        firebase_creds.get("storage_bucket", f"{project_id}.firebasestorage.app")
     )
-    print(f"Firebase initialized with bucket: {project_id}.firebasestorage.app")
-    
-    # FirestoreクライアントとStorageバケットもここで初期化
-    db = firestore.client()
-    bucket = storage.bucket()
+
+    try:
+        app = firebase_admin.get_app()
+    except ValueError:
+        app = firebase_admin.initialize_app(
+            creds,
+            {"storageBucket": storage_bucket}
+        )
+    print(f"Firebase initialized with bucket: {storage_bucket}")
+
+    db = firestore.client(app=app)
+    bucket = storage.bucket(app=app)
     return db, bucket
 
 # Firebase初期化（遅延読み込み・キャッシュ最適化）
@@ -292,8 +296,6 @@ def try_auto_login_from_cookie():
         if not email:
             print(f"[DEBUG] try_auto_login_from_cookie - emailなし")
             return False
-            print(f"[DEBUG] try_auto_login_from_cookie - emailなし")
-            return False
         
         st.session_state.update({
             "name": email.split("@")[0],
@@ -339,7 +341,7 @@ def ensure_valid_session():
     return True
 
 @st.cache_data(ttl=3600)  # 1時間キャッシュ
-def load_master_data():
+def load_master_data(version="v2025-08-14-gakushi-1-2-fixed"):  # キャッシュ更新用バージョン
     import time
     start = time.time()
     
@@ -560,7 +562,7 @@ def filter_gakushi_by_year_session_area(all_questions, year, session, area):
     return res
 
 # 初期データ読み込み
-CASES, ALL_QUESTIONS = load_master_data()
+CASES, ALL_QUESTIONS = load_master_data()  # バージョンパラメータで自動的にキャッシュ更新
 ALL_QUESTIONS_DICT, ALL_SUBJECTS, ALL_EXAM_NUMBERS, ALL_EXAM_SESSIONS, HISSHU_Q_NUMBERS_SET, GAKUSHI_HISSHU_Q_NUMBERS_SET = get_derived_data(ALL_QUESTIONS)
 
 # --- Firestore連携 ---
@@ -582,7 +584,7 @@ def load_user_data_minimal(user_id):
         if db:
             try:
                 # デバッグ: Firebaseプロジェクト情報を表示
-                project_id = getattr(db._client, 'project', 'unknown')
+                project_id = getattr(db, "project", "unknown")
                 print(f"[DEBUG] Firebase接続先プロジェクト: {project_id}")
                 print(f"[DEBUG] UID: {uid}, Email: {email}")
                 
@@ -768,7 +770,6 @@ def migrate_email_based_data_to_uid(db, email, uid):
         print(f"[DEBUG] データマイグレーションエラー: {e}")
         return None
 
-@st.cache_data(ttl=900)  # 15分キャッシュ
 @st.cache_data(ttl=900)
 def load_user_data_full(user_id, cache_buster: int = 0):
     """演習開始時に全データを読み込む完全版（UIDベース＋emailメタデータ）"""
@@ -776,6 +777,7 @@ def load_user_data_full(user_id, cache_buster: int = 0):
     start = time.time()
     
     if not ensure_valid_session():
+        print(f"[DEBUG] load_user_data_full - セッション無効: {time.time() - start:.3f}s")
         return {"cards": {}, "main_queue": [], "short_term_review_queue": [], "current_q_group": [], "new_cards_per_day": 10}
 
     # UIDを主キーとして使用
@@ -851,7 +853,7 @@ def load_user_data_full(user_id, cache_buster: int = 0):
             except Exception as e:
                 print(f"[DEBUG] load_user_data_full - エラー: {e}, 時間: {time.time() - start:.3f}s")
     
-    print(f"[DEBUG] load_user_data_full - デフォルト: {time.time() - start:.3f}s")
+    print(f"[DEBUG] load_user_data_full - 新規ユーザー（デフォルト値を返却）: {time.time() - start:.3f}s")
     return {"cards": {}, "main_queue": [], "short_term_review_queue": [], "current_q_group": [], "new_cards_per_day": 10}
 
 def load_user_data(user_id):
@@ -920,7 +922,8 @@ def migrate_progress_doc_if_needed(uid: str, email: str):
     """初回ログイン時などに email Doc を UID Doc へコピー（冪等）"""
     import time
     start = time.time()
-    
+
+    db = get_db()  # ← 追加
     if not db or not uid or not email:
         print(f"[DEBUG] migrate_progress_doc_if_needed - 早期リターン: {time.time() - start:.3f}s")
         return
@@ -973,7 +976,8 @@ def migrate_permission_if_needed(uid: str, email: str):
     """user_permissions も email → uid を一度だけ複製（冪等）"""
     import time
     start = time.time()
-    
+
+    db = get_db()  # ← 追加
     if not db or not uid or not email:
         print(f"[DEBUG] migrate_permission_if_needed - 早期リターン: {time.time() - start:.3f}s")
         return
@@ -1183,29 +1187,35 @@ def pick_new_cards_for_today(all_questions, cards, N=10, recent_qids=None):
 def get_secure_image_url(path):
     """
     Firebase Storageのパスから15分有効な署名付きURLを生成。
-    もしhttp(s)で始まる完全なURLなら、そのまま返す。
+    http(s) はそのまま返す。gs:// にも対応（例: gs://dent-ai-4d8d8.firebasestorage.app/...）
     """
     if isinstance(path, str) and (path.startswith('http://') or path.startswith('https://')):
         return path
     try:
-        if path:
-            print(f"[DEBUG] Attempting to get URL for image: {path}")
-            # Firebase Admin SDKのstorage.bucket()を使用（既に初期化済み）
-            bucket_to_use = storage.bucket()
+        # 既定：アプリ既定のバケット
+        bucket_to_use = storage.bucket()
+        blob = None
+
+        if isinstance(path, str) and path.startswith("gs://"):
+            # gs://<bucket>/<blob>
+            _, rest = path.split("gs://", 1)
+            bname, bpath = rest.split("/", 1)
+            # firebasestorage.app の新形式にも対応：名前をそのまま指定
+            bucket_to_use = storage.bucket(name=bname)
+            blob = bucket_to_use.blob(bpath)
+        else:
             blob = bucket_to_use.blob(path)
-            
-            # ファイルが存在するかチェック
-            exists = blob.exists()
-            print(f"[DEBUG] Image {path} exists: {exists}")
-            if not exists:
-                print(f"[DEBUG] Image not found: {path}")
-                return None
-            
-            url = blob.generate_signed_url(expiration=datetime.timedelta(minutes=15))
-            print(f"[DEBUG] Generated URL for {path}: {url[:100]}...")
-            return url
+
+        if not blob.exists():
+            print(f"[DEBUG] Image not found: {path}")
+            return None
+
+        url = blob.generate_signed_url(
+            expiration=datetime.timedelta(minutes=15),
+            method="GET"
+        )
+        return url
     except Exception as e:
-        # エラーが発生した場合は None を返す
         print(f"[ERROR] 画像URL生成エラー for {path}: {e}")
         return None
 
@@ -1448,8 +1458,8 @@ def render_search_page():
                     years = []
                     for q in results:
                         year = extract_year_from_question_number(q.get("number", ""))
-                        if year:
-                            years.append(str(year))
+                        if year is not None:
+                            years.append(int(year))
                     
                     year_range = f"{min(years)}-{max(years)}" if years else "不明"
                     st.metric("年度範囲", year_range)
@@ -2271,18 +2281,20 @@ else:
                     st.session_state.short_term_review_queue = full_user_data.get("short_term_review_queue", [])
                     st.session_state.current_q_group = full_user_data.get("current_q_group", [])
                     
-                    # 空でないデータがある場合のみfull_data_loadedをTrueにする
+                    # データ読み込み完了フラグを設定
+                    st.session_state.full_data_loaded = True
+                    
+                    # データの有無をチェックして適切なメッセージを表示
                     has_data = (len(st.session_state.cards) > 0 or 
                                len(st.session_state.main_queue) > 0 or 
                                len(st.session_state.short_term_review_queue) > 0)
                     
                     if has_data:
-                        st.session_state.full_data_loaded = True
                         print(f"[DEBUG] 演習データ読み込み完了: {full_data_time:.3f}s")
                         st.success(f"演習データ読み込み完了: {full_data_time:.2f}秒")
                     else:
-                        print(f"[DEBUG] 演習データが空のため再読み込み可能状態を維持: {full_data_time:.3f}s")
-                        st.info("演習データが見つかりませんでした。再読込ボタンで最新データを確認できます。")
+                        print(f"[DEBUG] 新規ユーザー - 演習データ初期化完了: {full_data_time:.3f}s")
+                        st.info("新規ユーザーです。下の「新規カード追加」ボタンで演習を開始できます。")
             
             DEFAULT_NEW_CARDS_PER_DAY = 10
             # 初回ログイン時に設定済み。未設定ならデフォルト。
@@ -2308,40 +2320,13 @@ else:
             
             if new_cards_per_day != st.session_state["new_cards_per_day"]:
                 st.session_state["new_cards_per_day"] = new_cards_per_day
-                # 余計な再読込を避けて差分だけ保存
+                # 余件な再読込を避けて差分だけ保存
                 try:
                     db = get_db()  # 安全にDB取得
                     if db:
                         db.collection("user_progress").document(uid).set({"new_cards_per_day": new_cards_per_day}, merge=True)
                 except Exception as e:
                     st.warning(f"日次新規カード数の保存に失敗しました: {e}")
-            
-            # TODO: 新規カード自動選定機能は一時的に無効化
-            # # 今日の新規カードを自動選定
-            # if st.button("今日の新規カードを自動選定", key="auto_pick_new_cards_btn"):
-            #     # 直近の履歴から類似抑制用に最近の出題IDを拾う（最大15件）
-            #     recent_ids = []
-            #     for q_num, card in sorted(st.session_state.cards.items(),
-            #                               key=lambda kv: kv[1].get('history', [{}])[-1].get('timestamp', ''),
-            #                               reverse=True):
-            #         recent_ids.append(q_num)
-            #         if len(recent_ids) >= 15: break
-            # 
-            #     N = int(st.session_state.get("new_cards_per_day", 10))
-            #     picked_qids = pick_new_cards_for_today(ALL_QUESTIONS, st.session_state.cards, N=N, recent_qids=recent_ids)
-            # 
-            #     if not picked_qids:
-            #         st.info("選べる未演習カードがありません。")
-            #     else:
-            #         grouped_queue = st.session_state.get("main_queue", [])
-            #         for qid in picked_qids:
-            #             grouped_queue.append([qid])
-            #             if qid not in st.session_state.cards:
-            #                 st.session_state.cards[qid] = {}
-            #         st.session_state.main_queue = grouped_queue
-            #         save_user_data(st.session_state.get("uid"), st.session_state)  # uid で保存
-            #         st.success(f"{len(picked_qids)}枚の新規カードを追加しました")
-            #         st.rerun()
                     
             has_progress = (
                 st.session_state.get("main_queue") or
@@ -2366,7 +2351,68 @@ else:
             
             # --- キーワード検索機能 ---
             st.markdown("---")
-            st.header("キーワード検索")
+            st.header("キーワード検索または初期カード追加")
+            
+            # 新規ユーザー向けの初期カード追加機能
+            if not st.session_state.get("cards") or len(st.session_state.get("cards", {})) == 0:
+                st.subheader("🎓 初回演習開始")
+                st.info("新規ユーザーの方は、以下のボタンで演習を開始できます。")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("今日の新規カードを自動選定", key="auto_pick_new_cards_btn", type="primary"):
+                        # 直近の履歴から類似抑制用に最近の出題IDを拾う（最大15件）
+                        recent_ids = []
+                        for q_num, card in sorted(st.session_state.cards.items(),
+                                                  key=lambda kv: kv[1].get('history', [{}])[-1].get('timestamp', ''),
+                                                  reverse=True):
+                            recent_ids.append(q_num)
+                            if len(recent_ids) >= 15: break
+                        
+                        N = int(st.session_state.get("new_cards_per_day", 10))
+                        picked_qids = pick_new_cards_for_today(ALL_QUESTIONS, st.session_state.cards, N=N, recent_qids=recent_ids)
+                        
+                        if not picked_qids:
+                            st.info("選べる未演習カードがありません。")
+                        else:
+                            grouped_queue = st.session_state.get("main_queue", [])
+                            for qid in picked_qids:
+                                grouped_queue.append([qid])
+                                if qid not in st.session_state.cards:
+                                    st.session_state.cards[qid] = {}
+                            st.session_state.main_queue = grouped_queue
+                            save_user_data(st.session_state.get("uid"), st.session_state)  # uid で保存
+                            st.success(f"{len(picked_qids)}枚の新規カードを追加しました")
+                            st.rerun()
+                
+                with col2:
+                    if st.button("必修問題から開始", key="start_hisshu_btn", type="secondary"):
+                        # 必修問題をランダムに10問選択
+                        hisshu_questions = [q for q in ALL_QUESTIONS if is_hisshu(q.get("number", ""))]
+                        if hisshu_questions:
+                            import random
+                            selected_questions = random.sample(hisshu_questions, min(10, len(hisshu_questions)))
+                            
+                            grouped_queue = []
+                            for q in selected_questions:
+                                q_num = str(q['number'])
+                                grouped_queue.append([q_num])
+                                if q_num not in st.session_state.cards:
+                                    st.session_state.cards[q_num] = {}
+                            
+                            st.session_state.main_queue = grouped_queue
+                            st.session_state.short_term_review_queue = []
+                            st.session_state.current_q_group = []
+                            save_user_data(st.session_state.get("uid"), st.session_state)
+                            st.success(f"必修問題から{len(selected_questions)}問を追加しました")
+                            st.rerun()
+                        else:
+                            st.warning("必修問題が見つかりませんでした")
+                
+                st.markdown("---")
+            
+            # 既存のキーワード検索機能
+            st.subheader("🔍 キーワード検索")
             search_keyword = st.text_input("キーワードで問題を検索", placeholder="例: インプラント、根管治療、歯周病", key="search_keyword")
             
             # 検索オプション
@@ -2603,7 +2649,7 @@ else:
                 st.rerun()
             
             st.markdown("---"); st.header("学習記録")
-            if st.session_state.cards:
+            if st.session_state.cards and len(st.session_state.cards) > 0:
                 quality_to_mark = {1: "×", 2: "△", 4: "◯", 5: "◎"}
                 mark_to_label = {"◎": "簡単", "◯": "普通", "△": "難しい", "×": "もう一度"}
                 evaluated_marks = [quality_to_mark.get(card.get('quality')) for card in st.session_state.cards.values() if card.get('quality')]
@@ -2629,6 +2675,18 @@ else:
                                 if key.startswith("checked_") or key.startswith("user_selection_") or key.startswith("shuffled_") or key.startswith("free_input_"):
                                     del st.session_state[key]
                             st.rerun()
+            else:
+                # 新規ユーザー向けの案内
+                st.info("📚 まだ演習データがありません")
+                st.markdown("""
+                **演習を開始するには：**
+                1. 「今日の新規カードを自動選定」ボタンで開始
+                2. 「必修問題から開始」ボタンで基礎から学習
+                3. キーワード検索で特定の分野を学習
+                """)
+                if st.button("演習開始エリアにジャンプ", key="jump_to_start"):
+                    # JavaScriptでスクロール（注意：streamlitでは限定的）
+                    st.markdown('<script>window.scrollTo(0, 0);</script>', unsafe_allow_html=True)
     if page == "演習":
         render_practice_page()
     elif page == "検索":
