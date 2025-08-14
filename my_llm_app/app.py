@@ -1504,6 +1504,46 @@ def search_questions_by_keyword(keyword, gakushi_only=False, has_gakushi_permiss
     
     return matching_questions
 
+def calculate_card_level(n, latest_quality, history):
+    """
+    学習回数と評価履歴に基づいてカードのレベルを計算
+    - n: 学習回数（SM-2のnパラメータ）
+    - latest_quality: 最新の評価（1-5）
+    - history: 評価履歴のリスト
+    """
+    if n == 0:
+        return 0  # 未学習
+    
+    # 最近の成績を重視した評価計算
+    if len(history) == 0:
+        avg_quality = latest_quality
+    else:
+        # 最新5回の評価の平均を計算（重み付き：最新ほど重要）
+        recent_qualities = []
+        for i, record in enumerate(history[-5:]):
+            weight = i + 1  # 新しいほど重み大
+            recent_qualities.extend([record["quality"]] * weight)
+        
+        # 最新の評価も追加
+        recent_qualities.extend([latest_quality] * len(recent_qualities))
+        avg_quality = sum(recent_qualities) / len(recent_qualities)
+    
+    # レベル計算ロジック
+    if n >= 10 and avg_quality >= 4.5:
+        return 6  # 習得済み相当
+    elif n >= 8 and avg_quality >= 4.0:
+        return 5
+    elif n >= 6 and avg_quality >= 3.5:
+        return 4
+    elif n >= 4 and avg_quality >= 3.0:
+        return 3
+    elif n >= 2 and avg_quality >= 2.5:
+        return 2
+    elif n >= 1:
+        return 1
+    else:
+        return 0
+
 def sm2_update(card, quality, now=None):
     if now is None: now = datetime.datetime.now(datetime.timezone.utc)
     EF, n, I = card.get("EF", 2.5), card.get("n", 0), card.get("I", 0)
@@ -1530,7 +1570,11 @@ def sm2_update(card, quality, now=None):
         I = 10 / 1440
     next_review_dt = now + datetime.timedelta(days=I)
     card["history"] = card.get("history", []) + [{"timestamp": now.isoformat(), "quality": quality, "interval": I, "EF": EF}]
-    card.update({"EF": EF, "n": n, "I": I, "next_review": next_review_dt.isoformat(), "quality": quality})
+    
+    # レベル計算（学習回数と成績に基づく）
+    level = calculate_card_level(n, quality, card.get("history", []))
+    
+    card.update({"EF": EF, "n": n, "I": I, "next_review": next_review_dt.isoformat(), "quality": quality, "level": level})
     return card
 
 def sm2_update_with_policy(card: dict, quality: int, q_num_str: str, now=None):
@@ -1586,7 +1630,12 @@ def render_search_page():
         if not card:
             level = "未学習"
         else:
-            card_level = card.get("level", 0)
+            # SM-2アルゴリズムのnと評価履歴から動的にレベル計算
+            n = card.get("n", 0)
+            latest_quality = card.get("quality", 1)
+            history = card.get("history", [])
+            card_level = calculate_card_level(n, latest_quality, history)
+            
             if card_level >= 6:
                 level = "習得済み"
             else:
