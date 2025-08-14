@@ -356,6 +356,7 @@ def load_master_data(version="v2025-08-14-gakushi-1-2-fixed"):  # キャッシ�
         'gakushi-2022-1-3.json', 
         'gakushi-2022-1再.json',  
         'gakushi-2022-2.json', 
+        'gakushi-2023-1-1.json',
         'gakushi-2023-1-2.json', 
         'gakushi-2023-2.json',  
         'gakushi-2024-1-1.json', 
