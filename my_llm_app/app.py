@@ -1611,6 +1611,21 @@ def render_search_page():
     import pandas as pd
     filtered_df = pd.DataFrame(filtered_data)
     
+    # 科目リストをサイドバー用に設定
+    if not filtered_df.empty:
+        available_subjects = sorted(filtered_df["subject"].unique())
+        st.session_state.available_subjects = available_subjects
+        # 科目フィルターの取得（デフォルトは全科目）
+        subject_filter = st.session_state.get("subject_filter", available_subjects)
+        
+        # レベルと科目でフィルタリング
+        filtered_df = filtered_df[
+            (filtered_df["level"].isin(level_filter)) &
+            (filtered_df["subject"].isin(subject_filter))
+        ]
+    else:
+        st.session_state.available_subjects = []
+    
     # 3タブ構成の可視化
     tab1, tab2, tab3 = st.tabs(["概要", "グラフ分析", "問題リストと絞り込み"])
     
@@ -1745,32 +1760,12 @@ def render_search_page():
             "レベル5": "#1E88E5", "習得済み": "#4CAF50"
         }
         
-        # レベルフィルタ
-        level_filter_detail = st.multiselect(
-            "表示する学習レベル",
-            levels_sorted,
-            default=levels_sorted,
-            key="level_filter_detail"
-        )
-        
-        # 科目フィルタ
-        available_subjects = sorted(filtered_df["subject"].unique()) if not filtered_df.empty else []
-        subject_filter = st.multiselect(
-            "表示する科目",
-            available_subjects,
-            default=available_subjects,
-            key="subject_filter_detail"
-        )
-        
-        # フィルタ適用
+        # サイドバーのフィルターを適用
         if not filtered_df.empty:
-            detail_filtered = filtered_df[
-                (filtered_df["level"].isin(level_filter_detail)) &
-                (filtered_df["subject"].isin(subject_filter))
-            ]
+            # サイドバーの level_filter は既に適用済み
             
-            st.markdown(f"**{len(detail_filtered)}件の問題が見つかりました**")
-            if not detail_filtered.empty:
+            st.markdown(f"**{len(filtered_df)}件の問題が見つかりました**")
+            if not filtered_df.empty:
                 def sort_key(row_id):
                     m_gakushi = re.match(r'^(G)(\d+)[–\-]([\d–\-再]+)[–\-]([A-Z])[–\-](\d+)$', str(row_id))
                     if m_gakushi: return (m_gakushi.group(1), int(m_gakushi.group(2)), m_gakushi.group(3), m_gakushi.group(4), int(m_gakushi.group(5)))
@@ -1778,7 +1773,7 @@ def render_search_page():
                     if m_normal: return ('Z', int(m_normal.group(1)), m_normal.group(2), '', int(m_normal.group(3)))
                     return ('Z', 0, '', '', 0)
 
-                detail_filtered_sorted = detail_filtered.copy()
+                detail_filtered_sorted = filtered_df.copy()
                 detail_filtered_sorted['sort_key'] = detail_filtered_sorted['id'].apply(sort_key)
                 detail_filtered_sorted = detail_filtered_sorted.sort_values(by='sort_key').drop(columns=['sort_key'])
                 for _, row in detail_filtered_sorted.iterrows():
@@ -2018,7 +2013,6 @@ def render_practice_page():
     is_checked = st.session_state.get(f"checked_{group_id}", False)
     case_data = CASES.get(first_q.get('case_id')) if first_q.get('case_id') else None
 
-    st.title("歯科医師国家試験 演習")
 
     if case_data:
         st.info(f"【連問】この症例には{len(q_objects)}問の問題が含まれています。")
@@ -2764,6 +2758,41 @@ else:
                 st.info("セッションを初期化しました")
                 st.rerun()
 
+            # 学習記録セクション
+            st.divider()
+            st.markdown("#### 📈 学習記録")
+            if st.session_state.cards and len(st.session_state.cards) > 0:
+                quality_to_mark = {1: "×", 2: "△", 4: "◯", 5: "◎"}
+                mark_to_label = {"◎": "簡単", "◯": "普通", "△": "難しい", "×": "もう一度"}
+                evaluated_marks = [quality_to_mark.get(card.get('quality')) for card in st.session_state.cards.values() if card.get('quality')]
+                total_evaluated = len(evaluated_marks)
+                counter = Counter(evaluated_marks)
+                
+                with st.expander("自己評価の分布", expanded=True):
+                    st.markdown(f"**合計評価数：{total_evaluated}問**")
+                    for mark, label in mark_to_label.items():
+                        count = counter.get(mark, 0)
+                        percent = int(round(count / total_evaluated * 100)) if total_evaluated else 0
+                        st.markdown(f"{mark} {label}：{count}問 ({percent}％)")
+                
+                with st.expander("最近の評価ログ", expanded=False):
+                    cards_with_history = [(q_num, card) for q_num, card in st.session_state.cards.items() if card.get('history')]
+                    sorted_cards = sorted(cards_with_history, key=lambda item: item[1]['history'][-1]['timestamp'], reverse=True)
+                    for q_num, card in sorted_cards[:10]:
+                        last_history = card['history'][-1]
+                        last_eval_mark = quality_to_mark.get(last_history.get('quality'))
+                        timestamp_str = datetime.datetime.fromisoformat(last_history['timestamp']).strftime('%Y-%m-%d %H:%M')
+                        jump_btn = st.button(f"{q_num}", key=f"jump_{q_num}")
+                        st.markdown(f"- `{q_num}` : **{last_eval_mark}** ({timestamp_str})", unsafe_allow_html=True)
+                        if jump_btn:
+                            st.session_state.current_q_group = [q_num]
+                            for key in list(st.session_state.keys()):
+                                if key.startswith("checked_") or key.startswith("user_selection_") or key.startswith("shuffled_") or key.startswith("free_input_"):
+                                    del st.session_state[key]
+                            st.rerun()
+            else:
+                st.info("まだ評価された問題がありません。")
+
         else:
             # --- 検索・進捗ページのサイドバー ---
             st.markdown("### 📊 分析・検索ツール")
@@ -2788,6 +2817,17 @@ else:
                 default=["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "レベル5", "習得済み"],
                 key="level_filter"
             )
+            
+            # 科目フィルター（動的に設定されるため、デフォルトは空）
+            if "available_subjects" in st.session_state:
+                subject_filter = st.multiselect(
+                    "表示する科目",
+                    st.session_state.available_subjects,
+                    default=st.session_state.available_subjects,
+                    key="subject_filter"
+                )
+            else:
+                subject_filter = []
 
         # ログアウトボタン
         st.divider()
