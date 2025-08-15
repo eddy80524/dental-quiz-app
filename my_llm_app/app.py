@@ -2703,136 +2703,148 @@ else:
             st.divider()
             
             if learning_mode == 'おまかせ学習（推奨）':
-                # Anki風の日次目標表示
-                st.markdown("#### 📅 本日の学習目標")
-                today = datetime.date.today()
-                today_str = today.strftime('%Y-%m-%d')
-                
-                # 本日の復習対象カード数を計算
-                review_count = 0
-                cards = st.session_state.get("cards", {})
-                
-                for card in cards.values():
-                    if 'next_review' in card:
-                        next_review = card['next_review']
-                        if isinstance(next_review, str):
-                            try:
-                                next_review_date = datetime.datetime.fromisoformat(next_review).date()
-                                if next_review_date <= today:
-                                    review_count += 1
-                            except:
-                                pass
-                        elif isinstance(next_review, datetime.datetime):
-                            if next_review.date() <= today:
-                                review_count += 1
-                        elif isinstance(next_review, datetime.date):
-                            if next_review <= today:
-                                review_count += 1
-                
-                # 本日の学習完了数を計算
-                today_reviews_done = 0
-                today_new_done = 0
-                
-                for card in cards.values():
-                    history = card.get('history', [])
-                    for review in history:
-                        if isinstance(review, dict):
-                            review_date = review.get('timestamp', '')
-                            if review_date.startswith(today_str):
-                                # 本日の復習か新規かを判定
-                                if len(history) == 1:  # 初回学習（新規）
-                                    today_new_done += 1
-                                else:  # 復習
-                                    today_reviews_done += 1
-                                break  # 同じカードの重複カウントを防ぐ
-                
-                # 新規学習目標数
-                new_target = st.session_state.get("new_cards_per_day", 10)
-                
-                # 残り目標数を計算
-                review_remaining = max(0, review_count - today_reviews_done)
-                new_remaining = max(0, new_target - today_new_done)
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    if review_remaining > 0:
-                        if today_reviews_done > 0:
-                            st.metric("復習", review_remaining, "枚", delta=f"-{today_reviews_done}")
-                        else:
-                            st.metric("復習", review_remaining, "枚")
-                    else:
-                        st.metric("復習", "完了", "✅", delta=f"本日{today_reviews_done}枚")
-                with col2:
-                    if new_remaining > 0:
-                        if today_new_done > 0:
-                            st.metric("新規", new_remaining, "枚", delta=f"-{today_new_done}")
-                        else:
-                            st.metric("新規", new_remaining, "枚")
-                    else:
-                        st.metric("新規", "完了", "✅", delta=f"本日{today_new_done}枚")
-                
-                # 学習開始ボタン
-                if st.button("🚀 今日の学習を開始する", type="primary", key="start_today_study"):
-                    # 復習カードをメインキューに追加
-                    grouped_queue = []
+                # 学習セッション初期化中の場合の処理
+                if st.session_state.get("initializing_study", False):
+                    st.markdown("#### 📅 本日の学習目標")
+                    st.info("🔄 学習セッションを準備中...")
+                else:
+                    # Anki風の日次目標表示
+                    st.markdown("#### 📅 本日の学習目標")
+                    today = datetime.date.today()
+                    today_str = today.strftime('%Y-%m-%d')
                     
-                    # 復習カードの追加
-                    for q_num, card in cards.items():
+                    # 本日の復習対象カード数を計算
+                    review_count = 0
+                    cards = st.session_state.get("cards", {})
+                
+                    for card in cards.values():
                         if 'next_review' in card:
                             next_review = card['next_review']
-                            should_review = False
-                            
                             if isinstance(next_review, str):
                                 try:
                                     next_review_date = datetime.datetime.fromisoformat(next_review).date()
-                                    should_review = next_review_date <= today
+                                    if next_review_date <= today:
+                                        review_count += 1
                                 except:
                                     pass
                             elif isinstance(next_review, datetime.datetime):
-                                should_review = next_review.date() <= today
+                                if next_review.date() <= today:
+                                    review_count += 1
                             elif isinstance(next_review, datetime.date):
-                                should_review = next_review <= today
+                                if next_review <= today:
+                                    review_count += 1
+                    
+                    # 本日の学習完了数を計算
+                    today_reviews_done = 0
+                    today_new_done = 0
+                    
+                    for card in cards.values():
+                        history = card.get('history', [])
+                        for review in history:
+                            if isinstance(review, dict):
+                                review_date = review.get('timestamp', '')
+                                if review_date.startswith(today_str):
+                                    # 本日の復習か新規かを判定
+                                    if len(history) == 1:  # 初回学習（新規）
+                                        today_new_done += 1
+                                    else:  # 復習
+                                        today_reviews_done += 1
+                                    break  # 同じカードの重複カウントを防ぐ
+                    
+                    # 新規学習目標数
+                    new_target = st.session_state.get("new_cards_per_day", 10)
+                    
+                    # 残り目標数を計算
+                    review_remaining = max(0, review_count - today_reviews_done)
+                    new_remaining = max(0, new_target - today_new_done)
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if review_remaining > 0:
+                            if today_reviews_done > 0:
+                                st.metric("復習", review_remaining, "枚", delta=f"-{today_reviews_done}")
+                            else:
+                                st.metric("復習", review_remaining, "枚")
+                        else:
+                            st.metric("復習", "完了", "✅", delta=f"本日{today_reviews_done}枚")
+                    with col2:
+                        if new_remaining > 0:
+                            if today_new_done > 0:
+                                st.metric("新規", new_remaining, "枚", delta=f"-{today_new_done}")
+                            else:
+                                st.metric("新規", new_remaining, "枚")
+                        else:
+                            st.metric("新規", "完了", "✅", delta=f"本日{today_new_done}枚")
+                    
+                    # 学習開始ボタン
+                    if st.button("🚀 今日の学習を開始する", type="primary", key="start_today_study"):
+                        # 学習開始中フラグを設定
+                        st.session_state["initializing_study"] = True
+                        
+                        with st.spinner("学習セッションを準備中..."):
+                            # 復習カードをメインキューに追加
+                            grouped_queue = []
                             
-                            if should_review:
-                                grouped_queue.append([q_num])
-                    
-                    # 新規カードの追加
-                    recent_ids = list(st.session_state.get("result_log", {}).keys())[-15:]
-                    uid = st.session_state.get("uid")
-                    has_gakushi_permission = check_gakushi_permission(uid)
-                    
-                    if has_gakushi_permission:
-                        available_questions = ALL_QUESTIONS
-                    else:
-                        available_questions = [q for q in ALL_QUESTIONS if not q.get("number", "").startswith("G")]
-                    
-                    pick_ids = pick_new_cards_for_today(
-                        available_questions,
-                        st.session_state.get("cards", {}),
-                        N=new_target,
-                        recent_qids=recent_ids
-                    )
-                    
-                    for qid in pick_ids:
-                        grouped_queue.append([qid])
-                        if qid not in st.session_state.cards:
-                            st.session_state.cards[qid] = {}
-                    
-                    if grouped_queue:
-                        st.session_state.main_queue = grouped_queue
-                        st.session_state.short_term_review_queue = []
-                        st.session_state.current_q_group = []
+                            # 復習カードの追加
+                            for q_num, card in cards.items():
+                                if 'next_review' in card:
+                                    next_review = card['next_review']
+                                    should_review = False
+                                    
+                                    if isinstance(next_review, str):
+                                        try:
+                                            next_review_date = datetime.datetime.fromisoformat(next_review).date()
+                                            should_review = next_review_date <= today
+                                        except:
+                                            pass
+                                    elif isinstance(next_review, datetime.datetime):
+                                        should_review = next_review.date() <= today
+                                    elif isinstance(next_review, datetime.date):
+                                        should_review = next_review <= today
+                                    
+                                    if should_review:
+                                        grouped_queue.append([q_num])
+                            
+                            # 新規カードの追加
+                            recent_ids = list(st.session_state.get("result_log", {}).keys())[-15:]
+                            uid = st.session_state.get("uid")
+                            has_gakushi_permission = check_gakushi_permission(uid)
+                            
+                            if has_gakushi_permission:
+                                available_questions = ALL_QUESTIONS
+                            else:
+                                available_questions = [q for q in ALL_QUESTIONS if not q.get("number", "").startswith("G")]
+                            
+                            pick_ids = pick_new_cards_for_today(
+                                available_questions,
+                                st.session_state.get("cards", {}),
+                                N=new_target,
+                                recent_qids=recent_ids
+                            )
+                            
+                            for qid in pick_ids:
+                                grouped_queue.append([qid])
+                                if qid not in st.session_state.cards:
+                                    st.session_state.cards[qid] = {}
                         
-                        # 一時状態をクリア
-                        for k in list(st.session_state.keys()):
-                            if k.startswith(("checked_", "user_selection_", "shuffled_", "free_input_", "order_input_")):
-                                del st.session_state[k]
-                        
-                        save_user_data(st.session_state.get("uid"), st.session_state)
-                        st.success(f"今日の学習を開始します！（{len(grouped_queue)}問）")
-                        st.rerun()
-                    else:
-                        st.info("今日の学習対象がありません。")
+                            
+                            if grouped_queue:
+                                st.session_state.main_queue = grouped_queue
+                                st.session_state.short_term_review_queue = []
+                                st.session_state.current_q_group = []
+                                
+                                # 一時状態をクリア
+                                for k in list(st.session_state.keys()):
+                                    if k.startswith(("checked_", "user_selection_", "shuffled_", "free_input_", "order_input_")):
+                                        del st.session_state[k]
+                                
+                                save_user_data(st.session_state.get("uid"), st.session_state)
+                                st.session_state["initializing_study"] = False
+                                st.success(f"今日の学習を開始します！（{len(grouped_queue)}問）")
+                                st.rerun()
+                            else:
+                                st.session_state["initializing_study"] = False
+                                st.info("今日の学習対象がありません。")
             
             else:
                 # 自由演習モードのUI
