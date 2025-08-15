@@ -2700,56 +2700,12 @@ else:
             st.divider()
             
             if learning_mode == 'おまかせ学習（推奨）':
-                # おまかせ学習モードのUI
-                st.markdown("#### 📊 今日の学習状況")
-                
-                # 現在のキュー状況を表示
-                now = datetime.datetime.now(datetime.timezone.utc)
-                stq = st.session_state.get("short_term_review_queue", [])
-                ready_reviews = 0
-                for item in stq:
-                    ra = item.get("ready_at")
-                    if isinstance(ra, str):
-                        try: ra = datetime.datetime.fromisoformat(ra)
-                        except Exception: ra = now
-                    if not ra or ra <= now:
-                        ready_reviews += 1
-                
-                pending_new = len(st.session_state.get("main_queue", []))
-                
-                # リアルタイム学習状況
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    if ready_reviews > 0:
-                        st.metric("🔄 復習待ち", ready_reviews, "問")
-                    else:
-                        st.metric("🔄 復習待ち", 0, "問")
-                with col2:
-                    if pending_new > 0:
-                        st.metric("🆕 新規待ち", pending_new, "問")
-                    else:
-                        st.metric("🆕 新規待ち", 0, "問")
-                with col3:
-                    total_waiting = ready_reviews + pending_new
-                    if total_waiting > 0:
-                        st.metric("📚 合計", total_waiting, "問")
-                    else:
-                        st.metric("📚 合計", 0, "問")
-                
-                # 学習アルゴリズムの説明
-                if total_waiting > 0:
-                    if ready_reviews >= 5:
-                        st.info("🎯 **復習集中モード**: 復習が溜まっているため、復習問題を優先的に出題します")
-                    elif ready_reviews > 0 and pending_new > 0:
-                        st.info("⚖️ **バランスモード**: 復習(30%)と新規(70%)をバランス良く出題します")
-                    elif ready_reviews > 0:
-                        st.info("🔄 **復習モード**: 復習問題のみ出題します")
-                    else:
-                        st.info("🆕 **新規学習モード**: 新規問題のみ出題します")
-                
                 # Anki風の日次目標表示
                 st.markdown("#### 📅 本日の学習目標")
                 today = datetime.date.today()
+                today_str = today.strftime('%Y-%m-%d')
+                
+                # 本日の復習対象カード数を計算
                 review_count = 0
                 cards = st.session_state.get("cards", {})
                 
@@ -2770,13 +2726,41 @@ else:
                             if next_review <= today:
                                 review_count += 1
                 
-                new_count = st.session_state.get("new_cards_per_day", 10)
+                # 本日の学習完了数を計算
+                today_reviews_done = 0
+                today_new_done = 0
+                
+                for card in cards.values():
+                    history = card.get('history', [])
+                    for review in history:
+                        if isinstance(review, dict):
+                            review_date = review.get('timestamp', '')
+                            if review_date.startswith(today_str):
+                                # 本日の復習か新規かを判定
+                                if len(history) == 1:  # 初回学習（新規）
+                                    today_new_done += 1
+                                else:  # 復習
+                                    today_reviews_done += 1
+                                break  # 同じカードの重複カウントを防ぐ
+                
+                # 新規学習目標数
+                new_target = st.session_state.get("new_cards_per_day", 10)
+                
+                # 残り目標数を計算
+                review_remaining = max(0, review_count - today_reviews_done)
+                new_remaining = max(0, new_target - today_new_done)
                 
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.metric("復習", review_count, "枚")
+                    if review_remaining > 0:
+                        st.metric("復習", review_remaining, "枚", delta=f"-{today_reviews_done}" if today_reviews_done > 0 else None)
+                    else:
+                        st.metric("復習", "完了", "✅", delta=f"本日{today_reviews_done}枚")
                 with col2:
-                    st.metric("新規", new_count, "枚")
+                    if new_remaining > 0:
+                        st.metric("新規", new_remaining, "枚", delta=f"-{today_new_done}" if today_new_done > 0 else None)
+                    else:
+                        st.metric("新規", "完了", "✅", delta=f"本日{today_new_done}枚")
                 
                 # 学習開始ボタン
                 if st.button("🚀 今日の学習を開始する", type="primary", key="start_today_study"):
@@ -2816,7 +2800,7 @@ else:
                     pick_ids = pick_new_cards_for_today(
                         available_questions,
                         st.session_state.get("cards", {}),
-                        N=new_count,
+                        N=new_target,
                         recent_qids=recent_ids
                     )
                     
