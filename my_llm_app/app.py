@@ -1970,7 +1970,7 @@ def render_search_page():
                     st.markdown(f"**問題:** {q.get('question', '')[:100]}...")
                     if q.get('choices'):
                         st.markdown("**選択肢:**")
-                        for j, choice in enumerate(q['choices'][:3]):  # 最初の3つの選択肢
+                        for j, choice in enumerate(q['choices']):  # 全ての選択肢を表示
                             choice_text = choice.get('text', str(choice)) if isinstance(choice, dict) else str(choice)
                             st.markdown(f"  {chr(65+j)}. {choice_text[:50]}...")
                     
