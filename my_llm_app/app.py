@@ -2753,12 +2753,18 @@ else:
                 col1, col2 = st.columns(2)
                 with col1:
                     if review_remaining > 0:
-                        st.metric("復習", review_remaining, "枚", delta=f"-{today_reviews_done}" if today_reviews_done > 0 else None)
+                        if today_reviews_done > 0:
+                            st.metric("復習", review_remaining, "枚", delta=f"-{today_reviews_done}")
+                        else:
+                            st.metric("復習", review_remaining, "枚")
                     else:
                         st.metric("復習", "完了", "✅", delta=f"本日{today_reviews_done}枚")
                 with col2:
                     if new_remaining > 0:
-                        st.metric("新規", new_remaining, "枚", delta=f"-{today_new_done}" if today_new_done > 0 else None)
+                        if today_new_done > 0:
+                            st.metric("新規", new_remaining, "枚", delta=f"-{today_new_done}")
+                        else:
+                            st.metric("新規", new_remaining, "枚")
                     else:
                         st.metric("新規", "完了", "✅", delta=f"本日{today_new_done}枚")
                 
