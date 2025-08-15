@@ -2734,47 +2734,56 @@ else:
                                 if next_review <= today:
                                     review_count += 1
                     
-                    # 本日の学習完了数を計算
+                    # 本日の学習完了数を計算（安全な初期化）
                     today_reviews_done = 0
                     today_new_done = 0
                     
-                    for card in cards.values():
-                        history = card.get('history', [])
-                        for review in history:
-                            if isinstance(review, dict):
-                                review_date = review.get('timestamp', '')
-                                if review_date.startswith(today_str):
-                                    # 本日の復習か新規かを判定
-                                    if len(history) == 1:  # 初回学習（新規）
-                                        today_new_done += 1
-                                    else:  # 復習
-                                        today_reviews_done += 1
-                                    break  # 同じカードの重複カウントを防ぐ
+                    try:
+                        for card in cards.values():
+                            history = card.get('history', []) if isinstance(card, dict) else []
+                            for review in history:
+                                if isinstance(review, dict):
+                                    review_date = review.get('timestamp', '')
+                                    if isinstance(review_date, str) and review_date.startswith(today_str):
+                                        # 本日の復習か新規かを判定
+                                        if len(history) == 1:  # 初回学習（新規）
+                                            today_new_done += 1
+                                        else:  # 復習
+                                            today_reviews_done += 1
+                                        break  # 同じカードの重複カウントを防ぐ
+                    except Exception as e:
+                        # エラーが発生した場合は0で初期化
+                        today_reviews_done = 0
+                        today_new_done = 0
                     
-                    # 新規学習目標数
+                    # 新規学習目標数（安全な取得）
                     new_target = st.session_state.get("new_cards_per_day", 10)
+                    if not isinstance(new_target, int):
+                        new_target = 10
                     
-                    # 残り目標数を計算
-                    review_remaining = max(0, review_count - today_reviews_done)
-                    new_remaining = max(0, new_target - today_new_done)
+                    # 残り目標数を計算（安全な値チェック付き）
+                    review_remaining = max(0, review_count - today_reviews_done) if isinstance(review_count, int) and isinstance(today_reviews_done, int) else 0
+                    new_remaining = max(0, new_target - today_new_done) if isinstance(new_target, int) and isinstance(today_new_done, int) else 0
                     
                     col1, col2 = st.columns(2)
                     with col1:
                         if review_remaining > 0:
-                            if today_reviews_done > 0:
+                            if today_reviews_done > 0 and isinstance(today_reviews_done, int):
                                 st.metric("復習", review_remaining, "枚", delta=-today_reviews_done)
                             else:
                                 st.metric("復習", review_remaining, "枚")
                         else:
-                            st.metric("復習", "完了", "✅", delta=f"本日{today_reviews_done}枚")
+                            completion_text = f"本日{today_reviews_done}枚" if isinstance(today_reviews_done, int) else "完了"
+                            st.metric("復習", "完了", "✅", delta=completion_text)
                     with col2:
                         if new_remaining > 0:
-                            if today_new_done > 0:
+                            if today_new_done > 0 and isinstance(today_new_done, int):
                                 st.metric("新規", new_remaining, "枚", delta=-today_new_done)
                             else:
                                 st.metric("新規", new_remaining, "枚")
                         else:
-                            st.metric("新規", "完了", "✅", delta=f"本日{today_new_done}枚")
+                            completion_text = f"本日{today_new_done}枚" if isinstance(today_new_done, int) else "完了"
+                            st.metric("新規", "完了", "✅", delta=completion_text)
                     
                     # 学習開始ボタン
                     if st.button("🚀 今日の学習を開始する", type="primary", key="start_today_study"):
