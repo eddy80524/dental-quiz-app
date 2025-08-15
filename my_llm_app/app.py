@@ -2769,21 +2769,47 @@ else:
                     with col1:
                         if review_remaining > 0:
                             if today_reviews_done > 0 and isinstance(today_reviews_done, int):
-                                st.metric("復習", review_remaining, "枚", delta=-today_reviews_done)
+                                st.metric(
+                                    label="復習",
+                                    value=review_remaining,
+                                    delta=today_reviews_done,
+                                    delta_color="inverse"
+                                )
+                                st.caption("枚")
                             else:
-                                st.metric("復習", review_remaining, "枚")
+                                st.metric(
+                                    label="復習", 
+                                    value=f"{review_remaining}枚"
+                                )
                         else:
                             completion_text = f"本日{today_reviews_done}枚" if isinstance(today_reviews_done, int) else "完了"
-                            st.metric("復習", "完了", "✅", delta=completion_text)
+                            st.metric(
+                                label="復習",
+                                value="完了 ✅"
+                            )
+                            st.caption(completion_text)
                     with col2:
                         if new_remaining > 0:
                             if today_new_done > 0 and isinstance(today_new_done, int):
-                                st.metric("新規", new_remaining, "枚", delta=-today_new_done)
+                                st.metric(
+                                    label="新規",
+                                    value=new_remaining,
+                                    delta=today_new_done,
+                                    delta_color="inverse"
+                                )
+                                st.caption("枚")
                             else:
-                                st.metric("新規", new_remaining, "枚")
+                                st.metric(
+                                    label="新規",
+                                    value=f"{new_remaining}枚"
+                                )
                         else:
                             completion_text = f"本日{today_new_done}枚" if isinstance(today_new_done, int) else "完了"
-                            st.metric("新規", "完了", "✅", delta=completion_text)
+                            st.metric(
+                                label="新規",
+                                value="完了 ✅"
+                            )
+                            st.caption(completion_text)
                     
                     # 学習開始ボタン
                     if st.button("🚀 今日の学習を開始する", type="primary", key="start_today_study"):
