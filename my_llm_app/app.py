@@ -2707,6 +2707,8 @@ else:
                 if st.session_state.get("initializing_study", False):
                     st.markdown("#### 📅 本日の学習目標")
                     st.info("🔄 学習セッションを準備中...")
+                    # 初期化中は他の表示を全て停止
+                    st.stop()
                 else:
                     # Anki風の日次目標表示
                     st.markdown("#### 📅 本日の学習目標")
@@ -2734,23 +2736,42 @@ else:
                                 if next_review <= today:
                                     review_count += 1
                     
-                    # 本日の学習完了数を計算（安全な初期化）
+                    # 本日の学習完了数を計算（重複カウント防止強化版）
                     today_reviews_done = 0
                     today_new_done = 0
+                    processed_cards = set()  # 重複カウント防止
                     
                     try:
-                        for card in cards.values():
-                            history = card.get('history', []) if isinstance(card, dict) else []
+                        for q_num, card in cards.items():
+                            if not isinstance(card, dict) or q_num in processed_cards:
+                                continue
+                                
+                            history = card.get('history', [])
+                            if not history:
+                                continue
+                            
+                            # 本日の学習履歴があるかチェック
+                            has_today_session = False
                             for review in history:
                                 if isinstance(review, dict):
                                     review_date = review.get('timestamp', '')
                                     if isinstance(review_date, str) and review_date.startswith(today_str):
-                                        # 本日の復習か新規かを判定
-                                        if len(history) == 1:  # 初回学習（新規）
-                                            today_new_done += 1
-                                        else:  # 復習
-                                            today_reviews_done += 1
-                                        break  # 同じカードの重複カウントを防ぐ
+                                        has_today_session = True
+                                        break
+                            
+                            if has_today_session:
+                                processed_cards.add(q_num)  # 処理済みマーク
+                                
+                                # 最初の学習が本日かどうかで新規/復習を判定
+                                first_review = history[0] if history else {}
+                                first_date = first_review.get('timestamp', '') if isinstance(first_review, dict) else ''
+                                
+                                if isinstance(first_date, str) and first_date.startswith(today_str):
+                                    # 本日初回学習（新規）
+                                    today_new_done += 1
+                                else:
+                                    # 復習
+                                    today_reviews_done += 1
                     except Exception as e:
                         # エラーが発生した場合は0で初期化
                         today_reviews_done = 0
@@ -2765,51 +2786,80 @@ else:
                     review_remaining = max(0, review_count - today_reviews_done) if isinstance(review_count, int) and isinstance(today_reviews_done, int) else 0
                     new_remaining = max(0, new_target - today_new_done) if isinstance(new_target, int) and isinstance(today_new_done, int) else 0
                     
-                    col1, col2 = st.columns(2)
+                    # 本日の進捗サマリー
+                    total_done = today_reviews_done + today_new_done
+                    daily_goal = review_count + new_target
+                    progress_rate = min(100, (total_done / daily_goal * 100)) if daily_goal > 0 else 0
+                    
+                    # メイン進捗表示
+                    col1, col2, col3 = st.columns([2, 1, 2])
+                    
                     with col1:
-                        if review_remaining > 0:
-                            if today_reviews_done > 0 and isinstance(today_reviews_done, int):
-                                st.metric(
-                                    label="復習",
-                                    value=review_remaining,
-                                    delta=today_reviews_done,
-                                    delta_color="inverse"
-                                )
-                                st.caption("枚")
-                            else:
-                                st.metric(
-                                    label="復習", 
-                                    value=f"{review_remaining}枚"
-                                )
-                        else:
-                            completion_text = f"本日{today_reviews_done}枚" if isinstance(today_reviews_done, int) else "完了"
-                            st.metric(
-                                label="復習",
-                                value="完了 ✅"
-                            )
-                            st.caption(completion_text)
+                        st.metric(
+                            label="📚 本日の学習",
+                            value=f"{total_done}枚",
+                            help=f"目標: {daily_goal}枚 (達成率: {progress_rate:.0f}%)"
+                        )
+                    
                     with col2:
-                        if new_remaining > 0:
-                            if today_new_done > 0 and isinstance(today_new_done, int):
-                                st.metric(
-                                    label="新規",
-                                    value=new_remaining,
-                                    delta=today_new_done,
-                                    delta_color="inverse"
-                                )
-                                st.caption("枚")
-                            else:
-                                st.metric(
-                                    label="新規",
-                                    value=f"{new_remaining}枚"
-                                )
-                        else:
-                            completion_text = f"本日{today_new_done}枚" if isinstance(today_new_done, int) else "完了"
+                        if total_done >= daily_goal:
                             st.metric(
-                                label="新規",
-                                value="完了 ✅"
+                                label="🎯 達成率",
+                                value="100%",
+                                help="目標達成おめでとうございます！"
                             )
-                            st.caption(completion_text)
+                        else:
+                            st.metric(
+                                label="🎯 達成率",
+                                value=f"{progress_rate:.0f}%",
+                                help=f"あと{daily_goal - total_done}枚で目標達成"
+                            )
+                    
+                    with col3:
+                        remaining_total = review_remaining + new_remaining
+                        if remaining_total > 0:
+                            st.metric(
+                                label="� 残り目標",
+                                value=f"{remaining_total}枚",
+                                help="本日の残り学習目標数"
+                            )
+                        else:
+                            st.metric(
+                                label="✅ 完了",
+                                value="目標達成",
+                                help="本日の学習目標をすべて達成しました"
+                            )
+                    
+                    st.markdown("---")
+                    
+                    # 詳細進捗表示
+                    col4, col5 = st.columns(2)
+                    with col4:
+                        if review_remaining > 0:
+                            st.metric(
+                                label="🔄 復習",
+                                value=f"{review_remaining}枚",
+                                help=f"復習対象: {review_count}枚 / 完了: {today_reviews_done}枚"
+                            )
+                        else:
+                            st.metric(
+                                label="🔄 復習",
+                                value="完了 ✅",
+                                help=f"本日の復習: {today_reviews_done}枚完了"
+                            )
+                    with col5:
+                        if new_remaining > 0:
+                            st.metric(
+                                label="✨ 新規",
+                                value=f"{new_remaining}枚",
+                                help=f"新規目標: {new_target}枚 / 完了: {today_new_done}枚"
+                            )
+                        else:
+                            st.metric(
+                                label="✨ 新規",
+                                value="完了 ✅",
+                                help=f"本日の新規学習: {today_new_done}枚完了"
+                            )
                     
                     # 学習開始ボタン
                     if st.button("🚀 今日の学習を開始する", type="primary", key="start_today_study"):
