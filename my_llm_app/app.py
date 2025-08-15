@@ -1992,13 +1992,14 @@ def render_search_page():
             }
             
             level_icons = {
-                "未学習": "🔴",
-                "レベル0": "🟠", 
-                "レベル1": "🟡",
-                "レベル2": "🟢",
-                "レベル3": "🔵",
-                "レベル4": "🟣",
-                "習得済み": "⭐"
+                "未学習": "⚫",        # グレー系
+                "レベル0": "🟠",      # オレンジ #FF9800
+                "レベル1": "🟡",      # イエロー #FFC107  
+                "レベル2": "🟢",      # グリーン #8BC34A
+                "レベル3": "�",      # パープル #9C27B0
+                "レベル4": "�",      # ブルー #03A9F4
+                "レベル5": "🔷",      # ダークブルー #1E88E5
+                "習得済み": "✅"      # グリーン完了 #4CAF50
             }
             
             for i, q in enumerate(results[:20]):  # 最初の20件を表示
@@ -2024,13 +2025,15 @@ def render_search_page():
                 else:
                     is_hisshu = question_number in HISSHU_Q_NUMBERS_SET
                 
-                level_icon = level_icons.get(level, "⚪")
                 level_color = level_colors.get(level, "#888888")
                 hisshu_mark = "🔥" if is_hisshu else ""
-                    
-                with st.expander(f"{level_icon} {q.get('number', 'N/A')} - {q.get('subject', '未分類')} {hisshu_mark}"):
-                    # レベルを色付きで表示
-                    st.markdown(f"**学習レベル:** <span style='color: {level_color}; font-weight: bold;'>{level}</span>", unsafe_allow_html=True)
+                
+                # 色付きドットアイコンをHTMLで生成
+                color_dot = f'<span style="color: {level_color}; font-size: 1.2em; font-weight: bold;">●</span>'
+                
+                with st.expander(f"● {q.get('number', 'N/A')} - {q.get('subject', '未分類')} {hisshu_mark}"):
+                    # レベルを大きく色付きで表示  
+                    st.markdown(f"**学習レベル:** <span style='color: {level_color}; font-weight: bold; font-size: 1.2em;'>{level}</span>", unsafe_allow_html=True)
                     st.markdown(f"**問題:** {q.get('question', '')[:100]}...")
                     if q.get('choices'):
                         st.markdown("**選択肢:**")
