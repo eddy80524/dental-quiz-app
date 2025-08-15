@@ -2019,19 +2019,53 @@ def enqueue_short_review(group, minutes: int):
 def render_practice_page():
     def get_next_q_group():
         now = datetime.datetime.now(datetime.timezone.utc)
-        # ★ 1) 短期復習: ready_at <= now のものを優先
+        
+        # 利用可能な復習問題を取得
         stq = st.session_state.get("short_term_review_queue", [])
+        ready_reviews = []
         for i, item in enumerate(stq):
             ra = item.get("ready_at")
             if isinstance(ra, str):
                 try: ra = datetime.datetime.fromisoformat(ra)
                 except Exception: ra = now
             if not ra or ra <= now:
-                grp = stq.pop(i).get("group", [])
-                return grp
-        # ★ 2) メインキュー
-        if st.session_state.get("main_queue"):
-            return st.session_state.main_queue.pop(0)
+                ready_reviews.append((i, item))
+        
+        # 利用可能な新規問題を取得
+        main_queue = st.session_state.get("main_queue", [])
+        
+        # 復習問題と新規問題のバランス調整
+        # 復習問題が多い場合は優先度を上げる
+        review_count = len(ready_reviews)
+        new_count = len(main_queue)
+        
+        # 復習問題が5個以上溜まっている場合は復習を優先
+        if review_count >= 5:
+            if ready_reviews:
+                i, item = ready_reviews[0]
+                stq.pop(i)
+                return item.get("group", [])
+        
+        # 通常時：復習30%、新規70%の確率で選択
+        elif review_count > 0 and new_count > 0:
+            import random
+            if random.random() < 0.3:  # 30%の確率で復習
+                i, item = ready_reviews[0]
+                stq.pop(i)
+                return item.get("group", [])
+            else:  # 70%の確率で新規
+                return main_queue.pop(0)
+        
+        # 復習問題のみ利用可能
+        elif ready_reviews:
+            i, item = ready_reviews[0]
+            stq.pop(i)
+            return item.get("group", [])
+        
+        # 新規問題のみ利用可能
+        elif main_queue:
+            return main_queue.pop(0)
+        
         return []
 
     if not st.session_state.get("current_q_group"):
@@ -2053,8 +2087,21 @@ def render_practice_page():
                 continue
             q_objects.append(ALL_QUESTIONS_DICT[q_num])
     if not q_objects:
-        st.success("🎉 このセッションの学習はすべて完了しました！")
-        st.balloons()
+        # デバッグ情報の表示
+        now = datetime.datetime.now(datetime.timezone.utc)
+        stq = st.session_state.get("short_term_review_queue", [])
+        ready_reviews = sum(1 for item in stq if (lambda ra: not ra or ra <= now)(
+            datetime.datetime.fromisoformat(item.get("ready_at")) if isinstance(item.get("ready_at"), str) 
+            else item.get("ready_at", now)
+        ))
+        pending_new = len(st.session_state.get("main_queue", []))
+        
+        if ready_reviews + pending_new > 0:
+            st.warning(f"📊 **学習キュー状況**: 復習待ち{ready_reviews}問、新規待ち{pending_new}問")
+            st.info("学習を開始するには、サイドバーで「🚀 今日の学習を開始する」をクリックしてください。")
+        else:
+            st.success("🎉 このセッションの学習はすべて完了しました！")
+            st.balloons()
         st.stop()
 
     first_q = q_objects[0]
@@ -2062,6 +2109,16 @@ def render_practice_page():
     is_checked = st.session_state.get(f"checked_{group_id}", False)
     case_data = CASES.get(first_q.get('case_id')) if first_q.get('case_id') else None
 
+    # 問題タイプの表示（復習か新規か）
+    cards = st.session_state.get("cards", {})
+    if group_id in cards and cards[group_id].get('n', 0) > 0:
+        study_count = cards[group_id].get('n', 0)
+        if study_count == 1:
+            st.info(f"🔄 **復習問題** - この問題は{study_count}回目の学習です")
+        else:
+            st.info(f"🔄 **復習問題** - この問題は{study_count}回目の学習です")
+    else:
+        st.info("🆕 **新規問題** - 初回の学習です")
 
     if case_data:
         st.info(f"【連問】この症例には{len(q_objects)}問の問題が含まれています。")
@@ -2545,7 +2602,52 @@ else:
                 # おまかせ学習モードのUI
                 st.markdown("#### 📊 今日の学習状況")
                 
-                # Anki風の枚数表示
+                # 現在のキュー状況を表示
+                now = datetime.datetime.now(datetime.timezone.utc)
+                stq = st.session_state.get("short_term_review_queue", [])
+                ready_reviews = 0
+                for item in stq:
+                    ra = item.get("ready_at")
+                    if isinstance(ra, str):
+                        try: ra = datetime.datetime.fromisoformat(ra)
+                        except Exception: ra = now
+                    if not ra or ra <= now:
+                        ready_reviews += 1
+                
+                pending_new = len(st.session_state.get("main_queue", []))
+                
+                # リアルタイム学習状況
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    if ready_reviews > 0:
+                        st.metric("🔄 復習待ち", ready_reviews, "問")
+                    else:
+                        st.metric("🔄 復習待ち", 0, "問")
+                with col2:
+                    if pending_new > 0:
+                        st.metric("🆕 新規待ち", pending_new, "問")
+                    else:
+                        st.metric("🆕 新規待ち", 0, "問")
+                with col3:
+                    total_waiting = ready_reviews + pending_new
+                    if total_waiting > 0:
+                        st.metric("📚 合計", total_waiting, "問")
+                    else:
+                        st.metric("📚 合計", 0, "問")
+                
+                # 学習アルゴリズムの説明
+                if total_waiting > 0:
+                    if ready_reviews >= 5:
+                        st.info("🎯 **復習集中モード**: 復習が溜まっているため、復習問題を優先的に出題します")
+                    elif ready_reviews > 0 and pending_new > 0:
+                        st.info("⚖️ **バランスモード**: 復習(30%)と新規(70%)をバランス良く出題します")
+                    elif ready_reviews > 0:
+                        st.info("🔄 **復習モード**: 復習問題のみ出題します")
+                    else:
+                        st.info("🆕 **新規学習モード**: 新規問題のみ出題します")
+                
+                # Anki風の日次目標表示
+                st.markdown("#### 📅 本日の学習目標")
                 today = datetime.date.today()
                 review_count = 0
                 cards = st.session_state.get("cards", {})
