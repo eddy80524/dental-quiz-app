@@ -1349,31 +1349,93 @@ def get_secure_image_url(path):
 
 def export_questions_to_latex(questions):
     """
-    検索結果をLaTeX形式で書き出す関数
+    検索結果をLaTeX形式でPDF生成可能な完全なドキュメントとして書き出す関数
     """
-    # TODO: あなたの既定tcolorboxテンプレに差し替え
-    header = r"""\documentclass[uplatex]{jsarticle}
+    header = r"""\documentclass[11pt,a4paper]{ujarticle}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
 \usepackage{amsmath,amssymb}
 \usepackage[most]{tcolorbox}
+\usepackage{geometry}
+\usepackage{fancyhdr}
+\usepackage{lastpage}
+\usepackage{enumitem}
+
+% ページ設定
+\geometry{left=20mm,right=20mm,top=25mm,bottom=25mm}
+
+% ヘッダー・フッター設定
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{歯科医師国家試験問題集}
+\fancyhead[R]{\today}
+\fancyfoot[C]{\thepage\ / \pageref{LastPage}}
+
+% タイトル
+\title{歯科医師国家試験 検索結果問題集}
+\author{Dental DX PoC System}
+\date{\today}
+
 \begin{document}
+\maketitle
+
+\section{検索結果一覧}
+以下の問題が検索結果として抽出されました。
+
 """
+    
     body = []
-    for q in questions:
-        num = q.get("number","")
-        text = (q.get("question","") or "").replace("#", r"\#")  # #を素直に残す（あなたの規則に従うなら別処理）
-        # ↓↓↓ 括弧をシンプルに
-        body.append(rf"\begin{{tcolorbox}}[title={{ {num} }}]")
-        body.append(text)
-        if q.get("choices"):
-            body.append(r"\begin{itemize}")
-            for ch in q["choices"]:
-                t = ch.get("text", str(ch)) if isinstance(ch, dict) else str(ch)
-                t = t.replace("#", r"\#")  # LaTeX特殊文字をエスケープ
-                body.append(r"\item " + t)
-            body.append(r"\end{itemize}")
+    for i, q in enumerate(questions, 1):
+        num = q.get("number", f"問題{i}")
+        subject = q.get("subject", "未分類")
+        question_text = (q.get("question", "") or "")
+        
+        # LaTeX特殊文字をエスケープ
+        question_text = question_text.replace("&", r"\&")
+        question_text = question_text.replace("%", r"\%")
+        question_text = question_text.replace("$", r"\$")
+        question_text = question_text.replace("#", r"\#")
+        question_text = question_text.replace("_", r"\_")
+        question_text = question_text.replace("{", r"\{")
+        question_text = question_text.replace("}", r"\}")
+        question_text = question_text.replace("^", r"\textasciicircum")
+        question_text = question_text.replace("~", r"\textasciitilde")
+        question_text = question_text.replace("\\", r"\textbackslash")
+        
+        body.append(rf"\subsection{{{num} - {subject}}}")
+        body.append(r"\begin{tcolorbox}[colback=blue!5!white,colframe=blue!75!black,title=問題文]")
+        body.append(question_text)
         body.append(r"\end{tcolorbox}")
-        body.append("\n")
-    footer = r"\end{document}"
+        
+        if q.get("choices"):
+            body.append(r"\begin{tcolorbox}[colback=gray!5!white,colframe=gray!75!black,title=選択肢]")
+            body.append(r"\begin{enumerate}[label=\Alph*.]")
+            for ch in q["choices"]:
+                choice_text = ch.get("text", str(ch)) if isinstance(ch, dict) else str(ch)
+                # LaTeX特殊文字をエスケープ
+                choice_text = choice_text.replace("&", r"\&")
+                choice_text = choice_text.replace("%", r"\%")
+                choice_text = choice_text.replace("$", r"\$")
+                choice_text = choice_text.replace("#", r"\#")
+                choice_text = choice_text.replace("_", r"\_")
+                choice_text = choice_text.replace("{", r"\{")
+                choice_text = choice_text.replace("}", r"\}")
+                choice_text = choice_text.replace("^", r"\textasciicircum")
+                choice_text = choice_text.replace("~", r"\textasciitilde")
+                choice_text = choice_text.replace("\\", r"\textbackslash")
+                body.append(r"\item " + choice_text)
+            body.append(r"\end{enumerate}")
+            body.append(r"\end{tcolorbox}")
+        
+        body.append(r"\vspace{1em}")
+        
+        # ページ区切り（5問ごと）
+        if i % 5 == 0 and i < len(questions):
+            body.append(r"\newpage")
+    
+    footer = r"""
+\end{document}"""
+    
     return header + "\n".join(body) + footer
 
 def get_shuffled_choices(q):
@@ -1963,10 +2025,12 @@ def render_search_page():
                     is_hisshu = question_number in HISSHU_Q_NUMBERS_SET
                 
                 level_icon = level_icons.get(level, "⚪")
+                level_color = level_colors.get(level, "#888888")
                 hisshu_mark = "🔥" if is_hisshu else ""
                     
                 with st.expander(f"{level_icon} {q.get('number', 'N/A')} - {q.get('subject', '未分類')} {hisshu_mark}"):
-                    st.markdown(f"**学習レベル:** {level}")
+                    # レベルを色付きで表示
+                    st.markdown(f"**学習レベル:** <span style='color: {level_color}; font-weight: bold;'>{level}</span>", unsafe_allow_html=True)
                     st.markdown(f"**問題:** {q.get('question', '')[:100]}...")
                     if q.get('choices'):
                         st.markdown("**選択肢:**")
@@ -1990,15 +2054,52 @@ def render_search_page():
                 st.info(f"表示は最初の20件です。全{len(results)}件中")
                 
             # LaTeX出力機能
-            if st.button("📝 LaTeX形式でエクスポート", key="latex_export_btn"):
-                latex_content = export_questions_to_latex(results)
-                st.download_button(
-                    label="💾 LaTeXファイルをダウンロード",
-                    data=latex_content,
-                    file_name=f"dental_questions_{query}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.tex",
-                    mime="text/plain"
-                )
-                st.success("LaTeX形式のエクスポートが完了しました！")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("📝 LaTeX形式で生成", key="latex_generate_btn"):
+                    with st.spinner("LaTeXファイルを生成中..."):
+                        latex_content = export_questions_to_latex(results)
+                        st.session_state["latex_content"] = latex_content
+                        st.session_state["latex_filename"] = f"dental_questions_{query}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.tex"
+                    st.success("LaTeX形式のファイルが生成されました！")
+            
+            with col2:
+                if "latex_content" in st.session_state:
+                    st.download_button(
+                        label="💾 LaTeXファイルをダウンロード",
+                        data=st.session_state["latex_content"],
+                        file_name=st.session_state.get("latex_filename", "dental_questions.tex"),
+                        mime="text/plain",
+                        help="生成されたLaTeXファイルをダウンロードします。uplatexでPDFにコンパイルできます。"
+                    )
+                else:
+                    st.button("💾 LaTeXファイルをダウンロード", disabled=True, help="先にLaTeX形式で生成してください")
+            
+            # LaTeX使用方法の説明
+            if "latex_content" in st.session_state:
+                with st.expander("📖 LaTeXファイルのPDF変換方法"):
+                    st.markdown("""
+                    **ダウンロードしたLaTeXファイルをPDFに変換する方法：**
+                    
+                    1. **TeX Live等のLaTeX環境を準備**
+                       - Windows: TeX Live または MiKTeX
+                       - macOS: MacTeX
+                       - Linux: texlive パッケージ
+                    
+                    2. **コマンドラインでPDF変換**
+                       ```bash
+                       uplatex dental_questions_YYYYMMDD_HHMMSS.tex
+                       dvipdfmx dental_questions_YYYYMMDD_HHMMSS.dvi
+                       ```
+                    
+                    3. **オンラインサービスを利用**
+                       - Overleaf (https://www.overleaf.com/)
+                       - Cloud LaTeX等のサービス
+                    
+                    ※ 日本語を含むため、uplatex + dvipdfmxの組み合わせを推奨します。
+                    """)
+            
         else:
             st.warning(f"「{query}」に該当する問題が見つかりませんでした")
     else:
