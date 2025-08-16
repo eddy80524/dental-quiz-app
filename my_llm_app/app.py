@@ -158,6 +158,23 @@ st.markdown("""
         color: #ffffff !important;
     }
     
+    /* より具体的なスキップボタン対応 */
+    .stForm .stButton button[kind="secondary"] {
+        background-color: #4a5568 !important;
+        color: #ffffff !important;
+        border: 1px solid #718096 !important;
+    }
+    
+    .stForm .stButton button[kind="secondary"]:hover {
+        background-color: #718096 !important;
+        color: #ffffff !important;
+    }
+    
+    /* フォーム内の全てのボタンに対する強制的な文字色指定 */
+    .stForm button, .stForm .stButton button {
+        color: #ffffff !important;
+    }
+    
     /* 入力フィールド */
     .stTextInput > div > div > input {
         background-color: #262730 !important;
@@ -2124,10 +2141,13 @@ def render_search_page():
         # 権限チェック
         if q_num.startswith("G") and not has_gakushi_permission:
             continue
+        
+        # 分析対象フィルタ
         if analysis_target == "学士試験" and not q_num.startswith("G"):
             continue
-        if analysis_target == "国試" and q_num.startswith("G"):
+        elif analysis_target == "国試" and q_num.startswith("G"):
             continue
+        # analysis_target == "全体" の場合は両方含める（何もしない）
             
         card = cards.get(q_num, {})
         
@@ -2179,15 +2199,6 @@ def render_search_page():
         ]
     else:
         st.session_state.available_subjects = []
-    
-    # モバイル向けクイックナビゲーション
-    st.markdown("""
-    <div style="background: linear-gradient(90deg, #e3f2fd, #f3e5f5); padding: 10px; border-radius: 8px; margin-bottom: 15px;">
-        <div style="text-align: center; font-size: 14px; color: #1565c0; font-weight: bold;">
-            📱 クイックナビ
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
     
     # 4タブ構成の可視化
     tab1, tab2, tab3, tab4 = st.tabs(["概要", "グラフ分析", "問題リスト", "キーワード検索"])
@@ -2382,9 +2393,9 @@ def render_search_page():
                     continue
                 
                 # 分析対象フィルタチェック（サイドバーの設定を使用）
-                if analysis_target == "国試" and question_number.startswith("G"):
+                if analysis_target == "学士試験" and not question_number.startswith("G"):
                     continue
-                elif analysis_target == "学士試験" and not question_number.startswith("G"):
+                elif analysis_target == "国試" and question_number.startswith("G"):
                     continue
                 # analysis_target == "全体" の場合は全て含める
                 
