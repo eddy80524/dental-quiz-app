@@ -24,7 +24,7 @@ except ImportError:
 
 st.set_page_config(layout="wide")
 
-# ダークモード対応CSS - デバイスの設定に自動で適応
+# ダークモード対応CSS - デバイスの設定に自動で適応（ライトモード同様のUX、色のみ変更）
 st.markdown("""
 <style>
 /* ライトモード（デフォルト） */
@@ -37,7 +37,7 @@ st.markdown("""
     background-color: #f0f2f6;
 }
 
-/* ダークモード - デバイス設定に基づいて自動適用 */
+/* ダークモード - デバイス設定に基づいて自動適用（レイアウトは変更せず、色のみ変更）*/
 @media (prefers-color-scheme: dark) {
     .stApp {
         background-color: #0e1117 !important;
@@ -49,13 +49,6 @@ st.markdown("""
     }
     
     /* サイドバー開閉ボタン */
-    .css-1d391kg, .css-1rs6os, .css-17eq0hr {
-        background-color: #262730 !important;
-        color: #fafafa !important;
-        border: 1px solid #4a5568 !important;
-    }
-    
-    /* サイドバーコラプスボタン（>>） */
     [data-testid="collapsedControl"] {
         background-color: #262730 !important;
         color: #fafafa !important;
@@ -94,18 +87,12 @@ st.markdown("""
         border: 1px solid #4a5568 !important;
     }
     
-    /* メニューアイコン（三本線） */
-    .css-1kyxreq {
-        background-color: #262730 !important;
-        color: #fafafa !important;
-    }
-    
     /* テキスト関連 */
-    .stMarkdown, .stText, p, span, div {
+    .stMarkdown, .stText, p, span, div, h1, h2, h3, h4, h5, h6 {
         color: #fafafa !important;
     }
     
-    /* ボタン */
+    /* ボタン - デフォルトスタイル維持、色のみ変更 */
     .stButton > button {
         background-color: #262730 !important;
         color: #fafafa !important;
@@ -129,7 +116,7 @@ st.markdown("""
         border-color: #2c5282 !important;
     }
     
-    /* フォーム内のボタン - セカンダリ（スキップボタン） */
+    /* フォーム内のボタン - セカンダリ（スキップボタン等）*/
     .stForm button[kind="secondary"] {
         background-color: #4a5568 !important;
         color: #fafafa !important;
@@ -141,95 +128,7 @@ st.markdown("""
         border-color: #a0aec0 !important;
     }
     
-    /* フォーム送信ボタン（form_submit_button）の詳細指定 */
-    [data-testid="stForm"] button {
-        color: #fafafa !important;
-    }
-    
-    [data-testid="stForm"] button[kind="secondary"] {
-        background-color: #4a5568 !important;
-        color: #fafafa !important;
-        border: 1px solid #718096 !important;
-    }
-    
-    [data-testid="stForm"] button[kind="secondary"]:hover {
-        background-color: #718096 !important;
-        border-color: #a0aec0 !important;
-        color: #ffffff !important;
-    }
-    
-    /* より具体的なスキップボタン対応 */
-    .stForm .stButton button[kind="secondary"] {
-        background-color: #4a5568 !important;
-        color: #ffffff !important;
-        border: 1px solid #718096 !important;
-    }
-    
-    .stForm .stButton button[kind="secondary"]:hover {
-        background-color: #718096 !important;
-        color: #ffffff !important;
-    }
-    
-    /* フォーム内の全てのボタンに対する強制的な文字色指定 */
-    .stForm button, .stForm .stButton button {
-        color: #ffffff !important;
-    }
-    
-    /* 最強力なセレクター - form submit button の直接指定 */
-    .element-container .stForm button[data-testid] {
-        background-color: #4a5568 !important;
-        color: #ffffff !important;
-        border: 1px solid #718096 !important;
-    }
-    
-    /* セカンダリボタンの完全上書き */
-    button[kind="secondary"] {
-        background-color: #4a5568 !important;
-        color: #ffffff !important;
-        border: 1px solid #718096 !important;
-    }
-    
-    button[kind="secondary"]:hover {
-        background-color: #718096 !important;
-        color: #ffffff !important;
-        border-color: #a0aec0 !important;
-    }
-    
-    /* 最後の手段 - 全ての secondary ボタンを強制的に修正 */
-    [data-baseweb="button"][data-testid*="secondary"], 
-    [class*="secondary"],
-    button[type="submit"][kind="secondary"] {
-        background-color: #4a5568 !important;
-        color: #ffffff !important;
-        border: 1px solid #718096 !important;
-    }
-    
-    /* Streamlit specific button classes */
-    .stFormSubmitButton button[kind="secondary"] {
-        background-color: #4a5568 !important;
-        color: #ffffff !important;
-        border: 1px solid #718096 !important;
-    }
-    
-    /* Universal button text fix */
-    button:contains("スキップ"), 
-    button[aria-label*="スキップ"],
-    *[data-testid*="skip"] button {
-        background-color: #4a5568 !important;
-        color: #ffffff !important;
-        border: 1px solid #718096 !important;
-    }
-    
-    /* CSS attribute selector for text content */
-    button {
-        color: inherit;
-    }
-    
-    button[kind="secondary"] * {
-        color: #ffffff !important;
-    }
-    
-    /* 入力フィールド */
+    /* 入力フィールド - デフォルトスタイル維持、色のみ変更 */
     .stTextInput > div > div > input {
         background-color: #262730 !important;
         color: #fafafa !important;
@@ -244,17 +143,13 @@ st.markdown("""
     }
     
     /* ラジオボタン */
-    .stRadio > div {
-        background-color: transparent !important;
-    }
-    
     .stRadio label {
         color: #fafafa !important;
     }
     
-    /* メトリクス */
-    .metric-container {
-        background-color: #262730 !important;
+    /* チェックボックス */
+    .stCheckbox label {
+        color: #fafafa !important;
     }
     
     /* タブ */
@@ -266,10 +161,11 @@ st.markdown("""
         color: #fafafa !important;
     }
     
-    /* 展開可能コンテナ */
+    /* 展開可能コンテナ - レイアウト変更なし */
     .streamlit-expanderHeader {
         background-color: #262730 !important;
         color: #fafafa !important;
+        border-color: #4a5568 !important;
     }
     
     /* データフレーム */
@@ -288,279 +184,25 @@ st.markdown("""
         background-color: #4a5568 !important;
     }
     
-    /* チェックボックス */
-    .stCheckbox label {
-        color: #fafafa !important;
-    }
-    
-    /* コンテナと枠線の改善 */
-    .element-container {
-        border-color: #4a5568 !important;
-    }
-    
-    /* 問題文・選択肢の枠線とコンテナ */
-    .stContainer, .block-container {
-        border: 1px solid #4a5568 !important;
-        background-color: #1e1e1e !important;
-    }
-    
-    /* エキスパンダー（展開可能コンテナ）*/
-    .streamlit-expanderHeader {
-        background-color: #262730 !important;
-        color: #fafafa !important;
-        border: 1px solid #4a5568 !important;
-    }
-    
-    .streamlit-expanderContent {
-        background-color: #1e1e1e !important;
-        border: 1px solid #4a5568 !important;
-        border-top: none !important;
-    }
-    
-    /* 情報ボックス（st.info, st.warning等）*/
+    /* 情報ボックス（st.info等）- デフォルトスタイル維持 */
     .stAlert {
-        background-color: #262730 !important;
-        color: #fafafa !important;
-        border: 1px solid #4a5568 !important;
+        background-color: #1a365d !important;
+        color: #90cdf4 !important;
+        border-color: #2b77ad !important;
     }
     
     [data-testid="stAlert"] {
-        background-color: #262730 !important;
-        color: #fafafa !important;
-        border: 1px solid #4a5568 !important;
-    }
-    
-    /* マークダウンのコンテナ */
-    .stMarkdown > div {
-        color: #fafafa !important;
-    }
-    
-    /* コード表示エリア */
-    .stCode {
-        background-color: #262730 !important;
-        color: #fafafa !important;
-        border: 1px solid #4a5568 !important;
-    }
-    
-    /* テキストエリア */
-    .stTextArea textarea {
-        background-color: #262730 !important;
-        color: #fafafa !important;
-        border: 1px solid #4a5568 !important;
-    }
-    
-    /* 数値入力 */
-    .stNumberInput input {
-        background-color: #262730 !important;
-        color: #fafafa !important;
-        border: 1px solid #4a5568 !important;
-    }
-    
-    /* カラムの境界線 */
-    .css-1d391kg {
-        border-right: 1px solid #4a5568 !important;
-    }
-    
-    /* divider（区切り線）*/
-    hr {
-        border-color: #4a5568 !important;
-        background-color: #4a5568 !important;
-    }
-    
-    /* グリッド線 */
-    .row-widget {
-        border: 1px solid #4a5568 !important;
-    }
-    
-    /* カードやボックス全般 */
-    .css-1v0mbdj, .css-12oz5g7 {
-        border: 1px solid #4a5568 !important;
-        background-color: #1e1e1e !important;
-    }
-    
-    /* セレクトボックスのドロップダウン */
-    .stSelectbox > div > div > div {
-        background-color: #262730 !important;
-        border: 1px solid #4a5568 !important;
-    }
-    
-    /* マルチセレクト */
-    .stMultiSelect > div > div {
-        background-color: #262730 !important;
-        border: 1px solid #4a5568 !important;
-    }
-    
-    /* 日付入力 */
-    .stDateInput input {
-        background-color: #262730 !important;
-        color: #fafafa !important;
-        border: 1px solid #4a5568 !important;
-    }
-    
-    /* 時間入力 */
-    .stTimeInput input {
-        background-color: #262730 !important;
-        color: #fafafa !important;
-        border: 1px solid #4a5568 !important;
-    }
-    
-    /* ファイルアップローダー */
-    .stFileUploader {
-        background-color: #262730 !important;
-        border: 1px solid #4a5568 !important;
-    }
-    
-    /* カメラ入力 */
-    .stCameraInput {
-        background-color: #262730 !important;
-        border: 1px solid #4a5568 !important;
-    }
-    
-    /* 問題文・選択肢エリアの特別対応 */
-    .main .block-container {
-        background-color: #0e1117 !important;
-    }
-    
-    .main .element-container div {
-        border-color: #4a5568 !important;
-    }
-    
-    /* フォーム内の要素 */
-    .stForm {
-        background-color: #1e1e1e !important;
-        border: 1px solid #4a5568 !important;
-        border-radius: 8px !important;
-        padding: 20px !important;
-    }
-    
-    /* 問題番号表示エリア */
-    h4 {
-        color: #fafafa !important;
-        border-bottom: 1px solid #4a5568 !important;
-        padding-bottom: 8px !important;
-    }
-    
-    /* 選択肢リスト */
-    .stCheckbox {
-        background-color: transparent !important;
-        border: 1px solid #4a5568 !important;
-        border-radius: 4px !important;
-        padding: 8px !important;
-        margin: 4px 0 !important;
-    }
-    
-    .stCheckbox:hover {
-        background-color: #262730 !important;
-    }
-    
-    /* テキスト入力（自由記述問題）*/
-    .stTextInput {
-        background-color: #262730 !important;
-        border: 1px solid #4a5568 !important;
-        border-radius: 4px !important;
-    }
-    
-    /* 順序入力（並び替え問題）*/
-    .stTextInput input[type="text"] {
-        background-color: #262730 !important;
-        color: #fafafa !important;
-        border: 1px solid #4a5568 !important;
-    }
-    
-    /* 情報表示（復習問題、新規問題の表示）*/
-    .stInfo {
         background-color: #1a365d !important;
         color: #90cdf4 !important;
-        border: 1px solid #2b77ad !important;
+        border-color: #2b77ad !important;
     }
     
-    /* 連問情報 */
-    .stInfo[data-testid*="case"] {
-        background-color: #2d3748 !important;
-        color: #a0aec0 !important;
-        border: 1px solid #4a5568 !important;
+    /* 基本的な枠線色の統一 */
+    hr {
+        border-color: #4a5568 !important;
     }
 }
-</style>
-
-<script>
-// より強力なスキップボタン修正アプローチ
-function forceFixSkipButton() {
-    // 1. 全てのボタンをチェック
-    const allButtons = document.querySelectorAll('button');
-    allButtons.forEach(function(button) {
-        const buttonText = button.textContent || button.innerText || '';
-        
-        // スキップボタンを見つけた場合
-        if (buttonText.includes('スキップ') || 
-            buttonText.includes('Skip') ||
-            button.getAttribute('kind') === 'secondary') {
-            
-            // 強制的にスタイルを適用
-            button.style.setProperty('background-color', '#4a5568', 'important');
-            button.style.setProperty('color', '#ffffff', 'important');
-            button.style.setProperty('border', '1px solid #718096', 'important');
-            
-            console.log('スキップボタンにスタイル適用:', button);
-        }
-    });
-    
-    // 2. form submit button の特別処理
-    const formButtons = document.querySelectorAll('form button, .stForm button');
-    formButtons.forEach(function(button) {
-        const buttonText = button.textContent || button.innerText || '';
-        if (buttonText.includes('スキップ')) {
-            button.style.setProperty('background-color', '#4a5568', 'important');
-            button.style.setProperty('color', '#ffffff', 'important');
-            button.style.setProperty('border', '1px solid #718096', 'important');
-        }
-    });
-    
-    // 3. MutationObserver でDOM変更を監視
-    const observer = new MutationObserver(function(mutations) {
-        mutations.forEach(function(mutation) {
-            if (mutation.type === 'childList') {
-                // 新しく追加されたボタンをチェック
-                mutation.addedNodes.forEach(function(node) {
-                    if (node.nodeType === 1) { // Element node
-                        const buttons = node.querySelectorAll ? node.querySelectorAll('button') : [];
-                        buttons.forEach(function(button) {
-                            const buttonText = button.textContent || button.innerText || '';
-                            if (buttonText.includes('スキップ')) {
-                                button.style.setProperty('background-color', '#4a5568', 'important');
-                                button.style.setProperty('color', '#ffffff', 'important');
-                                button.style.setProperty('border', '1px solid #718096', 'important');
-                            }
-                        });
-                    }
-                });
-            }
-        });
-    });
-    
-    // DOM監視を開始
-    observer.observe(document.body, {
-        childList: true,
-        subtree: true
-    });
-}
-
-// ダークモード時のみ実行
-if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-    // 複数のタイミングで実行
-    setTimeout(forceFixSkipButton, 500);
-    setTimeout(forceFixSkipButton, 1000);
-    setTimeout(forceFixSkipButton, 2000);
-    
-    // ページ読み込み完了後にも実行
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', forceFixSkipButton);
-    } else {
-        forceFixSkipButton();
-    }
-}
-</script>
-""", unsafe_allow_html=True)
+</style>""", unsafe_allow_html=True)
 
 # Secrets存在チェック（早期エラー検出）
 if "firebase_credentials" not in st.secrets or "firebase_api_key" not in st.secrets:
