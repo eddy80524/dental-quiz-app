@@ -112,6 +112,33 @@
 
 ---
 
+## 🚀 デプロイメント
+
+### Streamlit Community Cloudでのデプロイ
+
+このアプリはStreamlit Community Cloudで簡単にデプロイできます：
+
+1. **必要ファイル**:
+   - `packages.txt`: LaTeX環境のシステムパッケージ
+   - `requirements.txt`: Pythonの依存関係
+   - `.streamlit/config.toml`: Streamlit設定
+
+2. **PDF生成機能**:
+   - `packages.txt`により必要なLaTeX環境が自動インストールされます
+   - `texlive-luatex`, `texlive-xetex`による日本語PDF生成をサポート
+
+3. **メインファイル**: `my_llm_app/app.py`
+
+### ローカル実行
+
+```bash
+cd my_llm_app
+pip install -r ../requirements.txt
+streamlit run app.py --server.port 8505
+```
+
+---
+
 ## まとめ
 
 「問題演習マスター」は、ユーザーが自分のペースで学習を進められるよう設計されたアプリです。演習ログを残すことで自己分析や改善点を見つけやすくし、効果的な学習をサポートします。

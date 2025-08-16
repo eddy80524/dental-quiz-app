@@ -1957,6 +1957,15 @@ def render_search_page():
     else:
         st.session_state.available_subjects = []
     
+    # モバイル向けクイックナビゲーション
+    st.markdown("""
+    <div style="background: linear-gradient(90deg, #e3f2fd, #f3e5f5); padding: 10px; border-radius: 8px; margin-bottom: 15px;">
+        <div style="text-align: center; font-size: 14px; color: #1565c0; font-weight: bold;">
+            📱 クイックナビ
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
     # 4タブ構成の可視化
     tab1, tab2, tab3, tab4 = st.tabs(["概要", "グラフ分析", "問題リスト", "キーワード検索"])
     
@@ -2303,13 +2312,97 @@ def render_search_page():
 
                 with colB:
                     if "pdf_bytes_tcb_js" in st.session_state:
-                        st.download_button(
-                            label="⬇️ PDFをダウンロード",
-                            data=st.session_state["pdf_bytes_tcb_js"],
-                            file_name=st.session_state.get("pdf_filename_tcb_js", "dental_questions_tcb_js.pdf"),
-                            mime="application/pdf",
-                            use_container_width=True
-                        )
+                        # モバイル対応のPDFダウンロード
+                        pdf_data = st.session_state["pdf_bytes_tcb_js"]
+                        filename = st.session_state.get("pdf_filename_tcb_js", "dental_questions_tcb_js.pdf")
+                        
+                        # Base64エンコード
+                        import base64
+                        b64_pdf = base64.b64encode(pdf_data).decode()
+                        
+                        # JavaScriptを使用したダウンロード（モバイル対応）
+                        download_js = f"""
+                        <script>
+                        function downloadPDF() {{
+                            const byteCharacters = atob('{b64_pdf}');
+                            const byteNumbers = new Array(byteCharacters.length);
+                            for (let i = 0; i < byteCharacters.length; i++) {{
+                                byteNumbers[i] = byteCharacters.charCodeAt(i);
+                            }}
+                            const byteArray = new Uint8Array(byteNumbers);
+                            const blob = new Blob([byteArray], {{ type: 'application/pdf' }});
+                            
+                            // モバイル対応のダウンロード
+                            if (window.navigator && window.navigator.msSaveOrOpenBlob) {{
+                                // IE用
+                                window.navigator.msSaveOrOpenBlob(blob, '{filename}');
+                            }} else {{
+                                const url = window.URL.createObjectURL(blob);
+                                const a = document.createElement('a');
+                                a.style.display = 'none';
+                                a.href = url;
+                                a.download = '{filename}';
+                                document.body.appendChild(a);
+                                a.click();
+                                window.URL.revokeObjectURL(url);
+                                document.body.removeChild(a);
+                            }}
+                            
+                            // 成功メッセージとアプリ継続案内
+                            const successMsg = document.createElement('div');
+                            successMsg.innerHTML = `
+                                <div style="margin-bottom:10px;">✅ PDFダウンロードを開始しました</div>
+                                <div style="font-size:12px;opacity:0.8;">📱 ダウンロード後もこの画面でアプリを続けてご利用いただけます</div>
+                            `;
+                            successMsg.style.cssText = 'position:fixed;top:20px;right:20px;background:#d4edda;color:#155724;padding:15px;border-radius:8px;z-index:1000;max-width:300px;box-shadow:0 2px 10px rgba(0,0,0,0.1);';
+                            document.body.appendChild(successMsg);
+                            setTimeout(() => successMsg.remove(), 5000);
+                            
+                            // モバイルでのアプリ内継続を促すメッセージ
+                            setTimeout(() => {{
+                                const continueMsg = document.createElement('div');
+                                continueMsg.innerHTML = `
+                                    <div style="text-align:center;">
+                                        <div style="margin-bottom:8px;">📚 学習を続ける</div>
+                                        <div style="font-size:12px;">上記のタブから問題練習や進捗確認ができます</div>
+                                    </div>
+                                `;
+                                continueMsg.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#e3f2fd;color:#1565c0;padding:12px;border-radius:8px;z-index:1000;box-shadow:0 2px 10px rgba(0,0,0,0.1);';
+                                document.body.appendChild(continueMsg);
+                                setTimeout(() => continueMsg.remove(), 4000);
+                            }}, 2000);
+                        }}
+                        </script>
+                        <button onclick="downloadPDF()" style="width:100%;padding:12px;background:#ff6b6b;color:white;border:none;border-radius:6px;cursor:pointer;font-size:16px;font-weight:bold;box-shadow:0 2px 4px rgba(0,0,0,0.1);">
+                            📥 PDFをダウンロード
+                        </button>
+                        """
+                        
+                        st.markdown(download_js, unsafe_allow_html=True)
+                        
+                        # フォールバック用の標準ダウンロードボタン（小さく表示）
+                        with st.expander("📱 ダウンロードがうまくいかない場合"):
+                            st.download_button(
+                                label="💾 標準ダウンロード（フォールバック）",
+                                data=pdf_data,
+                                file_name=filename,
+                                mime="application/pdf",
+                                use_container_width=True
+                            )
+                        
+                        # PDFダウンロード後の継続学習案内
+                        st.markdown("---")
+                        st.info("📚 **PDFを保存したら学習を続けましょう！**")
+                        col_nav1, col_nav2 = st.columns(2)
+                        with col_nav1:
+                            if st.button("🎯 問題演習へ", use_container_width=True):
+                                st.session_state["current_page"] = "演習"
+                                st.rerun()
+                        with col_nav2:
+                            if st.button("📊 進捗確認へ", use_container_width=True):
+                                # 概要タブへの誘導（現在のタブ構造内）
+                                st.info("上の「📊 概要」タブで学習状況を確認できます")
+                                st.balloons()
                     else:
                         st.button("⬇️ PDFをDL", disabled=True, use_container_width=True)
                 
@@ -2900,14 +2993,16 @@ if not st.session_state.get("user_logged_in") or not ensure_valid_session():
                     elif "USER_DISABLED" in error_msg:
                         st.error("このアカウントは無効化されています。")
     with tab_signup:
-        signup_email = st.text_input("メールアドレス", key="signup_email")
-        signup_password = st.text_input("パスワード（6文字以上）", type="password", key="signup_password")
-        if st.button("新規登録", key="signup_btn"):
-            result = firebase_signup(signup_email, signup_password)
-            if "idToken" in result:
-                st.success("新規登録に成功しました。ログインしてください。")
-            else:
-                st.error("新規登録に失敗しました。メールアドレスが既に使われているか、パスワードが短すぎます。")
+        st.warning("🚧 新規登録は一時的に停止中です")
+        st.info("既存のアカウントをお持ちの方は「ログイン」タブからログインしてください。")
+        # signup_email = st.text_input("メールアドレス", key="signup_email")
+        # signup_password = st.text_input("パスワード（6文字以上）", type="password", key="signup_password")
+        # if st.button("新規登録", key="signup_btn"):
+        #     result = firebase_signup(signup_email, signup_password)
+        #     if "idToken" in result:
+        #         st.success("新規登録に成功しました。ログインしてください。")
+        #     else:
+        #         st.error("新規登録に失敗しました。メールアドレスが既に使われているか、パスワードが短すぎます。")
     st.stop()
 else:
     import time
