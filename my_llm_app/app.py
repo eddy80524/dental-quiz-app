@@ -2312,7 +2312,7 @@ def render_search_page():
 
                 with colB:
                     if "pdf_bytes_tcb_js" in st.session_state:
-                        # モバイル対応のPDFダウンロード
+                        # 統一されたPDFダウンロード（新タブで開く）
                         pdf_data = st.session_state["pdf_bytes_tcb_js"]
                         filename = st.session_state.get("pdf_filename_tcb_js", "dental_questions_tcb_js.pdf")
                         
@@ -2320,117 +2320,10 @@ def render_search_page():
                         import base64
                         b64_pdf = base64.b64encode(pdf_data).decode()
                         
-                        # JavaScriptを使用したダウンロード（モバイル対応強化版）
-                        download_js = f"""
-                        <script>
-                        function downloadPDF() {{
-                            const byteCharacters = atob('{b64_pdf}');
-                            const byteNumbers = new Array(byteCharacters.length);
-                            for (let i = 0; i < byteCharacters.length; i++) {{
-                                byteNumbers[i] = byteCharacters.charCodeAt(i);
-                            }}
-                            const byteArray = new Uint8Array(byteNumbers);
-                            const blob = new Blob([byteArray], {{ type: 'application/pdf' }});
-                            
-                            // iOS Safari対応: 新しいタブでBlobURLを開く
-                            const userAgent = navigator.userAgent.toLowerCase();
-                            const isIOS = /iphone|ipad|ipod/.test(userAgent);
-                            const isSafari = /safari/.test(userAgent) && !/chrome/.test(userAgent);
-                            
-                            if (isIOS || isSafari) {{
-                                // iOS/Safari: 新しいタブでPDFを開く
-                                const url = window.URL.createObjectURL(blob);
-                                const newTab = window.open(url, '_blank');
-                                if (newTab) {{
-                                    // 成功時のメッセージ
-                                    const successMsg = document.createElement('div');
-                                    successMsg.innerHTML = `
-                                        <div style="margin-bottom:10px;">✅ PDFを新しいタブで開きました</div>
-                                        <div style="font-size:12px;opacity:0.8;">📱 このタブでアプリを続けてご利用いただけます</div>
-                                    `;
-                                    successMsg.style.cssText = 'position:fixed;top:20px;right:20px;background:#d4edda;color:#155724;padding:15px;border-radius:8px;z-index:1000;max-width:300px;box-shadow:0 2px 10px rgba(0,0,0,0.1);';
-                                    document.body.appendChild(successMsg);
-                                    setTimeout(() => successMsg.remove(), 5000);
-                                    
-                                    // メモリクリーンアップは少し遅らせる
-                                    setTimeout(() => window.URL.revokeObjectURL(url), 10000);
-                                }} else {{
-                                    alert('ポップアップがブロックされています。下の「標準ダウンロード」をお試しください。');
-                                }}
-                            }} else if (window.navigator && window.navigator.msSaveOrOpenBlob) {{
-                                // IE用
-                                window.navigator.msSaveOrOpenBlob(blob, '{filename}');
-                            }} else {{
-                                // その他のブラウザ: 従来のダウンロード方式
-                                const url = window.URL.createObjectURL(blob);
-                                const a = document.createElement('a');
-                                a.style.display = 'none';
-                                a.href = url;
-                                a.download = '{filename}';
-                                document.body.appendChild(a);
-                                a.click();
-                                window.URL.revokeObjectURL(url);
-                                document.body.removeChild(a);
-                                
-                                // 成功メッセージ
-                                const successMsg = document.createElement('div');
-                                successMsg.innerHTML = `
-                                    <div style="margin-bottom:10px;">✅ PDFダウンロードを開始しました</div>
-                                    <div style="font-size:12px;opacity:0.8;">📱 ダウンロード後もこの画面でアプリを続けてご利用いただけます</div>
-                                `;
-                                successMsg.style.cssText = 'position:fixed;top:20px;right:20px;background:#d4edda;color:#155724;padding:15px;border-radius:8px;z-index:1000;max-width:300px;box-shadow:0 2px 10px rgba(0,0,0,0.1);';
-                                document.body.appendChild(successMsg);
-                                setTimeout(() => successMsg.remove(), 5000);
-                            }}
-                            
-                            // モバイルでのアプリ内継続を促すメッセージ
-                            setTimeout(() => {{
-                                const continueMsg = document.createElement('div');
-                                continueMsg.innerHTML = `
-                                    <div style="text-align:center;">
-                                        <div style="margin-bottom:8px;">📚 学習を続ける</div>
-                                        <div style="font-size:12px;">上記のタブから問題練習や進捗確認ができます</div>
-                                    </div>
-                                `;
-                                continueMsg.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#e3f2fd;color:#1565c0;padding:12px;border-radius:8px;z-index:1000;box-shadow:0 2px 10px rgba(0,0,0,0.1);';
-                                document.body.appendChild(continueMsg);
-                                setTimeout(() => continueMsg.remove(), 4000);
-                            }}, 2000);
-                        }}
-                        </script>
-                        <button onclick="downloadPDF()" style="width:100%;padding:12px;background:#ff6b6b;color:white;border:none;border-radius:6px;cursor:pointer;font-size:16px;font-weight:bold;box-shadow:0 2px 4px rgba(0,0,0,0.1);">
-                            📥 PDFをダウンロード
-                        </button>
-                        """
+                        # Data URI を持つHTMLリンクを生成（新タブで開く）
+                        href = f'<a href="data:application/pdf;base64,{b64_pdf}" download="{filename}" target="_blank" style="display: inline-block; padding: 12px; background-color: #ff6b6b; color: white; text-decoration: none; border-radius: 6px; text-align: center; width: 100%; font-size: 16px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">📥 PDFをダウンロード</a>'
                         
-                        st.markdown(download_js, unsafe_allow_html=True)
-                        
-                        # 信頼性の高いフォールバック用ダウンロードリンク
-                        st.markdown("---")
-                        with st.expander("📱 ダウンロードがうまくいかない場合（こちらをお試しください）"):
-                            # PDFデータをBase64形式にエンコード
-                            import base64
-                            b64_pdf = base64.b64encode(pdf_data).decode()
-                            
-                            # Data URI を持つHTMLリンクを生成
-                            # target="_blank"で新しいタブで開き、download属性でファイル名を指定します
-                            href = f'<a href="data:application/pdf;base64,{b64_pdf}" download="{filename}" target="_blank" style="display: inline-block; padding: 0.5em 1em; background-color: #6c757d; color: white; text-decoration: none; border-radius: 0.25rem; text-align: center; width: 100%;">💾 標準ダウンロード（新タブで開く）</a>'
-                            
-                            st.markdown(href, unsafe_allow_html=True)
-                        
-                        # PDFダウンロード後の継続学習案内
-                        st.markdown("---")
-                        st.info("📚 **PDFを保存したら学習を続けましょう！**")
-                        col_nav1, col_nav2 = st.columns(2)
-                        with col_nav1:
-                            if st.button("🎯 問題演習へ", use_container_width=True):
-                                st.session_state["current_page"] = "演習"
-                                st.rerun()
-                        with col_nav2:
-                            if st.button("📊 進捗確認へ", use_container_width=True):
-                                # 概要タブへの誘導（現在のタブ構造内）
-                                st.info("上の「📊 概要」タブで学習状況を確認できます")
-                                st.balloons()
+                        st.markdown(href, unsafe_allow_html=True)
                     else:
                         st.button("⬇️ PDFをDL", disabled=True, use_container_width=True)
                 
