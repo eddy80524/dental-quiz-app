@@ -2537,17 +2537,8 @@ def render_practice_page():
                             correct_disp = [_fmt_seq([inv[i] for i in _letters_to_indices(answer_str, n)])]
                             st.error(f"{q['number']}：不正解。{reason or ''}  正解は「{correct_disp[0]}」です。")
 
-                        # 学習データ更新（SM-2 + 短期復習）
-                        qid = q["number"]
-                        st.session_state.setdefault("cards", {})
-                        card = st.session_state["cards"].get(qid, {})
-                        quality = 5 if is_correct else 2
-                        st.session_state["cards"][qid] = sm2_update_with_policy(card, quality, qid)
-
-                        # 間違えたら短期復習へ（必修は長め）
-                        if not is_correct:
-                            minutes = SHORT_REVIEW_COOLDOWN_MIN_Q2_HISSHU if (is_hisshu(qid) or is_gakushi_hisshu(qid)) else SHORT_REVIEW_COOLDOWN_MIN_Q1
-                            enqueue_short_review([qid], minutes)
+                        # 結果をセッション状態に保存（自己評価後にSM-2更新）
+                        st.session_state.result_log[q["number"]] = is_correct
 
                     # 単一/複数選択（チェックボックス）
                     elif "choices" in q and q["choices"]:
@@ -2573,16 +2564,8 @@ def render_practice_page():
                         else:
                             st.error(f"{q['number']}：不正解。正解は「{_fmt_set(ans_orig)}」です。")
 
-                        # 学習データ更新
-                        qid = q["number"]
-                        st.session_state.setdefault("cards", {})
-                        card = st.session_state["cards"].get(qid, {})
-                        quality = 5 if is_correct else 2
-                        st.session_state["cards"][qid] = sm2_update_with_policy(card, quality, qid)
-
-                        if not is_correct:
-                            minutes = SHORT_REVIEW_COOLDOWN_MIN_Q2_HISSHU if (is_hisshu(qid) or is_gakushi_hisshu(qid)) else SHORT_REVIEW_COOLDOWN_MIN_Q1
-                            enqueue_short_review([qid], minutes)
+                        # 結果をセッション状態に保存（自己評価後にSM-2更新）
+                        st.session_state.result_log[q["number"]] = is_correct
 
                     # 自由入力
                     else:
@@ -2599,23 +2582,12 @@ def render_practice_page():
                         else:
                             st.error(f"{q['number']}：不正解。正解は「{answer_str}」です。")
 
-                        # 学習データ更新
-                        qid = q["number"]
-                        st.session_state.setdefault("cards", {})
-                        card = st.session_state["cards"].get(qid, {})
-                        quality = 5 if is_correct else 2
-                        st.session_state["cards"][qid] = sm2_update_with_policy(card, quality, qid)
+                        # 結果をセッション状態に保存（自己評価後にSM-2更新）
+                        st.session_state.result_log[q["number"]] = is_correct
 
-                        if not is_correct:
-                            minutes = SHORT_REVIEW_COOLDOWN_MIN_Q2_HISSHU if (is_hisshu(qid) or is_gakushi_hisshu(qid)) else SHORT_REVIEW_COOLDOWN_MIN_Q1
-                            enqueue_short_review([qid], minutes)
-
-                # フォーム全体の後処理：このグループを完了 → 次の問題へ
+                # フォーム全体の後処理：解答結果を保存し、自己評価段階へ移行
                 st.session_state[f"checked_{group_id}"] = True
-                save_user_data(st.session_state.get("uid"), st.session_state)
-                # 次の問題へ進める
-                st.session_state.current_q_group = []
-                st.rerun()
+                # 自動で次に進まず、自己評価フォームを表示するため st.rerun() を削除
             if skipped:
                 # スキップ：現在のグループを末尾へ戻して次へ
                 st.session_state.main_queue = st.session_state.get("main_queue", [])
@@ -2705,6 +2677,13 @@ def render_practice_page():
                         enqueue_short_review(current_q_group, SHORT_REVIEW_COOLDOWN_MIN_Q1)
                     elif quality == 2 and has_hisshu:
                         enqueue_short_review(current_q_group, SHORT_REVIEW_COOLDOWN_MIN_Q2_HISSHU)
+                    
+                    # 間違えた問題を短期復習に追加
+                    for q_num_str in current_q_group:
+                        is_correct = st.session_state.result_log.get(q_num_str, False)
+                        if not is_correct and quality >= 3:  # 間違えたが自己評価が高い場合のみ
+                            minutes = SHORT_REVIEW_COOLDOWN_MIN_Q2_HISSHU if (is_hisshu(q_num_str) or is_gakushi_hisshu(q_num_str)) else SHORT_REVIEW_COOLDOWN_MIN_Q1
+                            enqueue_short_review([q_num_str], minutes)
 
                     uid = st.session_state.get("uid")  # UIDベース管理
                     save_user_data(uid, st.session_state)  # UIDを使用
