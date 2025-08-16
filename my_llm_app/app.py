@@ -48,6 +48,58 @@ st.markdown("""
         background-color: #262730 !important;
     }
     
+    /* サイドバー開閉ボタン */
+    .css-1d391kg, .css-1rs6os, .css-17eq0hr {
+        background-color: #262730 !important;
+        color: #fafafa !important;
+        border: 1px solid #4a5568 !important;
+    }
+    
+    /* サイドバーコラプスボタン（>>） */
+    [data-testid="collapsedControl"] {
+        background-color: #262730 !important;
+        color: #fafafa !important;
+        border: 1px solid #4a5568 !important;
+    }
+    
+    [data-testid="collapsedControl"]:hover {
+        background-color: #4a5568 !important;
+        border-color: #718096 !important;
+    }
+    
+    /* 右上のStreamlitメニューボタン */
+    [data-testid="stToolbar"] {
+        background-color: #262730 !important;
+    }
+    
+    [data-testid="stToolbar"] button {
+        background-color: #262730 !important;
+        color: #fafafa !important;
+        border: 1px solid #4a5568 !important;
+    }
+    
+    [data-testid="stToolbar"] button:hover {
+        background-color: #4a5568 !important;
+        border-color: #718096 !important;
+    }
+    
+    /* Streamlitのハンバーガーメニュー */
+    [data-testid="stHeader"] {
+        background-color: #0e1117 !important;
+    }
+    
+    [data-testid="stHeader"] button {
+        background-color: #262730 !important;
+        color: #fafafa !important;
+        border: 1px solid #4a5568 !important;
+    }
+    
+    /* メニューアイコン（三本線） */
+    .css-1kyxreq {
+        background-color: #262730 !important;
+        color: #fafafa !important;
+    }
+    
     /* テキスト関連 */
     .stMarkdown, .stText, p, span, div {
         color: #fafafa !important;
@@ -79,6 +131,15 @@ st.markdown("""
         border-color: #4a5568 !important;
     }
     
+    /* ラジオボタン */
+    .stRadio > div {
+        background-color: transparent !important;
+    }
+    
+    .stRadio label {
+        color: #fafafa !important;
+    }
+    
     /* メトリクス */
     .metric-container {
         background-color: #262730 !important;
@@ -108,6 +169,16 @@ st.markdown("""
     /* プログレスバー */
     .stProgress > div > div > div > div {
         background-color: #4a5568 !important;
+    }
+    
+    /* スライダー */
+    .stSlider > div > div > div > div {
+        background-color: #4a5568 !important;
+    }
+    
+    /* チェックボックス */
+    .stCheckbox label {
+        color: #fafafa !important;
     }
 }
 </style>
