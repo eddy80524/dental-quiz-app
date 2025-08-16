@@ -204,6 +204,31 @@ st.markdown("""
         border: 1px solid #718096 !important;
     }
     
+    /* Streamlit specific button classes */
+    .stFormSubmitButton button[kind="secondary"] {
+        background-color: #4a5568 !important;
+        color: #ffffff !important;
+        border: 1px solid #718096 !important;
+    }
+    
+    /* Universal button text fix */
+    button:contains("スキップ"), 
+    button[aria-label*="スキップ"],
+    *[data-testid*="skip"] button {
+        background-color: #4a5568 !important;
+        color: #ffffff !important;
+        border: 1px solid #718096 !important;
+    }
+    
+    /* CSS attribute selector for text content */
+    button {
+        color: inherit;
+    }
+    
+    button[kind="secondary"] * {
+        color: #ffffff !important;
+    }
+    
     /* 入力フィールド */
     .stTextInput > div > div > input {
         background-color: #262730 !important;
@@ -271,28 +296,81 @@ st.markdown("""
 </style>
 
 <script>
-// ダークモード時のスキップボタン強制修正
-setTimeout(function() {
-    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-        // セカンダリボタンを見つけて強制的にスタイル適用
-        const secondaryButtons = document.querySelectorAll('button[kind="secondary"]');
-        secondaryButtons.forEach(function(button) {
-            button.style.backgroundColor = '#4a5568';
-            button.style.color = '#ffffff';
-            button.style.border = '1px solid #718096';
-        });
+// より強力なスキップボタン修正アプローチ
+function forceFixSkipButton() {
+    // 1. 全てのボタンをチェック
+    const allButtons = document.querySelectorAll('button');
+    allButtons.forEach(function(button) {
+        const buttonText = button.textContent || button.innerText || '';
         
-        // フォーム内のボタンも確認
-        const formButtons = document.querySelectorAll('.stForm button, [data-testid="stForm"] button');
-        formButtons.forEach(function(button) {
-            if (button.textContent.includes('スキップ') || button.getAttribute('kind') === 'secondary') {
-                button.style.backgroundColor = '#4a5568';
-                button.style.color = '#ffffff';
-                button.style.border = '1px solid #718096';
+        // スキップボタンを見つけた場合
+        if (buttonText.includes('スキップ') || 
+            buttonText.includes('Skip') ||
+            button.getAttribute('kind') === 'secondary') {
+            
+            // 強制的にスタイルを適用
+            button.style.setProperty('background-color', '#4a5568', 'important');
+            button.style.setProperty('color', '#ffffff', 'important');
+            button.style.setProperty('border', '1px solid #718096', 'important');
+            
+            console.log('スキップボタンにスタイル適用:', button);
+        }
+    });
+    
+    // 2. form submit button の特別処理
+    const formButtons = document.querySelectorAll('form button, .stForm button');
+    formButtons.forEach(function(button) {
+        const buttonText = button.textContent || button.innerText || '';
+        if (buttonText.includes('スキップ')) {
+            button.style.setProperty('background-color', '#4a5568', 'important');
+            button.style.setProperty('color', '#ffffff', 'important');
+            button.style.setProperty('border', '1px solid #718096', 'important');
+        }
+    });
+    
+    // 3. MutationObserver でDOM変更を監視
+    const observer = new MutationObserver(function(mutations) {
+        mutations.forEach(function(mutation) {
+            if (mutation.type === 'childList') {
+                // 新しく追加されたボタンをチェック
+                mutation.addedNodes.forEach(function(node) {
+                    if (node.nodeType === 1) { // Element node
+                        const buttons = node.querySelectorAll ? node.querySelectorAll('button') : [];
+                        buttons.forEach(function(button) {
+                            const buttonText = button.textContent || button.innerText || '';
+                            if (buttonText.includes('スキップ')) {
+                                button.style.setProperty('background-color', '#4a5568', 'important');
+                                button.style.setProperty('color', '#ffffff', 'important');
+                                button.style.setProperty('border', '1px solid #718096', 'important');
+                            }
+                        });
+                    }
+                });
             }
         });
+    });
+    
+    // DOM監視を開始
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true
+    });
+}
+
+// ダークモード時のみ実行
+if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    // 複数のタイミングで実行
+    setTimeout(forceFixSkipButton, 500);
+    setTimeout(forceFixSkipButton, 1000);
+    setTimeout(forceFixSkipButton, 2000);
+    
+    // ページ読み込み完了後にも実行
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', forceFixSkipButton);
+    } else {
+        forceFixSkipButton();
     }
-}, 1000);
+}
 </script>
 """, unsafe_allow_html=True)
 
@@ -2771,6 +2849,21 @@ def render_practice_page():
                 else:
                     st.text_input("回答を入力", key=f"free_input_{q['number']}")
             submitted_check = st.form_submit_button("回答をチェック", type="primary")
+            # スキップボタンに追加のマークアップを提供
+            st.markdown("""
+            <style>
+            /* スキップボタン専用スタイル */
+            .stForm button:nth-of-type(2) {
+                background-color: #4a5568 !important;
+                color: #ffffff !important;
+                border: 1px solid #718096 !important;
+            }
+            .stForm button:nth-of-type(2):hover {
+                background-color: #718096 !important;
+                color: #ffffff !important;
+            }
+            </style>
+            """, unsafe_allow_html=True)
             skipped = st.form_submit_button("スキップ", type="secondary")
             if submitted_check:
                 for q in q_objects:
