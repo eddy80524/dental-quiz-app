@@ -292,6 +292,194 @@ st.markdown("""
     .stCheckbox label {
         color: #fafafa !important;
     }
+    
+    /* コンテナと枠線の改善 */
+    .element-container {
+        border-color: #4a5568 !important;
+    }
+    
+    /* 問題文・選択肢の枠線とコンテナ */
+    .stContainer, .block-container {
+        border: 1px solid #4a5568 !important;
+        background-color: #1e1e1e !important;
+    }
+    
+    /* エキスパンダー（展開可能コンテナ）*/
+    .streamlit-expanderHeader {
+        background-color: #262730 !important;
+        color: #fafafa !important;
+        border: 1px solid #4a5568 !important;
+    }
+    
+    .streamlit-expanderContent {
+        background-color: #1e1e1e !important;
+        border: 1px solid #4a5568 !important;
+        border-top: none !important;
+    }
+    
+    /* 情報ボックス（st.info, st.warning等）*/
+    .stAlert {
+        background-color: #262730 !important;
+        color: #fafafa !important;
+        border: 1px solid #4a5568 !important;
+    }
+    
+    [data-testid="stAlert"] {
+        background-color: #262730 !important;
+        color: #fafafa !important;
+        border: 1px solid #4a5568 !important;
+    }
+    
+    /* マークダウンのコンテナ */
+    .stMarkdown > div {
+        color: #fafafa !important;
+    }
+    
+    /* コード表示エリア */
+    .stCode {
+        background-color: #262730 !important;
+        color: #fafafa !important;
+        border: 1px solid #4a5568 !important;
+    }
+    
+    /* テキストエリア */
+    .stTextArea textarea {
+        background-color: #262730 !important;
+        color: #fafafa !important;
+        border: 1px solid #4a5568 !important;
+    }
+    
+    /* 数値入力 */
+    .stNumberInput input {
+        background-color: #262730 !important;
+        color: #fafafa !important;
+        border: 1px solid #4a5568 !important;
+    }
+    
+    /* カラムの境界線 */
+    .css-1d391kg {
+        border-right: 1px solid #4a5568 !important;
+    }
+    
+    /* divider（区切り線）*/
+    hr {
+        border-color: #4a5568 !important;
+        background-color: #4a5568 !important;
+    }
+    
+    /* グリッド線 */
+    .row-widget {
+        border: 1px solid #4a5568 !important;
+    }
+    
+    /* カードやボックス全般 */
+    .css-1v0mbdj, .css-12oz5g7 {
+        border: 1px solid #4a5568 !important;
+        background-color: #1e1e1e !important;
+    }
+    
+    /* セレクトボックスのドロップダウン */
+    .stSelectbox > div > div > div {
+        background-color: #262730 !important;
+        border: 1px solid #4a5568 !important;
+    }
+    
+    /* マルチセレクト */
+    .stMultiSelect > div > div {
+        background-color: #262730 !important;
+        border: 1px solid #4a5568 !important;
+    }
+    
+    /* 日付入力 */
+    .stDateInput input {
+        background-color: #262730 !important;
+        color: #fafafa !important;
+        border: 1px solid #4a5568 !important;
+    }
+    
+    /* 時間入力 */
+    .stTimeInput input {
+        background-color: #262730 !important;
+        color: #fafafa !important;
+        border: 1px solid #4a5568 !important;
+    }
+    
+    /* ファイルアップローダー */
+    .stFileUploader {
+        background-color: #262730 !important;
+        border: 1px solid #4a5568 !important;
+    }
+    
+    /* カメラ入力 */
+    .stCameraInput {
+        background-color: #262730 !important;
+        border: 1px solid #4a5568 !important;
+    }
+    
+    /* 問題文・選択肢エリアの特別対応 */
+    .main .block-container {
+        background-color: #0e1117 !important;
+    }
+    
+    .main .element-container div {
+        border-color: #4a5568 !important;
+    }
+    
+    /* フォーム内の要素 */
+    .stForm {
+        background-color: #1e1e1e !important;
+        border: 1px solid #4a5568 !important;
+        border-radius: 8px !important;
+        padding: 20px !important;
+    }
+    
+    /* 問題番号表示エリア */
+    h4 {
+        color: #fafafa !important;
+        border-bottom: 1px solid #4a5568 !important;
+        padding-bottom: 8px !important;
+    }
+    
+    /* 選択肢リスト */
+    .stCheckbox {
+        background-color: transparent !important;
+        border: 1px solid #4a5568 !important;
+        border-radius: 4px !important;
+        padding: 8px !important;
+        margin: 4px 0 !important;
+    }
+    
+    .stCheckbox:hover {
+        background-color: #262730 !important;
+    }
+    
+    /* テキスト入力（自由記述問題）*/
+    .stTextInput {
+        background-color: #262730 !important;
+        border: 1px solid #4a5568 !important;
+        border-radius: 4px !important;
+    }
+    
+    /* 順序入力（並び替え問題）*/
+    .stTextInput input[type="text"] {
+        background-color: #262730 !important;
+        color: #fafafa !important;
+        border: 1px solid #4a5568 !important;
+    }
+    
+    /* 情報表示（復習問題、新規問題の表示）*/
+    .stInfo {
+        background-color: #1a365d !important;
+        color: #90cdf4 !important;
+        border: 1px solid #2b77ad !important;
+    }
+    
+    /* 連問情報 */
+    .stInfo[data-testid*="case"] {
+        background-color: #2d3748 !important;
+        color: #a0aec0 !important;
+        border: 1px solid #4a5568 !important;
+    }
 }
 </style>
 
