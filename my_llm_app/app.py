@@ -2695,10 +2695,24 @@ def render_practice_page():
                     user_selection_key = f"user_selection_{q['number']}"
                     is_selected = st.session_state.get(user_selection_key, [False]*len(shuffled_choices))[i]
                     st.checkbox(label, value=is_selected, disabled=True, key=f"user_selection_{q['number']}_{i}")
-                # 正解/不正解表示は削除（ユーザーリクエスト）
+                
+                # 自己評価フォーム内での正解/不正解表示（復活）
+                is_correct = st.session_state.result_log.get(q["number"], False)
+                if is_correct:
+                    st.markdown("<span style='font-size:1.5em; color:green;'>✓ 正解！</span>", unsafe_allow_html=True)
+                else:
+                    st.markdown("<span style='font-size:1.5em; color:red;'>× 不正解</span>", unsafe_allow_html=True)
+                    st.markdown(f"<span style='color:blue;'>正解: {'・'.join(correct_labels)}</span>", unsafe_allow_html=True)
             else:
                 st.text_input("あなたの解答", value=st.session_state.get(f"free_input_{q['number']}", ""), disabled=True)
-                # 正解/不正解表示は削除（ユーザーリクエスト）
+                
+                # 自己評価フォーム内での正解/不正解表示（復活）
+                is_correct = st.session_state.result_log.get(q["number"], False)
+                if is_correct:
+                    st.markdown("<span style='font-size:1.5em; color:green;'>✓ 正解！</span>", unsafe_allow_html=True)
+                else:
+                    st.markdown("<span style='font-size:1.5em; color:red;'>× 不正解</span>", unsafe_allow_html=True)
+                    st.markdown(f"<span style='color:blue;'>正解: {q.get('answer', '')}</span>", unsafe_allow_html=True)
         with st.form(key=f"eval_form_{group_id}"):
             st.markdown("#### この問題グループの自己評価")
             eval_map = {"もう一度": 1, "難しい": 2, "普通": 4, "簡単": 5}
