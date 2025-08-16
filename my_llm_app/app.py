@@ -1450,7 +1450,8 @@ def rewrite_to_xelatex_template(tex_source: str) -> str:
     """XeLaTeX用にjsarticleをbxjsarticleに変換し、日本語フォント設定を追加"""
     import re
     tex = tex_source
-    tex = re.sub(r"\\documentclass\[.*?\]\{jsarticle\}", r"\\documentclass{bxjsarticle}", tex, flags=re.S)
+    # uplatexオプション付きのjsarticleをbxjsarticleに変換
+    tex = re.sub(r"\\documentclass\[.*?\]\{jsarticle\}", r"\\documentclass[a4paper]{bxjsarticle}", tex, flags=re.S)
     tex = tex.replace(r"\usepackage[dvipdfmx]{hyperref}", r"\usepackage{hyperref}")
     if r"\usepackage{graphicx}" not in tex:
         tex = tex.replace(r"\begin{document}", r"\usepackage{graphicx}\n\begin{document}")
@@ -1552,7 +1553,7 @@ def export_questions_to_latex_tcb_jsarticle(questions, right_label_fn=None):
     right_label_fn: lambda q -> 右上に出す文字列（例: 科目/年度など）。未指定なら '◯◯◯◯◯'
     title={...} には q['display_title']→q['number'] の優先で入れます。
     """
-    header = r"""\documentclass[dvipdfmx,a4paper]{jsarticle}
+    header = r"""\documentclass[dvipdfmx,a4paper,uplatex]{jsarticle}
 \usepackage[utf8]{inputenc}
 \usepackage[dvipdfmx]{hyperref}
 \hypersetup{colorlinks=true,citecolor=blue,linkcolor=blue}
