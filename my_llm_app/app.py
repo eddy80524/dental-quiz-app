@@ -1373,6 +1373,35 @@ def _latex_escape(s: str) -> str:
 
 import subprocess, shutil, tempfile
 
+def create_simple_fallback_template(latex_source: str) -> str:
+    """最小限のパッケージでフォールバック版LaTeXテンプレートを作成"""
+    import re
+    
+    # 基本的なヘッダーのみ使用
+    simple_header = r"""\documentclass[dvipdfmx,a4paper,uplatex]{jsarticle}
+\usepackage[utf8]{inputenc}
+\usepackage[dvipdfmx]{hyperref}
+\usepackage{xcolor}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage[top=30truemm,bottom=30truemm,left=25truemm,right=25truemm]{geometry}
+\newcommand{\ctext}[1]{\textcircled{\scriptsize{#1}}}
+\begin{document}
+"""
+    
+    # ボディ部分を抽出（\begin{document}から\end{document}まで）
+    body_match = re.search(r'\\begin\{document\}(.*?)\\end\{document\}', latex_source, re.DOTALL)
+    if body_match:
+        body = body_match.group(1)
+        # tcolorboxやその他の高度な機能を削除
+        body = re.sub(r'\\begin\{tcolorbox\}.*?\\end\{tcolorbox\}', '', body, flags=re.DOTALL)
+        body = re.sub(r'\\tcbset\{.*?\}', '', body)
+        body = re.sub(r'\\tcbuselibrary\{.*?\}', '', body)
+    else:
+        body = "\n\\section{PDF生成エラー}\n最小限のテンプレートで生成しています。\n"
+    
+    return simple_header + body + "\n\\end{document}"
+
 def compile_latex_to_pdf(latex_source: str, assets: dict | None = None):
     """
     LaTeX → PDF。画像バイト列(assets)を同一作業ディレクトリへ展開してから
@@ -1398,6 +1427,13 @@ def compile_latex_to_pdf(latex_source: str, assets: dict | None = None):
                 for i in range(2):
                     rc, log = _run(["uplatex", "-interaction=nonstopmode", "-halt-on-error", "doc.tex"])
                     if rc != 0:
+                        # 最初の失敗時に、シンプルなテンプレートで再試行
+                        if i == 0:
+                            print(f"[DEBUG] uplatex failed on first try, attempting with minimal template")
+                            simple_template = create_simple_fallback_template(latex_source)
+                            with open(tex_path, "w", encoding="utf-8") as f:
+                                f.write(simple_template)
+                            continue
                         return None, f"uplatex failed (pass {i+1}):\n{log}"
                 rc, log = _run(["dvipdfmx", "-o", "doc.pdf", "doc.dvi"])
                 if rc != 0:
@@ -1563,17 +1599,17 @@ def export_questions_to_latex_tcb_jsarticle(questions, right_label_fn=None):
 \def\labelitemi{・}
 \usepackage{tikz}
 \usetikzlibrary{calc}
-\usepackage{bxtexlogo}
-\usepackage{ascmac}
-\usepackage[version=3]{mhchem}
+\IfFileExists{bxtexlogo.sty}{\usepackage{bxtexlogo}}{}
+\IfFileExists{ascmac.sty}{\usepackage{ascmac}}{}
+\IfFileExists{mhchem.sty}{\usepackage[version=3]{mhchem}}{}
 \usepackage{tcolorbox}
 \tcbuselibrary{breakable, skins, theorems}
 \usepackage[top=30truemm,bottom=30truemm,left=25truemm,right=25truemm]{geometry}
 \newcommand{\ctext}[1]{\raise0.2ex\hbox{\textcircled{\scriptsize{#1}}}}
 \renewcommand{\labelenumii}{\theenumii}
 \renewcommand{\theenumii}{\alph{enumi}}
-\usepackage{chemfig}
-\usepackage{adjustbox}
+\IfFileExists{chemfig.sty}{\usepackage{chemfig}}{}
+\IfFileExists{adjustbox.sty}{\usepackage{adjustbox}}{}
 \usepackage{amsmath,amssymb}
 \usepackage{tabularx}
 \usepackage{enumitem}

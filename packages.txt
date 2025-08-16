@@ -5,4 +5,6 @@ texlive-lang-japanese
 texlive-latex-base
 texlive-latex-extra
 texlive-latex-recommended
+texlive-science
+texlive-pictures
 ghostscript
