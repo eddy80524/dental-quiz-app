@@ -24,6 +24,95 @@ except ImportError:
 
 st.set_page_config(layout="wide")
 
+# ダークモード対応CSS - デバイスの設定に自動で適応
+st.markdown("""
+<style>
+/* ライトモード（デフォルト） */
+.stApp {
+    background-color: #ffffff;
+    color: #000000;
+}
+
+.stSidebar {
+    background-color: #f0f2f6;
+}
+
+/* ダークモード - デバイス設定に基づいて自動適用 */
+@media (prefers-color-scheme: dark) {
+    .stApp {
+        background-color: #0e1117 !important;
+        color: #fafafa !important;
+    }
+    
+    .stSidebar {
+        background-color: #262730 !important;
+    }
+    
+    /* テキスト関連 */
+    .stMarkdown, .stText, p, span, div {
+        color: #fafafa !important;
+    }
+    
+    /* ボタン */
+    .stButton > button {
+        background-color: #262730 !important;
+        color: #fafafa !important;
+        border: 1px solid #4a5568 !important;
+    }
+    
+    .stButton > button:hover {
+        background-color: #4a5568 !important;
+        border-color: #718096 !important;
+    }
+    
+    /* 入力フィールド */
+    .stTextInput > div > div > input {
+        background-color: #262730 !important;
+        color: #fafafa !important;
+        border-color: #4a5568 !important;
+    }
+    
+    /* セレクトボックス */
+    .stSelectbox > div > div > select {
+        background-color: #262730 !important;
+        color: #fafafa !important;
+        border-color: #4a5568 !important;
+    }
+    
+    /* メトリクス */
+    .metric-container {
+        background-color: #262730 !important;
+    }
+    
+    /* タブ */
+    .stTabs [data-baseweb="tab-list"] {
+        background-color: #262730 !important;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        color: #fafafa !important;
+    }
+    
+    /* 展開可能コンテナ */
+    .streamlit-expanderHeader {
+        background-color: #262730 !important;
+        color: #fafafa !important;
+    }
+    
+    /* データフレーム */
+    .dataframe {
+        background-color: #262730 !important;
+        color: #fafafa !important;
+    }
+    
+    /* プログレスバー */
+    .stProgress > div > div > div > div {
+        background-color: #4a5568 !important;
+    }
+}
+</style>
+""", unsafe_allow_html=True)
+
 # Secrets存在チェック（早期エラー検出）
 if "firebase_credentials" not in st.secrets or "firebase_api_key" not in st.secrets:
     st.error("Firebase の secrets が設定されていません。")
@@ -670,6 +759,21 @@ def load_user_data_minimal(user_id):
                         "cards": data.get("cards", {}),
                         "new_cards_per_day": data.get("new_cards_per_day", 10),
                     }
+                    
+                    # UI状態の復元 - セッション継続用
+                    ui_state = data.get("ui_state", {})
+                    if ui_state:
+                        # セッション状態にUI設定を復元
+                        if "page_select" not in st.session_state:
+                            st.session_state["page_select"] = ui_state.get("page_select", "演習")
+                        if "learning_mode" not in st.session_state:
+                            st.session_state["learning_mode"] = ui_state.get("learning_mode", "新しい問題を学習")
+                        if "current_filter" not in st.session_state:
+                            st.session_state["current_filter"] = ui_state.get("current_filter", "すべて")
+                        if "search_text" not in st.session_state:
+                            st.session_state["search_text"] = ui_state.get("search_text", "")
+                        print(f"[DEBUG] UI状態復元: ページ={ui_state.get('page_select')}, モード={ui_state.get('learning_mode')}")
+                    
                     print(f"[DEBUG] load_user_data_minimal - 成功: {time.time() - start:.3f}s, カード数: {len(result['cards'])}")
                     return result
                 else:
@@ -928,7 +1032,7 @@ def load_user_data(user_id):
     return load_user_data_minimal(user_id)
 
 def save_user_data(user_id, session_state):
-    """user_id には UID を渡す（UIDベース＋emailメタデータ保存）"""
+    """user_id には UID を渡す（UIDベース＋emailメタデータ＋UI状態保存）"""
     def flatten_and_str(obj):
         if isinstance(obj, (list, set)):
             result = []
@@ -953,7 +1057,14 @@ def save_user_data(user_id, session_state):
             
             payload = {
                 "email": session_state.get("email"),  # emailメタデータを保存
-                "last_save": datetime.datetime.now(datetime.timezone.utc).isoformat()  # 最終保存時刻
+                "last_save": datetime.datetime.now(datetime.timezone.utc).isoformat(),  # 最終保存時刻
+                # UI状態の保存 - セッション継続用
+                "ui_state": {
+                    "page_select": session_state.get("page_select", "演習"),
+                    "learning_mode": session_state.get("learning_mode", "新しい問題を学習"),
+                    "current_filter": session_state.get("current_filter", "すべて"),
+                    "search_text": session_state.get("search_text", "")
+                }
             }
 
             # ▼ 修正：空の cards を保存して既存を消さない
@@ -3485,3 +3596,24 @@ else:
         render_practice_page()
     else:
         render_search_page()
+
+    # UI状態の変更を検知してデータを自動保存
+    uid = st.session_state.get("uid")
+    if uid and st.session_state.get("authenticated"):
+        # 前回のUI状態と比較
+        current_ui_state = {
+            "page_select": st.session_state.get("page_select", "演習"),
+            "learning_mode": st.session_state.get("learning_mode", "新しい問題を学習"),
+            "current_filter": st.session_state.get("current_filter", "すべて"),
+            "search_text": st.session_state.get("search_text", "")
+        }
+        
+        # 前回のUI状態と比較して変更があれば保存
+        prev_ui_state = st.session_state.get("_prev_ui_state", {})
+        if current_ui_state != prev_ui_state:
+            save_user_data(uid, st.session_state)
+            st.session_state["_prev_ui_state"] = current_ui_state
+            print(f"[DEBUG] UI状態変更により自動保存: {current_ui_state}")
+        elif "_prev_ui_state" not in st.session_state:
+            # 初回設定
+            st.session_state["_prev_ui_state"] = current_ui_state
