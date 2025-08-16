@@ -2574,13 +2574,15 @@ def render_practice_page():
                             return " → ".join(chr(65 + i) for i in idxs)
 
                         if is_correct:
-                            st.success(f"{q['number']}：正解！")
+                            # 正解表示は削除（ユーザーリクエスト）
+                            pass
                         else:
                             # 正解は元の並び基準。ユーザー入力は表示基準なので、見せるときは表示基準にも直す
                             # 正解（表示基準）に変換: 正解の各 original idx が shuffle 上で何番目かを逆写像で求める
                             inv = {orig: disp for disp, orig in enumerate(shuffle_indices)}
                             correct_disp = [_fmt_seq([inv[i] for i in _letters_to_indices(answer_str, n)])]
-                            st.error(f"{q['number']}：不正解。{reason or ''}  正解は「{correct_disp[0]}」です。")
+                            # 不正解表示は削除（ユーザーリクエスト）
+                            pass
 
                         # 結果をセッション状態に保存（自己評価後にSM-2更新）
                         st.session_state.result_log[q["number"]] = is_correct
@@ -2605,9 +2607,11 @@ def render_practice_page():
                             return " / ".join(sorted(chr(65 + i) for i in idxs))
 
                         if is_correct:
-                            st.success(f"{q['number']}：正解！")
+                            # 正解表示は削除（ユーザーリクエスト）
+                            pass
                         else:
-                            st.error(f"{q['number']}：不正解。正解は「{_fmt_set(ans_orig)}」です。")
+                            # 不正解表示は削除（ユーザーリクエスト）
+                            pass
 
                         # 結果をセッション状態に保存（自己評価後にSM-2更新）
                         st.session_state.result_log[q["number"]] = is_correct
@@ -2623,9 +2627,11 @@ def render_practice_page():
                         is_correct = (_norm(user_ans) == _norm(answer_str))
 
                         if is_correct:
-                            st.success(f"{q['number']}：正解！")
+                            # 正解表示は削除（ユーザーリクエスト）
+                            pass
                         else:
-                            st.error(f"{q['number']}：不正解。正解は「{answer_str}」です。")
+                            # 不正解表示は削除（ユーザーリクエスト）
+                            pass
 
                         # 結果をセッション状態に保存（自己評価後にSM-2更新）
                         st.session_state.result_log[q["number"]] = is_correct
@@ -2689,22 +2695,23 @@ def render_practice_page():
                     user_selection_key = f"user_selection_{q['number']}"
                     is_selected = st.session_state.get(user_selection_key, [False]*len(shuffled_choices))[i]
                     st.checkbox(label, value=is_selected, disabled=True, key=f"user_selection_{q['number']}_{i}")
-                if is_correct:
-                    st.markdown("<span style='font-size:1.5em; color:green;'>✓ 正解！</span>", unsafe_allow_html=True)
-                else:
-                    st.markdown("<span style='font-size:1.5em; color:red;'>× 不正解</span>", unsafe_allow_html=True)
-                    st.markdown(f"<span style='color:blue;'>正解: {'・'.join(correct_labels)}</span>", unsafe_allow_html=True)
+                # 正解/不正解表示は削除（ユーザーリクエスト）
             else:
                 st.text_input("あなたの解答", value=st.session_state.get(f"free_input_{q['number']}", ""), disabled=True)
-                if is_correct:
-                    st.markdown("<span style='font-size:1.5em; color:green;'>✓ 正解！</span>", unsafe_allow_html=True)
-                else:
-                    st.markdown("<span style='font-size:1.5em; color:red;'>× 不正解</span>", unsafe_allow_html=True)
-                    st.markdown(f"<span style='color:blue;'>正解: {q.get('answer', '')}</span>", unsafe_allow_html=True)
+                # 正解/不正解表示は削除（ユーザーリクエスト）
         with st.form(key=f"eval_form_{group_id}"):
             st.markdown("#### この問題グループの自己評価")
             eval_map = {"もう一度": 1, "難しい": 2, "普通": 4, "簡単": 5}
-            selected_eval_label = st.radio("自己評価", eval_map.keys(), horizontal=True, label_visibility="collapsed")
+            
+            # グループ内の正解状況を判定してデフォルト選択を決定
+            group_all_correct = all(st.session_state.result_log.get(q_num, False) for q_num in current_q_group)
+            default_eval = "簡単" if group_all_correct else "もう一度"
+            
+            # デフォルト選択のindexを計算
+            eval_keys = list(eval_map.keys())
+            default_index = eval_keys.index(default_eval)
+            
+            selected_eval_label = st.radio("自己評価", eval_map.keys(), horizontal=True, label_visibility="collapsed", index=default_index)
             if st.form_submit_button("次の問題へ", type="primary"):
                 with st.spinner('学習記録を保存中...'):
                     quality = eval_map[selected_eval_label]
