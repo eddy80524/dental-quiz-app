@@ -7,3 +7,5 @@ streamlit-cookies-manager
 pandas
 requests
 PyYAML
+Pillow
+numpy

@@ -1,0 +1,8 @@
+texlive-luatex
+texlive-fonts-recommended
+texlive-xetex
+texlive-lang-japanese
+texlive-latex-base
+texlive-latex-extra
+texlive-latex-recommended
+ghostscript

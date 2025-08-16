@@ -1211,7 +1211,8 @@ def pick_new_cards_for_today(all_questions, cards, N=10, recent_qids=None):
     introduced_counts = {subj: 0 for subj in subj_to_qids.keys()}
     for qid, card in cards.items():
         if qid in qid_to_subject:
-            if card.get("n") is not None or card.get("history"):
+            # n が 0 より大きいか、historyが存在する場合に導入済みとみなす
+            if card.get("n", 0) > 0 or card.get("history"):
                 introduced_counts[qid_to_subject[qid]] += 1
 
     # 目標は当面「均等配分」
@@ -1259,7 +1260,9 @@ def pick_new_cards_for_today(all_questions, cards, N=10, recent_qids=None):
 def list_storage_files(prefix="", max_files=50):
     """Firebase Storageのファイル一覧を取得してデバッグ用に表示"""
     try:
-        bucket = storage.bucket()
+        bucket = get_bucket()  # 統一
+        if bucket is None:
+            return []
         blobs = bucket.list_blobs(prefix=prefix, max_results=max_files)
         files = [blob.name for blob in blobs]
         print(f"[DEBUG] Storage files with prefix '{prefix}': {files[:10]}...")  # 最初の10件のみ表示
@@ -1280,7 +1283,10 @@ def get_secure_image_url(path):
         return path
     try:
         # 既定バケット（initialize_firebaseで正しい appspot.com が設定されている前提）
-        default_bucket = storage.bucket()
+        default_bucket = get_bucket()  # 統一
+        if default_bucket is None:
+            print(f"[ERROR] バケット取得失敗")
+            return None
         blob = None
 
         if isinstance(path, str) and path.startswith("gs://"):
@@ -1347,96 +1353,276 @@ def get_secure_image_url(path):
         print(f"[ERROR] スタックトレース: {traceback.format_exc()}")
         return None
 
-def export_questions_to_latex(questions):
+def _latex_escape(s: str) -> str:
     """
-    検索結果をLaTeX形式でPDF生成可能な完全なドキュメントとして書き出す関数
+    LaTeX特殊文字をエスケープする関数
+    バックスラッシュを最初に処理して二重エスケープを防ぐ
     """
-    header = r"""\documentclass[11pt,a4paper]{ujarticle}
-\usepackage[utf8]{inputenc}
-\usepackage[T1]{fontenc}
-\usepackage{amsmath,amssymb}
-\usepackage[most]{tcolorbox}
-\usepackage{geometry}
-\usepackage{fancyhdr}
-\usepackage{lastpage}
-\usepackage{enumitem}
+    if not s:
+        return ""
+    # バックスラッシュを最初に処理
+    s = s.replace("\\", r"\textbackslash{}")
+    # 残りの特殊文字
+    for a, b in [
+        ("&", r"\&"), ("%", r"\%"), ("$", r"\$"),
+        ("#", r"\#"), ("_", r"\_"), ("{", r"\{"), ("}", r"\}"),
+        ("^", r"\textasciicircum{}"), ("~", r"\textasciitilde{}"),
+    ]:
+        s = s.replace(a, b)
+    return s
 
-% ページ設定
-\geometry{left=20mm,right=20mm,top=25mm,bottom=25mm}
+import subprocess, shutil, tempfile
 
-% ヘッダー・フッター設定
-\pagestyle{fancy}
-\fancyhf{}
-\fancyhead[L]{歯科医師国家試験問題集}
-\fancyhead[R]{\today}
-\fancyfoot[C]{\thepage\ / \pageref{LastPage}}
+def compile_latex_to_pdf(latex_source: str, assets: dict | None = None):
+    """
+    LaTeX → PDF。画像バイト列(assets)を同一作業ディレクトリへ展開してから
+    uplatex + dvipdfmx 優先でコンパイル。
+    """
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            tex_path = os.path.join(tmp, "doc.tex")
+            with open(tex_path, "w", encoding="utf-8") as f:
+                f.write(latex_source)
 
-% タイトル
-\title{歯科医師国家試験 検索結果問題集}
-\author{Dental DX PoC System}
-\date{\today}
+            # 画像を書き出し
+            if assets:
+                for name, data in assets.items():
+                    with open(os.path.join(tmp, os.path.basename(name)), "wb") as g:
+                        g.write(data)
 
-\begin{document}
-\maketitle
+            def _run(cmd):
+                cp = subprocess.run(cmd, cwd=tmp, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                return cp.returncode, cp.stdout
 
-\section{検索結果一覧}
-以下の問題が検索結果として抽出されました。
+            if shutil.which("uplatex") and shutil.which("dvipdfmx"):
+                for i in range(2):
+                    rc, log = _run(["uplatex", "-interaction=nonstopmode", "-halt-on-error", "doc.tex"])
+                    if rc != 0:
+                        return None, f"uplatex failed (pass {i+1}):\n{log}"
+                rc, log = _run(["dvipdfmx", "-o", "doc.pdf", "doc.dvi"])
+                if rc != 0:
+                    return None, f"dvipdfmx failed:\n{log}"
+                pdf_path = os.path.join(tmp, "doc.pdf")
+                if os.path.exists(pdf_path):
+                    with open(pdf_path, "rb") as f:
+                        return f.read(), "uplatex+dvipdfmx ok"
+                return None, "PDF not found"
 
+            if shutil.which("latexmk") and shutil.which("uplatex") and shutil.which("dvipdfmx"):
+                rc, log = _run(["latexmk", "-interaction=nonstopmode", "-pdfdvi", "-latex=uplatex", "doc.tex"])
+                pdf_path = os.path.join(tmp, "doc.pdf")
+                if rc == 0 and os.path.exists(pdf_path):
+                    with open(pdf_path, "rb") as f:
+                        return f.read(), "latexmk ok"
+                return None, f"latexmk failed:\n{log}"
+
+            if shutil.which("tectonic"):
+                rc, log = _run(["tectonic", "-X", "compile", "--keep-intermediates", "--keep-logs", "doc.tex"])
+                pdf_path = os.path.join(tmp, "doc.pdf")
+                if rc == 0 and os.path.exists(pdf_path):
+                    with open(pdf_path, "rb") as f:
+                        return f.read(), "tectonic ok"
+                return None, f"tectonic failed:\n{log}"
+
+            if shutil.which("xelatex"):
+                # XeLaTeX用にテンプレートを変換
+                with open(tex_path, "r", encoding="utf-8") as f:
+                    orig = f.read()
+                xetex_src = rewrite_to_xelatex_template(orig)
+                with open(tex_path, "w", encoding="utf-8") as f:
+                    f.write(xetex_src)
+                
+                for i in range(2):
+                    rc, log = _run(["xelatex", "-interaction=nonstopmode", "-halt-on-error", "doc.tex"])
+                    if rc != 0:
+                        return None, f"xelatex failed (pass {i+1}):\n{log}"
+                pdf_path = os.path.join(tmp, "doc.pdf")
+                if os.path.exists(pdf_path):
+                    with open(pdf_path, "rb") as f:
+                        return f.read(), "xelatex ok"
+                return None, "PDF not found"
+
+            return None, "TeXエンジン未検出（uplatex/dvipdfmx 推奨）"
+    except Exception as e:
+        return None, f"Unexpected error: {e}"
+
+def rewrite_to_xelatex_template(tex_source: str) -> str:
+    """XeLaTeX用にjsarticleをbxjsarticleに変換し、日本語フォント設定を追加"""
+    import re
+    tex = tex_source
+    tex = re.sub(r"\\documentclass\[.*?\]\{jsarticle\}", r"\\documentclass{bxjsarticle}", tex, flags=re.S)
+    tex = tex.replace(r"\usepackage[dvipdfmx]{hyperref}", r"\usepackage{hyperref}")
+    if r"\usepackage{graphicx}" not in tex:
+        tex = tex.replace(r"\begin{document}", r"\usepackage{graphicx}\n\begin{document}")
+    if r"\usepackage{xeCJK}" not in tex:
+        extra = r"""
+\usepackage{xeCJK}
+\setCJKmainfont{Noto Serif CJK JP}
+\setCJKsansfont{Noto Sans CJK JP}
+\setmainfont{Noto Serif}
 """
-    
+        tex = tex.replace(r"\begin{document}", extra + "\n\\begin{document}")
+    return tex
+
+# --- tcolorbox PDF用ヘルパ ---
+def _answer_mark_for_overlay(answer_str: str) -> str:
+    """'A', 'C', 'A/C' を右下用 'a', 'c', 'a/c' へ正規化"""
+    if not answer_str:
+        return ""
+    raw = answer_str.replace("／", "/")
+    letters = (raw.split("/") if "/" in raw else list(raw.strip()))
+    def _to_alph(ch):
+        return chr(ord('a') + (ord(ch.upper()) - ord('A'))) if ch.isalpha() else ch
+    return "/".join(_to_alph(ch) for ch in letters if ch)
+
+def _image_block_latex(file_list):
+    """1枚 → 0.45幅、2枚 → 0.45×2、3枚以上 → 2列折返し"""
+    if not file_list:
+        return ""
+    if len(file_list) == 1:
+        return rf"\begin{{center}}\includegraphics[width=0.45\textwidth]{{{file_list[0]}}}\end{{center}}"
+    if len(file_list) == 2:
+        a, b = file_list[0], file_list[1]
+        return (r"\begin{center}"
+                rf"\includegraphics[width=0.45\textwidth]{{{a}}}"
+                rf"\includegraphics[width=0.45\textwidth]{{{b}}}"
+                r"\end{center}")
+    out = [r"\begin{center}"]
+    for i, fn in enumerate(file_list):
+        out.append(rf"\includegraphics[width=0.45\textwidth]{{{fn}}}")
+        if i % 2 == 1 and i != len(file_list) - 1:
+            out.append(r"\\[0.5ex]")
+    out.append(r"\end{center}")
+    return "\n".join(out)
+
+def _gather_images_for_questions(questions):
+    """
+    各問題の image_urls / image_paths を署名URL化してダウンロード。
+    戻り値: ( {ファイル名:バイト列}, [[問題ごとのローカル名...], ...] )
+    """
+    import pathlib
+    assets = {}
+    per_q_files = []
+    session = get_http_session()
+
+    for qi, q in enumerate(questions, start=1):
+        files = []
+        candidates = []
+        for k in ("image_urls", "image_paths"):
+            v = q.get(k)
+            if v: candidates.extend(v)
+
+        # URL解決（http/https はそのまま、Storage パスは署名URL）
+        resolved = []
+        for path in candidates:
+            if isinstance(path, str) and (path.startswith("http://") or path.startswith("https://")):
+                resolved.append(path)
+            else:
+                url = get_secure_image_url(path)
+                if url: resolved.append(url)
+
+        # ダウンロード
+        for j, url in enumerate(resolved, start=1):
+            try:
+                r = session.get(url, timeout=10)
+                if r.status_code != 200:
+                    continue
+                # 拡張子推定
+                ext = ".jpg"
+                p = pathlib.Path(url.split("?")[0])
+                if p.suffix.lower() in [".jpg", ".jpeg", ".png", ".pdf"]:
+                    ext = p.suffix.lower()
+                else:
+                    ct = (r.headers.get("Content-Type") or "").lower()
+                    if "png" in ct: ext = ".png"
+                    if "jpeg" in ct or "jpg" in ct: ext = ".jpg"
+                name = f"q{qi:03d}_img{j:02d}{ext}"
+                assets[name] = r.content
+                files.append(name)
+            except Exception:
+                continue
+
+        per_q_files.append(files)
+
+    return assets, per_q_files
+
+def export_questions_to_latex_tcb_jsarticle(questions, right_label_fn=None):
+    """
+    tcolorbox(JS)版のLaTeX生成。高品質レイアウトで問題を出力。
+    right_label_fn: lambda q -> 右上に出す文字列（例: 科目/年度など）。未指定なら '◯◯◯◯◯'
+    title={...} には q['display_title']→q['number'] の優先で入れます。
+    """
+    header = r"""\documentclass[dvipdfmx,a4paper]{jsarticle}
+\usepackage[utf8]{inputenc}
+\usepackage[dvipdfmx]{hyperref}
+\hypersetup{colorlinks=true,citecolor=blue,linkcolor=blue}
+\usepackage{xcolor}
+\definecolor{lightgray}{HTML}{F9F9F9}
+\renewcommand{\labelitemi}{・}
+\def\labelitemi{・}
+\usepackage{tikz}
+\usetikzlibrary{calc}
+\usepackage{bxtexlogo}
+\usepackage{ascmac}
+\usepackage[version=3]{mhchem}
+\usepackage{tcolorbox}
+\tcbuselibrary{breakable, skins, theorems}
+\usepackage[top=30truemm,bottom=30truemm,left=25truemm,right=25truemm]{geometry}
+\newcommand{\ctext}[1]{\raise0.2ex\hbox{\textcircled{\scriptsize{#1}}}}
+\renewcommand{\labelenumii}{\theenumii}
+\renewcommand{\theenumii}{\alph{enumi}}
+\usepackage{chemfig}
+\usepackage{adjustbox}
+\usepackage{amsmath,amssymb}
+\usepackage{tabularx}
+\usepackage{enumitem}
+\usepackage{graphicx} % 画像
+\begin{document}
+"""
     body = []
-    for i, q in enumerate(questions, 1):
-        num = q.get("number", f"問題{i}")
-        subject = q.get("subject", "未分類")
-        question_text = (q.get("question", "") or "")
-        
-        # LaTeX特殊文字をエスケープ
-        question_text = question_text.replace("&", r"\&")
-        question_text = question_text.replace("%", r"\%")
-        question_text = question_text.replace("$", r"\$")
-        question_text = question_text.replace("#", r"\#")
-        question_text = question_text.replace("_", r"\_")
-        question_text = question_text.replace("{", r"\{")
-        question_text = question_text.replace("}", r"\}")
-        question_text = question_text.replace("^", r"\textasciicircum")
-        question_text = question_text.replace("~", r"\textasciitilde")
-        question_text = question_text.replace("\\", r"\textbackslash")
-        
-        body.append(rf"\subsection{{{num} - {subject}}}")
-        body.append(r"\begin{tcolorbox}[colback=blue!5!white,colframe=blue!75!black,title=問題文]")
+    for i, q in enumerate(questions, start=1):
+        title_text = _latex_escape(q.get("display_title") or q.get("number") or f"問{i}")
+        question_text = _latex_escape(q.get("question", "") or "")
+        right_label = _latex_escape((right_label_fn(q) if right_label_fn else "◯◯◯◯◯") or "")
+        ans_mark = _answer_mark_for_overlay((q.get("answer") or "").strip())
+
+        box_open = (
+            rf"\begin{{tcolorbox}}"
+            r"[enhanced, colframe=black, colback=white,"
+            rf" title={{{title_text}}}, fonttitle=\bfseries, breakable=true,"
+            r" coltitle=black,"
+            r" attach boxed title to top left={xshift=5mm, yshift=-3mm},"
+            r" boxed title style={colframe=black, colback=white, },"
+            r" top=4mm,"
+            r" overlay={"
+            + (rf"\node[anchor=north east, xshift=-5mm, yshift=3mm, font=\bfseries\Large, fill=white, inner sep=2pt] at (frame.north east) {{{right_label}}};" if right_label else "")
+            + (rf"\node[anchor=south east, xshift=-3mm, yshift=3mm] at (frame.south east) {{{ans_mark}}};" if ans_mark else "")
+            + r"}]"
+        )
+        body.append(box_open)
         body.append(question_text)
-        body.append(r"\end{tcolorbox}")
-        
-        if q.get("choices"):
-            body.append(r"\begin{tcolorbox}[colback=gray!5!white,colframe=gray!75!black,title=選択肢]")
-            body.append(r"\begin{enumerate}[label=\Alph*.]")
-            for ch in q["choices"]:
-                choice_text = ch.get("text", str(ch)) if isinstance(ch, dict) else str(ch)
-                # LaTeX特殊文字をエスケープ
-                choice_text = choice_text.replace("&", r"\&")
-                choice_text = choice_text.replace("%", r"\%")
-                choice_text = choice_text.replace("$", r"\$")
-                choice_text = choice_text.replace("#", r"\#")
-                choice_text = choice_text.replace("_", r"\_")
-                choice_text = choice_text.replace("{", r"\{")
-                choice_text = choice_text.replace("}", r"\}")
-                choice_text = choice_text.replace("^", r"\textasciicircum")
-                choice_text = choice_text.replace("~", r"\textasciitilde")
-                choice_text = choice_text.replace("\\", r"\textbackslash")
-                body.append(r"\item " + choice_text)
+
+        # 画像スロット（後で置換）
+        body.append(rf"%__IMAGES_SLOT__{i}__")
+
+        # 選択肢
+        choices = q.get("choices") or []
+        if choices:
+            body.append(r"\begin{enumerate}[nosep, left=0pt,label=\alph*.]")
+            for ch in choices:
+                text = ch.get("text", str(ch)) if isinstance(ch, dict) else str(ch)
+                body.append(r"\item " + _latex_escape(text))
             body.append(r"\end{enumerate}")
-            body.append(r"\end{tcolorbox}")
-        
-        body.append(r"\vspace{1em}")
-        
-        # ページ区切り（5問ごと）
-        if i % 5 == 0 and i < len(questions):
-            body.append(r"\newpage")
-    
-    footer = r"""
-\end{document}"""
-    
-    return header + "\n".join(body) + footer
+
+        body.append(r"\end{tcolorbox}")
+        body.append(r"\vspace{0.8em}")
+
+        # ▼ここを変更：各問題ごとに改ページ（最後だけ入れない）
+        if i < len(questions):
+            body.append(r"\clearpage")  # 画像(浮動体)があっても確実に改ページ
+
+    footer = r"\end{document}"
+    return header + "\n".join(body) + "\n" + footer
 
 def get_shuffled_choices(q):
     key = f"shuffled_{q['number']}"
@@ -1659,9 +1845,6 @@ def sm2_update_with_policy(card: dict, quality: int, q_num_str: str, now=None):
 
 # --- 検索ページ ---
 def render_search_page():
-    st.markdown("### 📊 検索・分析ツール")
-    st.markdown("キーワード検索と学習状況の分析が行えます。")
-    
     # サイドバーのフィルター設定を取得
     uid = st.session_state.get("uid")
     has_gakushi_permission = check_gakushi_permission(uid)
@@ -1669,7 +1852,7 @@ def render_search_page():
     level_filter = st.session_state.get("level_filter", ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "レベル5", "習得済み"])
     
     # 学習進捗の可視化セクションを追加
-    st.subheader("📈 学習進捗の可視化")
+    st.subheader("📈 学習ダッシュボード")
     
     # 学習データの準備
     cards = st.session_state.get("cards", {})
@@ -1713,7 +1896,7 @@ def render_search_page():
             "id": q_num,
             "subject": q.get("subject", "未分類"),
             "level": level,
-            "ef": card.get("ef", 2.5),
+            "ef": card.get("EF", 2.5),  # 大文字EFに修正
             "history": card.get("history", []),
             "is_hisshu": is_hisshu
         })
@@ -1737,8 +1920,8 @@ def render_search_page():
     else:
         st.session_state.available_subjects = []
     
-    # 3タブ構成の可視化
-    tab1, tab2, tab3 = st.tabs(["概要", "グラフ分析", "問題リストと絞り込み"])
+    # 4タブ構成の可視化
+    tab1, tab2, tab3, tab4 = st.tabs(["概要", "グラフ分析", "問題リスト", "キーワード検索"])
     
     with tab1:
         st.subheader("学習状況サマリー")
@@ -1788,7 +1971,7 @@ def render_search_page():
         if filtered_df.empty:
             st.warning("選択された条件に一致する問題がありません。")
         else:
-            st.markdown("##### 日々の学習量（過去90日間）")
+            st.markdown("##### 学習の記録")
             review_history = []
             for history_list in filtered_df["history"]:
                 for review in history_list:
@@ -1798,7 +1981,7 @@ def render_search_page():
             if review_history:
                 from collections import Counter
                 review_counts = Counter(review_history)
-                ninety_days_ago = datetime.date.today() - datetime.timedelta(days=90)
+                ninety_days_ago = datetime.datetime.now(datetime.timezone.utc).date() - datetime.timedelta(days=90)
                 dates = [ninety_days_ago + datetime.timedelta(days=i) for i in range(91)]
                 counts = [review_counts.get(d, 0) for d in dates]
                 chart_df = pd.DataFrame({"Date": dates, "Reviews": counts})
@@ -1864,7 +2047,7 @@ def render_search_page():
                 st.info("学習データがありません。")
 
     with tab3:
-        st.subheader("問題リストと絞り込み")
+        st.subheader("問題リスト")
         level_colors = {
             "未学習": "#757575", "レベル0": "#FF9800", "レベル1": "#FFC107",
             "レベル2": "#8BC34A", "レベル3": "#9C27B0", "レベル4": "#03A9F4",
@@ -1904,209 +2087,199 @@ def render_search_page():
         else:
             st.info("表示する問題がありません。")
     
-    st.divider()
-
-    # キーワード検索フォーム（独立したセクション）
-    st.subheader("🔍 キーワード検索")
-    col1, col2, col3 = st.columns([3, 1, 1])
-    with col1:
-        search_keyword = st.text_input("検索キーワード", placeholder="検索したいキーワードを入力", key="search_keyword_input")
-    with col2:
-        search_target = st.selectbox("検索対象", ["全体", "学士試験"], key="search_target_select")
-    with col3:
-        shuffle_results = st.checkbox("結果をシャッフル", key="shuffle_checkbox")
-    
-    search_btn = st.button("検索実行", type="primary", use_container_width=True)
-    
-    # キーワード検索の実行と結果表示
-    if search_btn and search_keyword.strip():
-        gakushi_only = (analysis_target == "学士試験")
+    with tab4:
+        # キーワード検索フォーム（サイドバーフィルター連動）
+        st.subheader("🔍 キーワード検索")
+        st.info(f"🎯 検索対象: {analysis_target} （サイドバーの分析対象フィルターで変更可能）")
         
-        # キーワード検索を実行
-        search_words = [word.strip() for word in search_keyword.strip().split() if word.strip()]
+        col1, col2 = st.columns([4, 1])
+        with col1:
+            search_keyword = st.text_input("検索キーワード", placeholder="検索したいキーワードを入力", key="search_keyword_input")
+        with col2:
+            shuffle_results = st.checkbox("結果をシャッフル", key="shuffle_checkbox")
         
-        keyword_results = []
-        for q in ALL_QUESTIONS:
-            # 権限チェック：学士試験の問題で権限がない場合はスキップ
-            question_number = q.get('number', '')
-            if question_number.startswith("G") and not has_gakushi_permission:
-                continue
-            
-            # 学士試験フィルタチェック
-            if gakushi_only and not question_number.startswith("G"):
-                continue
-            if not gakushi_only and question_number.startswith("G"):
-                continue
-            
-            # キーワード検索
-            text_to_search = f"{q.get('question', '')} {q.get('subject', '')} {q.get('number', '')}"
-            if any(word.lower() in text_to_search.lower() for word in search_words):
-                keyword_results.append(q)
+        search_btn = st.button("検索実行", type="primary", use_container_width=True)
         
-        # シャッフル処理
-        if shuffle_results:
-            random.shuffle(keyword_results)
-        
-        # 結果をセッション状態に保存
-        st.session_state["search_results"] = keyword_results
-        st.session_state["search_query"] = search_keyword.strip()
-        st.session_state["search_page_gakushi_setting"] = gakushi_only
-        st.session_state["search_page_shuffle_setting"] = shuffle_results
-    
-    # 検索結果の表示
-    if "search_results" in st.session_state:
-        results = st.session_state["search_results"]
-        query = st.session_state.get("search_query", "")
-        search_type = "学士試験" if st.session_state.get("search_page_gakushi_setting", False) else "全体"
-        shuffle_info = "（シャッフル済み）" if st.session_state.get("search_page_shuffle_setting", False) else "（順番通り）"
-        
-        if results:
-            st.success(f"「{query}」で{len(results)}問見つかりました（{search_type}）{shuffle_info}")
+        # キーワード検索の実行と結果表示
+        if search_btn and search_keyword.strip():
+            # キーワード検索を実行
+            search_words = [word.strip() for word in search_keyword.strip().split() if word.strip()]
             
-            # 結果の統計を表示
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("検索結果", f"{len(results)}問")
-            with col2:
-                subjects = [q.get("subject", "未分類") for q in results]
-                unique_subjects = len(set(subjects))
-                st.metric("関連科目", f"{unique_subjects}科目")
-            with col3:
-                years = []
-                for q in results:
-                    year = extract_year_from_question_number(q.get("number", ""))
-                    if year is not None:
-                        years.append(int(year))
-                
-                year_range = f"{min(years)}-{max(years)}" if years else "不明"
-                st.metric("年度範囲", year_range)
-            
-            # 検索結果の詳細表示
-            st.subheader("検索結果")
-            
-            # レベル別色分け定義
-            level_colors = {
-                "未学習": "#757575", "レベル0": "#FF9800", "レベル1": "#FFC107",
-                "レベル2": "#8BC34A", "レベル3": "#9C27B0", "レベル4": "#03A9F4",
-                "レベル5": "#1E88E5", "習得済み": "#4CAF50"
-            }
-            
-            level_icons = {
-                "未学習": "#757575",        # グレー系
-                "レベル0": "#FF9800",      # オレンジ #FF9800
-                "レベル1": "#FFC107",      # イエロー #FFC107
-                "レベル2": "#8BC34A",      # グリーン #8BC34A
-                "レベル3": "#9C27B0",      # パープル #9C27B0
-                "レベル4": "#03A9F4",      # ブルー #03A9F4
-                "レベル5": "#1E88E5",      # ダークブルー #1E88E5
-                "習得済み": "#4CAF50"      # グリーン完了 #4CAF50
-            }
-            
-            for i, q in enumerate(results[:20]):  # 最初の20件を表示
+            keyword_results = []
+            for q in ALL_QUESTIONS:
                 # 権限チェック：学士試験の問題で権限がない場合はスキップ
                 question_number = q.get('number', '')
                 if question_number.startswith("G") and not has_gakushi_permission:
                     continue
                 
-                # 学習レベルの取得
-                card = cards.get(question_number, {})
-                if not card:
-                    level = "未学習"
-                else:
-                    card_level = card.get("level", 0)
-                    if card_level >= 6:
-                        level = "習得済み"
+                # 分析対象フィルタチェック（サイドバーの設定を使用）
+                if analysis_target == "国試" and question_number.startswith("G"):
+                    continue
+                elif analysis_target == "学士試験" and not question_number.startswith("G"):
+                    continue
+                # analysis_target == "全体" の場合は全て含める
+                
+                # キーワード検索
+                text_to_search = f"{q.get('question', '')} {q.get('subject', '')} {q.get('number', '')}"
+                if any(word.lower() in text_to_search.lower() for word in search_words):
+                    keyword_results.append(q)
+            
+            # シャッフル処理
+            if shuffle_results:
+                random.shuffle(keyword_results)
+            
+            # 結果をセッション状態に保存
+            st.session_state["search_results"] = keyword_results
+            st.session_state["search_query"] = search_keyword.strip()
+            st.session_state["search_page_analysis_target"] = analysis_target
+            st.session_state["search_page_shuffle_setting"] = shuffle_results
+        
+        # 検索結果の表示
+        if "search_results" in st.session_state:
+            results = st.session_state["search_results"]
+            query = st.session_state.get("search_query", "")
+            search_type = st.session_state.get("search_page_analysis_target", "全体")
+            shuffle_info = "（シャッフル済み）" if st.session_state.get("search_page_shuffle_setting", False) else "（順番通り）"
+            
+            if results:
+                st.success(f"「{query}」で{len(results)}問見つかりました（{search_type}）{shuffle_info}")
+                
+                # 結果の統計を表示
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("検索結果", f"{len(results)}問")
+                with col2:
+                    subjects = [q.get("subject", "未分類") for q in results]
+                    unique_subjects = len(set(subjects))
+                    st.metric("関連科目", f"{unique_subjects}科目")
+                with col3:
+                    years = []
+                    for q in results:
+                        year = extract_year_from_question_number(q.get("number", ""))
+                        if year is not None:
+                            years.append(int(year))
+                    
+                    year_range = f"{min(years)}-{max(years)}" if years else "不明"
+                    st.metric("年度範囲", year_range)
+                
+                # 検索結果の詳細表示
+                st.subheader("検索結果")
+                
+                # レベル別色分け定義
+                level_colors = {
+                    "未学習": "#757575", "レベル0": "#FF9800", "レベル1": "#FFC107",
+                    "レベル2": "#8BC34A", "レベル3": "#9C27B0", "レベル4": "#03A9F4",
+                    "レベル5": "#1E88E5", "習得済み": "#4CAF50"
+                }
+                
+                level_icons = {
+                    "未学習": "#757575",        # グレー系
+                    "レベル0": "#FF9800",      # オレンジ #FF9800
+                    "レベル1": "#FFC107",      # イエロー #FFC107
+                    "レベル2": "#8BC34A",      # グリーン #8BC34A
+                    "レベル3": "#9C27B0",      # パープル #9C27B0
+                    "レベル4": "#03A9F4",      # ブルー #03A9F4
+                    "レベル5": "#1E88E5",      # ダークブルー #1E88E5
+                    "習得済み": "#4CAF50"      # グリーン完了 #4CAF50
+                }
+                
+                for i, q in enumerate(results[:20]):  # 最初の20件を表示
+                    # 権限チェック：学士試験の問題で権限がない場合はスキップ
+                    question_number = q.get('number', '')
+                    if question_number.startswith("G") and not has_gakushi_permission:
+                        continue
+                    
+                    # 学習レベルの取得
+                    card = st.session_state.cards.get(question_number, {})
+                    if not card:
+                        level = "未学習"
                     else:
-                        level = f"レベル{card_level}"
-                
-                # 必修問題チェック
-                if search_target == "学士試験":
-                    is_hisshu = question_number in GAKUSHI_HISSHU_Q_NUMBERS_SET
-                else:
-                    is_hisshu = question_number in HISSHU_Q_NUMBERS_SET
-                
-                level_color = level_colors.get(level, "#888888")
-                hisshu_mark = "🔥" if is_hisshu else ""
-                
-                # 色付きドットアイコンをHTMLで生成
-                color_dot = f'<span style="color: {level_color}; font-size: 1.2em; font-weight: bold;">●</span>'
-                
-                with st.expander(f"● {q.get('number', 'N/A')} - {q.get('subject', '未分類')} {hisshu_mark}"):
-                    # レベルを大きく色付きで表示  
-                    st.markdown(f"**学習レベル:** <span style='color: {level_color}; font-weight: bold; font-size: 1.2em;'>{level}</span>", unsafe_allow_html=True)
-                    st.markdown(f"**問題:** {q.get('question', '')[:100]}...")
-                    if q.get('choices'):
-                        st.markdown("**選択肢:**")
-                        for j, choice in enumerate(q['choices']):  # 全ての選択肢を表示
-                            choice_text = choice.get('text', str(choice)) if isinstance(choice, dict) else str(choice)
-                            st.markdown(f"  {chr(65+j)}. {choice_text[:50]}...")
+                        card_level = card.get("level", 0)
+                        if card_level >= 6:
+                            level = "習得済み"
+                        else:
+                            level = f"レベル{card_level}"
                     
-                    # 学習履歴の表示
-                    if card and card.get('history'):
-                        st.markdown(f"**学習履歴:** {len(card['history'])}回")
-                        for j, review in enumerate(card['history'][-3:]):  # 最新3件
-                            if isinstance(review, dict):
-                                timestamp = review.get('timestamp', '不明')
-                                quality = review.get('quality', 0)
-                                quality_emoji = "✅" if quality >= 4 else "❌"
-                                st.markdown(f"  {j+1}. {timestamp} - 評価: {quality} {quality_emoji}")
+                    # 必修問題チェック
+                    if search_type == "学士試験":
+                        is_hisshu = question_number in GAKUSHI_HISSHU_Q_NUMBERS_SET
                     else:
-                        st.markdown("**学習履歴:** なし")
-            
-            if len(results) > 20:
-                st.info(f"表示は最初の20件です。全{len(results)}件中")
+                        is_hisshu = question_number in HISSHU_Q_NUMBERS_SET
+                    
+                    level_color = level_colors.get(level, "#888888")
+                    hisshu_mark = "🔥" if is_hisshu else ""
+                    
+                    # 色付きドットアイコンをHTMLで生成
+                    color_dot = f'<span style="color: {level_color}; font-size: 1.2em; font-weight: bold;">●</span>'
+                    
+                    with st.expander(f"● {q.get('number', 'N/A')} - {q.get('subject', '未分類')} {hisshu_mark}"):
+                        # レベルを大きく色付きで表示  
+                        st.markdown(f"**学習レベル:** <span style='color: {level_color}; font-weight: bold; font-size: 1.2em;'>{level}</span>", unsafe_allow_html=True)
+                        st.markdown(f"**問題:** {q.get('question', '')[:100]}...")
+                        if q.get('choices'):
+                            st.markdown("**選択肢:**")
+                            for j, choice in enumerate(q['choices']):  # 全ての選択肢を表示
+                                choice_text = choice.get('text', str(choice)) if isinstance(choice, dict) else str(choice)
+                                st.markdown(f"  {chr(65+j)}. {choice_text[:50]}...")
+                        
+                        # 学習履歴の表示
+                        if card and card.get('history'):
+                            st.markdown(f"**学習履歴:** {len(card['history'])}回")
+                            for j, review in enumerate(card['history'][-3:]):  # 最新3件
+                                if isinstance(review, dict):
+                                    timestamp = review.get('timestamp', '不明')
+                                    quality = review.get('quality', 0)
+                                    quality_emoji = "✅" if quality >= 4 else "❌"
+                                    st.markdown(f"  {j+1}. {timestamp} - 評価: {quality} {quality_emoji}")
+                        else:
+                            st.markdown("**学習履歴:** なし")
                 
-            # LaTeX出力機能
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                if st.button("📝 LaTeX形式で生成", key="latex_generate_btn"):
-                    with st.spinner("LaTeXファイルを生成中..."):
-                        latex_content = export_questions_to_latex(results)
-                        st.session_state["latex_content"] = latex_content
-                        st.session_state["latex_filename"] = f"dental_questions_{query}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.tex"
-                    st.success("LaTeX形式のファイルが生成されました！")
-            
-            with col2:
-                if "latex_content" in st.session_state:
-                    st.download_button(
-                        label="💾 LaTeXファイルをダウンロード",
-                        data=st.session_state["latex_content"],
-                        file_name=st.session_state.get("latex_filename", "dental_questions.tex"),
-                        mime="text/plain",
-                        help="生成されたLaTeXファイルをダウンロードします。uplatexでPDFにコンパイルできます。"
-                    )
-                else:
-                    st.button("💾 LaTeXファイルをダウンロード", disabled=True, help="先にLaTeX形式で生成してください")
-            
-            # LaTeX使用方法の説明
-            if "latex_content" in st.session_state:
-                with st.expander("📖 LaTeXファイルのPDF変換方法"):
-                    st.markdown("""
-                    **ダウンロードしたLaTeXファイルをPDFに変換する方法：**
-                    
-                    1. **TeX Live等のLaTeX環境を準備**
-                       - Windows: TeX Live または MiKTeX
-                       - macOS: MacTeX
-                       - Linux: texlive パッケージ
-                    
-                    2. **コマンドラインでPDF変換**
-                       ```bash
-                       uplatex dental_questions_YYYYMMDD_HHMMSS.tex
-                       dvipdfmx dental_questions_YYYYMMDD_HHMMSS.dvi
-                       ```
-                    
-                    3. **オンラインサービスを利用**
-                       - Overleaf (https://www.overleaf.com/)
-                       - Cloud LaTeX等のサービス
-                    
-                    ※ 日本語を含むため、uplatex + dvipdfmxの組み合わせを推奨します。
-                    """)
-            
+                if len(results) > 20:
+                    st.info(f"表示は最初の20件です。全{len(results)}件中")
+                
+                # PDF生成とダウンロード機能
+                st.markdown("#### 📄 PDF生成")
+                
+                colA, colB = st.columns(2)
+                with colA:
+                    if st.button("📄 PDFを生成", key="pdf_tcb_js_generate"):
+                        with st.spinner("PDFを生成中..."):
+                            # 1) LaTeX本文（右上は固定の'◯◯◯◯◯'を表示）
+                            latex_tcb = export_questions_to_latex_tcb_jsarticle(results)
+                            # 2) 画像収集（URL/Storage問わず）
+                            assets, per_q_files = _gather_images_for_questions(results)
+                            # 3) 画像スロットを includegraphics に差し替え
+                            for i, files in enumerate(per_q_files, start=1):
+                                block = _image_block_latex(files)
+                                latex_tcb = latex_tcb.replace(rf"%__IMAGES_SLOT__{i}__", block)
+                            # 4) コンパイル
+                            pdf_bytes, log = compile_latex_to_pdf(latex_tcb, assets=assets)
+                            if pdf_bytes:
+                                ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                                st.session_state["pdf_bytes_tcb_js"] = pdf_bytes
+                                st.session_state["pdf_filename_tcb_js"] = f"dental_questions_tcb_js_{ts}.pdf"
+                                st.success("✅ PDFの生成に成功しました。右のボタンからDLできます。")
+                            else:
+                                st.error("❌ PDF生成に失敗しました。")
+                                with st.expander("ログを見る"):
+                                    st.code(log or "no log", language="text")
+
+                with colB:
+                    if "pdf_bytes_tcb_js" in st.session_state:
+                        st.download_button(
+                            label="⬇️ PDFをダウンロード",
+                            data=st.session_state["pdf_bytes_tcb_js"],
+                            file_name=st.session_state.get("pdf_filename_tcb_js", "dental_questions_tcb_js.pdf"),
+                            mime="application/pdf",
+                            use_container_width=True
+                        )
+                    else:
+                        st.button("⬇️ PDFをDL", disabled=True, use_container_width=True)
+                
+            else:
+                st.warning(f"「{query}」に該当する問題が見つかりませんでした")
         else:
-            st.warning(f"「{query}」に該当する問題が見つかりませんでした")
-    else:
-        st.info("キーワードを入力して検索してください")
+            st.info("キーワードを入力して検索してください")
 
 
 
@@ -2262,59 +2435,141 @@ def render_practice_page():
             skipped = st.form_submit_button("スキップ", type="secondary")
             if submitted_check:
                 for q in q_objects:
-                    answer_str = q.get("answer", "")
-                    if is_ordering_question(q):
-                        # --- 修正箇所②：並び替え問題の解答判定 ---
-                        try:
-                            # セッションからシャッフル情報を取得
-                            shuffle_indices = st.session_state.get(f"shuffled_{q['number']}", list(range(len(q.get("choices", [])))))
-                            # 元のインデックス→シャッフル後のインデックスのマッピングを作成
-                            reverse_shuffle_map = {orig_idx: new_idx for new_idx, orig_idx in enumerate(shuffle_indices)}
-                            
-                            # JSON内の元の正解順（例: "CEABD"）を取得
-                            original_answer_str = q.get("answer", "").strip().upper()
-                            # 元の正解順をインデックスのリストに変換
-                            original_indices_correct_order = [ord(c) - 65 for c in original_answer_str]
-                            
-                            # 元の正解順を、シャッフル後のインデックス順に変換
-                            shuffled_correct_indices = [reverse_shuffle_map[orig_idx] for orig_idx in original_indices_correct_order]
-                            # シャッフル後の正解文字列を作成 (例: "BDACE")
-                            correct_shuffled_answer_str = "".join([chr(65 + i) for i in shuffled_correct_indices])
+                    answer_str = (q.get("answer") or "").strip()
 
-                            # ユーザー入力と比較
-                            user_input = st.session_state.get(f"order_input_{q['number']}", "").strip().upper().replace(" ", "")
-                            st.session_state.result_log[q['number']] = (user_input == correct_shuffled_answer_str)
-                        except (KeyError, TypeError, ValueError):
-                             # 正解データが不正な場合などは不正解とする
-                            st.session_state.result_log[q['number']] = False
+                    # 補助: 文字列 → インデックス列（A=0, B=1,...）。全角英字・区切り文字も許容
+                    def _letters_to_indices(s: str, num_choices: int, uniq=False, sort=False):
+                        if not isinstance(s, str):
+                            return []
+                        # 全角英大文字→半角, 非英字は除去
+                        table = str.maketrans({chr(0xFF21 + i): chr(0x41 + i) for i in range(26)})  # Ａ..Ｚ→A..Z
+                        s = s.translate(table)
+                        # よくある区切り: / , ・ 、 ， と → - > スペース などを全部削除して A..Z のみ残す
+                        s = re.sub(r"[^A-Za-z]", "", s).upper()
+                        idxs = [ord(ch) - 65 for ch in s if 0 <= (ord(ch) - 65) < num_choices]
+                        if uniq:
+                            idxs = list(dict.fromkeys(idxs))
+                        if sort:
+                            idxs = sorted(idxs)
+                        return idxs
+
+                    # 並び替え問題
+                    if is_ordering_question(q):
+                        shuffle_indices = st.session_state.get(
+                            f"shuffled_{q['number']}",
+                            list(range(len(q.get("choices", []))))
+                        )
+                        n = len(q.get("choices", []))
+                        user_raw = st.session_state.get(f"order_input_{q['number']}", "")
+
+                        # 表示上の A,B,C...（=シャッフル後の並び）を元のインデックスへ戻す
+                        disp_idxs = _letters_to_indices(user_raw, n)
+                        if len(disp_idxs) != n:
+                            is_correct = False
+                            reason = "入力の文字数が選択肢数と一致しません。例: ABCDE"
+                        else:
+                            user_orig_order = [shuffle_indices[i] for i in disp_idxs]
+                            correct_orig_order = _letters_to_indices(answer_str, n)
+                            is_correct = (user_orig_order == correct_orig_order)
+                            reason = ""
+
+                        # 結果表示（正解シーケンスも見せる）
+                        def _fmt_seq(idxs):
+                            return " → ".join(chr(65 + i) for i in idxs)
+
+                        if is_correct:
+                            st.success(f"{q['number']}：正解！")
+                        else:
+                            # 正解は元の並び基準。ユーザー入力は表示基準なので、見せるときは表示基準にも直す
+                            # 正解（表示基準）に変換: 正解の各 original idx が shuffle 上で何番目かを逆写像で求める
+                            inv = {orig: disp for disp, orig in enumerate(shuffle_indices)}
+                            correct_disp = [_fmt_seq([inv[i] for i in _letters_to_indices(answer_str, n)])]
+                            st.error(f"{q['number']}：不正解。{reason or ''}  正解は「{correct_disp[0]}」です。")
+
+                        # 学習データ更新（SM-2 + 短期復習）
+                        qid = q["number"]
+                        st.session_state.setdefault("cards", {})
+                        card = st.session_state["cards"].get(qid, {})
+                        quality = 5 if is_correct else 2
+                        st.session_state["cards"][qid] = sm2_update_with_policy(card, quality, qid)
+
+                        # 間違えたら短期復習へ（必修は長め）
+                        if not is_correct:
+                            minutes = SHORT_REVIEW_COOLDOWN_MIN_Q2_HISSHU if (is_hisshu(qid) or is_gakushi_hisshu(qid)) else SHORT_REVIEW_COOLDOWN_MIN_Q1
+                            enqueue_short_review([qid], minutes)
+
+                    # 単一/複数選択（チェックボックス）
                     elif "choices" in q and q["choices"]:
-                        user_answers = []
                         shuffled_choices, shuffle_indices = get_shuffled_choices(q)
                         user_selection_key = f"user_selection_{q['number']}"
-                        for i in range(len(shuffled_choices)):
-                            if st.session_state.get(user_selection_key, [])[i]:
-                                original_index = shuffle_indices[i]
-                                user_answers.append(chr(65 + original_index))
-                        is_correct = False
-                        if "/" in answer_str or "／" in answer_str:
-                            valid_options = answer_str.replace("／", "/").split("/")
-                            if len(user_answers) == 1 and user_answers[0] in valid_options:
-                                is_correct = True
+                        picks_disp = [
+                            i for i, v in enumerate(st.session_state.get(user_selection_key, []))
+                            if bool(v)
+                        ]
+                        picks_orig = sorted(shuffle_indices[i] for i in picks_disp)
+
+                        n = len(q["choices"])
+                        ans_orig = sorted(set(_letters_to_indices(answer_str, n)))
+
+                        is_correct = (picks_orig == ans_orig)
+
+                        # 結果表示
+                        def _fmt_set(idxs):
+                            return " / ".join(sorted(chr(65 + i) for i in idxs))
+
+                        if is_correct:
+                            st.success(f"{q['number']}：正解！")
                         else:
-                            correct_answers = sorted(list(answer_str))
-                            if sorted(user_answers) == correct_answers:
-                                is_correct = True
-                        st.session_state.result_log[q['number']] = is_correct
+                            st.error(f"{q['number']}：不正解。正解は「{_fmt_set(ans_orig)}」です。")
+
+                        # 学習データ更新
+                        qid = q["number"]
+                        st.session_state.setdefault("cards", {})
+                        card = st.session_state["cards"].get(qid, {})
+                        quality = 5 if is_correct else 2
+                        st.session_state["cards"][qid] = sm2_update_with_policy(card, quality, qid)
+
+                        if not is_correct:
+                            minutes = SHORT_REVIEW_COOLDOWN_MIN_Q2_HISSHU if (is_hisshu(qid) or is_gakushi_hisshu(qid)) else SHORT_REVIEW_COOLDOWN_MIN_Q1
+                            enqueue_short_review([qid], minutes)
+
+                    # 自由入力
                     else:
-                        user_input = st.session_state.get(f"free_input_{q['number']}", "").strip()
-                        st.session_state.result_log[q['number']] = (user_input == answer_str.strip())
+                        user_ans = (st.session_state.get(f"free_input_{q['number']}", "") or "").strip()
+                        def _norm(s: str) -> str:
+                            s = str(s)
+                            # 記号・空白を除いて小文字化（ざっくり一致）
+                            return re.sub(r"\s+", "", s).lower()
+
+                        is_correct = (_norm(user_ans) == _norm(answer_str))
+
+                        if is_correct:
+                            st.success(f"{q['number']}：正解！")
+                        else:
+                            st.error(f"{q['number']}：不正解。正解は「{answer_str}」です。")
+
+                        # 学習データ更新
+                        qid = q["number"]
+                        st.session_state.setdefault("cards", {})
+                        card = st.session_state["cards"].get(qid, {})
+                        quality = 5 if is_correct else 2
+                        st.session_state["cards"][qid] = sm2_update_with_policy(card, quality, qid)
+
+                        if not is_correct:
+                            minutes = SHORT_REVIEW_COOLDOWN_MIN_Q2_HISSHU if (is_hisshu(qid) or is_gakushi_hisshu(qid)) else SHORT_REVIEW_COOLDOWN_MIN_Q1
+                            enqueue_short_review([qid], minutes)
+
+                # フォーム全体の後処理：このグループを完了 → 次の問題へ
                 st.session_state[f"checked_{group_id}"] = True
+                save_user_data(st.session_state.get("uid"), st.session_state)
+                # 次の問題へ進める
+                st.session_state.current_q_group = []
                 st.rerun()
-            elif skipped:
-                st.session_state.current_q_group = get_next_q_group()
-                for key in list(st.session_state.keys()):
-                    if key.startswith(("checked_", "user_selection_", "shuffled_", "free_input_", "order_input_")):
-                        del st.session_state[key]
+            if skipped:
+                # スキップ：現在のグループを末尾へ戻して次へ
+                st.session_state.main_queue = st.session_state.get("main_queue", [])
+                st.session_state.main_queue.append(current_q_group)
+                st.session_state.current_q_group = []
                 st.rerun()
     else:
         for q in q_objects:
@@ -2492,8 +2747,6 @@ def render_practice_page():
             st.warning("画像を読み込めませんでした")
 
 # --- メイン ---
-st.title("🦷 歯科国家試験AI対策アプリ")
-
 # 自動ログインを試行（高速化版・1回限り）
 if not st.session_state.get("user_logged_in") and not st.session_state.get("auto_login_attempted"):
     import time
@@ -2512,6 +2765,8 @@ if not st.session_state.get("user_logged_in") or not ensure_valid_session():
             if k in st.session_state:
                 del st.session_state[k]
     
+    # ログイン画面でのみタイトル表示
+    st.title("🦷 歯科国家試験AI対策アプリ")
     st.markdown("### 🔐 ログイン／新規登録")
     tab_login, tab_signup = st.tabs(["ログイン", "新規登録"])
     with tab_login:
@@ -2568,11 +2823,6 @@ if not st.session_state.get("user_logged_in") or not ensure_valid_session():
                 st.success("ログイン成功！")
                 print(f"[DEBUG] ログイン処理完了")
                 st.rerun()
-                # with st.spinner('データ移行中...'):
-                #     migrate_start = time.time()
-                #     migrate_progress_doc_if_needed(st.session_state["uid"], login_email)
-                #     progress_time = time.time() - migrate_start
-                #     st.write(f"進捗データ移行完了: {progress_time:.2f}秒")
                     
                 #     perm_start = time.time()
                 #     migrate_permission_if_needed(st.session_state["uid"], login_email)
@@ -2712,7 +2962,7 @@ else:
                 else:
                     # Anki風の日次目標表示
                     st.markdown("#### 📅 本日の学習目標")
-                    today = datetime.date.today()
+                    today = datetime.datetime.now(datetime.timezone.utc).date()
                     today_str = today.strftime('%Y-%m-%d')
                     
                     # 本日の復習対象カード数を計算
@@ -2791,75 +3041,68 @@ else:
                     daily_goal = review_count + new_target
                     progress_rate = min(100, (total_done / daily_goal * 100)) if daily_goal > 0 else 0
                     
-                    # メイン進捗表示
-                    col1, col2, col3 = st.columns([2, 1, 2])
+                    # メイン進捗表示（縦並び）
+                    st.metric(
+                        label="本日の学習",
+                        value=f"{total_done}枚",
+                        help=f"目標: {daily_goal}枚 (達成率: {progress_rate:.0f}%)"
+                    )
                     
-                    with col1:
+                    if total_done >= daily_goal:
                         st.metric(
-                            label="📚 本日の学習",
-                            value=f"{total_done}枚",
-                            help=f"目標: {daily_goal}枚 (達成率: {progress_rate:.0f}%)"
+                            label="達成率",
+                            value="100%",
+                            help="目標達成おめでとうございます！"
+                        )
+                    else:
+                        st.metric(
+                            label="達成率",
+                            value=f"{progress_rate:.0f}%",
+                            help=f"あと{daily_goal - total_done}枚で目標達成"
                         )
                     
-                    with col2:
-                        if total_done >= daily_goal:
-                            st.metric(
-                                label="🎯 達成率",
-                                value="100%",
-                                help="目標達成おめでとうございます！"
-                            )
-                        else:
-                            st.metric(
-                                label="🎯 達成率",
-                                value=f"{progress_rate:.0f}%",
-                                help=f"あと{daily_goal - total_done}枚で目標達成"
-                            )
-                    
-                    with col3:
-                        remaining_total = review_remaining + new_remaining
-                        if remaining_total > 0:
-                            st.metric(
-                                label="� 残り目標",
-                                value=f"{remaining_total}枚",
-                                help="本日の残り学習目標数"
-                            )
-                        else:
-                            st.metric(
-                                label="✅ 完了",
-                                value="目標達成",
-                                help="本日の学習目標をすべて達成しました"
-                            )
+                    remaining_total = review_remaining + new_remaining
+                    if remaining_total > 0:
+                        st.metric(
+                            label="残り目標",
+                            value=f"{remaining_total}枚",
+                            help="本日の残り学習目標数"
+                        )
+                    else:
+                        st.metric(
+                            label="✅ 完了",
+                            value="目標達成",
+                            help="本日の学習目標をすべて達成しました"
+                        )
                     
                     st.markdown("---")
                     
-                    # 詳細進捗表示
-                    col4, col5 = st.columns(2)
-                    with col4:
-                        if review_remaining > 0:
-                            st.metric(
-                                label="🔄 復習",
-                                value=f"{review_remaining}枚",
-                                help=f"復習対象: {review_count}枚 / 完了: {today_reviews_done}枚"
-                            )
-                        else:
-                            st.metric(
-                                label="🔄 復習",
-                                value="完了 ✅",
-                                help=f"本日の復習: {today_reviews_done}枚完了"
-                            )
-                    with col5:
-                        if new_remaining > 0:
-                            st.metric(
-                                label="✨ 新規",
-                                value=f"{new_remaining}枚",
-                                help=f"新規目標: {new_target}枚 / 完了: {today_new_done}枚"
-                            )
-                        else:
-                            st.metric(
-                                label="✨ 新規",
-                                value="完了 ✅",
-                                help=f"本日の新規学習: {today_new_done}枚完了"
-                            )
+                    # 詳細進捗表示（縦並び）
+                    if review_remaining > 0:
+                        st.metric(
+                            label="復習",
+                            value=f"{review_remaining}枚",
+                            help=f"復習対象: {review_count}枚 / 完了: {today_reviews_done}枚"
+                        )
+                    else:
+                        st.metric(
+                            label="復習",
+                            value="完了 ✅",
+                            help=f"本日の復習: {today_reviews_done}枚完了"
+                        )
+                    
+                    if new_remaining > 0:
+                        st.metric(
+                            label="新規",
+                            value=f"{new_remaining}枚",
+                            help=f"新規目標: {new_target}枚 / 完了: {today_new_done}枚"
+                        )
+                    else:
+                        st.metric(
+                            label="新規",
+                            value="完了 ✅",
+                            help=f"本日の新規学習: {today_new_done}枚完了"
+                        )
                     
                     # 学習開始ボタン
                     if st.button("🚀 今日の学習を開始する", type="primary", key="start_today_study"):
@@ -3138,7 +3381,6 @@ else:
         else:
             # --- 検索・進捗ページのサイドバー ---
             st.markdown("### 📊 分析・検索ツール")
-            st.markdown("このページは学習状況の分析と検索に特化しています。")
             
             # 検索・分析用のフィルター機能のみ
             uid = st.session_state.get("uid")
@@ -3176,6 +3418,9 @@ else:
         if st.button("ログアウト", key="logout_btn"):
             uid = st.session_state.get("uid")
             save_user_data(uid, st.session_state)
+            
+            # 学士権限のキャッシュをクリア
+            check_gakushi_permission.clear()
             
             for k in ["user_logged_in", "id_token", "refresh_token", "name", "username", "email", "uid", "user_data_loaded", "token_timestamp"]:
                 if k in st.session_state:
