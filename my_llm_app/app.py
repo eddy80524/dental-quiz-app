@@ -2587,7 +2587,8 @@ def render_practice_page():
 
                 # フォーム全体の後処理：解答結果を保存し、自己評価段階へ移行
                 st.session_state[f"checked_{group_id}"] = True
-                # 自動で次に進まず、自己評価フォームを表示するため st.rerun() を削除
+                # 画面を再描画して自己評価フォームを表示
+                st.rerun()
             if skipped:
                 # スキップ：現在のグループを末尾へ戻して次へ
                 st.session_state.main_queue = st.session_state.get("main_queue", [])
