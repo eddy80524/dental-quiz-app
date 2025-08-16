@@ -117,6 +117,47 @@ st.markdown("""
         border-color: #718096 !important;
     }
     
+    /* フォーム内のボタン - プライマリ */
+    .stForm button[kind="primary"] {
+        background-color: #4299e1 !important;
+        color: #ffffff !important;
+        border: 1px solid #3182ce !important;
+    }
+    
+    .stForm button[kind="primary"]:hover {
+        background-color: #3182ce !important;
+        border-color: #2c5282 !important;
+    }
+    
+    /* フォーム内のボタン - セカンダリ（スキップボタン） */
+    .stForm button[kind="secondary"] {
+        background-color: #4a5568 !important;
+        color: #fafafa !important;
+        border: 1px solid #718096 !important;
+    }
+    
+    .stForm button[kind="secondary"]:hover {
+        background-color: #718096 !important;
+        border-color: #a0aec0 !important;
+    }
+    
+    /* フォーム送信ボタン（form_submit_button）の詳細指定 */
+    [data-testid="stForm"] button {
+        color: #fafafa !important;
+    }
+    
+    [data-testid="stForm"] button[kind="secondary"] {
+        background-color: #4a5568 !important;
+        color: #fafafa !important;
+        border: 1px solid #718096 !important;
+    }
+    
+    [data-testid="stForm"] button[kind="secondary"]:hover {
+        background-color: #718096 !important;
+        border-color: #a0aec0 !important;
+        color: #ffffff !important;
+    }
+    
     /* 入力フィールド */
     .stTextInput > div > div > input {
         background-color: #262730 !important;
