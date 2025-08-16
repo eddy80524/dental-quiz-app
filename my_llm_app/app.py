@@ -175,6 +175,35 @@ st.markdown("""
         color: #ffffff !important;
     }
     
+    /* 最強力なセレクター - form submit button の直接指定 */
+    .element-container .stForm button[data-testid] {
+        background-color: #4a5568 !important;
+        color: #ffffff !important;
+        border: 1px solid #718096 !important;
+    }
+    
+    /* セカンダリボタンの完全上書き */
+    button[kind="secondary"] {
+        background-color: #4a5568 !important;
+        color: #ffffff !important;
+        border: 1px solid #718096 !important;
+    }
+    
+    button[kind="secondary"]:hover {
+        background-color: #718096 !important;
+        color: #ffffff !important;
+        border-color: #a0aec0 !important;
+    }
+    
+    /* 最後の手段 - 全ての secondary ボタンを強制的に修正 */
+    [data-baseweb="button"][data-testid*="secondary"], 
+    [class*="secondary"],
+    button[type="submit"][kind="secondary"] {
+        background-color: #4a5568 !important;
+        color: #ffffff !important;
+        border: 1px solid #718096 !important;
+    }
+    
     /* 入力フィールド */
     .stTextInput > div > div > input {
         background-color: #262730 !important;
@@ -240,6 +269,31 @@ st.markdown("""
     }
 }
 </style>
+
+<script>
+// ダークモード時のスキップボタン強制修正
+setTimeout(function() {
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        // セカンダリボタンを見つけて強制的にスタイル適用
+        const secondaryButtons = document.querySelectorAll('button[kind="secondary"]');
+        secondaryButtons.forEach(function(button) {
+            button.style.backgroundColor = '#4a5568';
+            button.style.color = '#ffffff';
+            button.style.border = '1px solid #718096';
+        });
+        
+        // フォーム内のボタンも確認
+        const formButtons = document.querySelectorAll('.stForm button, [data-testid="stForm"] button');
+        formButtons.forEach(function(button) {
+            if (button.textContent.includes('スキップ') || button.getAttribute('kind') === 'secondary') {
+                button.style.backgroundColor = '#4a5568';
+                button.style.color = '#ffffff';
+                button.style.border = '1px solid #718096';
+            }
+        });
+    }
+}, 1000);
+</script>
 """, unsafe_allow_html=True)
 
 # Secrets存在チェック（早期エラー検出）
