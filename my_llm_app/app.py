@@ -3176,8 +3176,25 @@ if not st.session_state.get("user_logged_in") or not ensure_valid_session():
                     elif "USER_DISABLED" in error_msg:
                         st.error("このアカウントは無効化されています。")
     with tab_signup:
-        st.warning("🚧 新規登録は一時的に停止中です")
-        st.info("既存のアカウントをお持ちの方は「ログイン」タブからログインしてください。")
+        # 新規登録の一時停止フラグ（必要に応じて True に変更）
+        SIGNUP_TEMPORARILY_DISABLED = False
+        
+        if SIGNUP_TEMPORARILY_DISABLED:
+            st.warning("🚧 新規登録は一時的に停止中です")
+            st.info("既存のアカウントをお持ちの方は「ログイン」タブからログインしてください。")
+        else:
+            signup_email = st.text_input("メールアドレス", key="signup_email")
+            signup_password = st.text_input("パスワード（6文字以上）", type="password", key="signup_password")
+            if st.button("新規登録", key="signup_btn"):
+                result = firebase_signup(signup_email, signup_password)
+                if "idToken" in result:
+                    st.success("新規登録に成功しました。ログインしてください。")
+                else:
+                    st.error("新規登録に失敗しました。メールアドレスが既に使われているか、パスワードが短すぎます。")
+        
+        # 以下はバックアップ用のコメントアウトコード（削除しないでください）
+        # st.warning("🚧 新規登録は一時的に停止中です")
+        # st.info("既存のアカウントをお持ちの方は「ログイン」タブからログインしてください。")
         # signup_email = st.text_input("メールアドレス", key="signup_email")
         # signup_password = st.text_input("パスワード（6文字以上）", type="password", key="signup_password")
         # if st.button("新規登録", key="signup_btn"):
