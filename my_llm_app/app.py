@@ -907,6 +907,10 @@ def restore_ui_state_from_user_data(user_data):
         # セッション復帰用のフラグを設定（後でユーザーに選択肢を提示）
         st.session_state["has_previous_session"] = True
         st.session_state["previous_session_type"] = session_type
+        
+        # おまかせ演習の場合は学習モードを強制的に設定
+        if session_type == "おまかせ演習":
+            st.session_state["learning_mode"] = "おまかせ学習（推奨）"
     
     print(f"[DEBUG] UI状態復帰完了")
 
@@ -2546,9 +2550,23 @@ def render_practice_page():
         st.success("🔄 前回のセッションを復帰しました")
         # 復帰フラグをクリア
         st.session_state.pop("continue_previous", None)
-        # 前回のアクティブセッション情報があれば、そのまま継続
+        
+        # 前回のアクティブセッション情報があれば、完全なデータを読み込んでキューを復元
         if st.session_state.get("current_question_index") is not None:
             st.info(f"問題 {st.session_state.get('current_question_index', 0) + 1} から継続します")
+        
+        # おまかせ演習の場合は学習キューを復元
+        uid = st.session_state.get("uid")
+        if uid and st.session_state.get("previous_session_type") == "おまかせ演習":
+            st.info("📚 おまかせ演習の学習キューを復元中...")
+            # 完全なユーザーデータを読み込み
+            full_data = load_user_data_full(uid, cache_buster=int(time.time()))
+            if full_data:
+                # 学習キューをセッションに復元
+                st.session_state["main_queue"] = full_data.get("main_queue", [])
+                st.session_state["short_term_review_queue"] = full_data.get("short_term_review_queue", [])
+                st.session_state["current_q_group"] = full_data.get("current_q_group", [])
+                print(f"[DEBUG] 学習キュー復元: main_queue={len(st.session_state.get('main_queue', []))}, current_q_group={len(st.session_state.get('current_q_group', []))}")
     
     def get_next_q_group():
         now = datetime.datetime.now(datetime.timezone.utc)
@@ -2663,6 +2681,7 @@ def render_practice_page():
             for q in q_objects:
                 st.markdown(f"#### {q['number']}")
                 st.markdown(chem_latex(q.get('question', '')))
+                
                 if is_ordering_question(q):
                     # --- 修正箇所①：並び替え問題の選択肢表示 ---
                     # 選択肢をシャッフルし、A, B, C...のラベルを付けて表示
@@ -2885,9 +2904,16 @@ def render_practice_page():
                 is_correct = st.session_state.result_log.get(q["number"], False)
                 if is_correct:
                     st.markdown("<span style='font-size:1.5em; color:green;'>✓ 正解！</span>", unsafe_allow_html=True)
+                    # 複数解答の場合はその旨を表示
+                    if "/" in answer_str or "／" in answer_str:
+                        st.markdown(f"<span style='color:green;'>複数解答問題でした - 正解: {'・'.join(correct_labels)} （いずれも正解）</span>", unsafe_allow_html=True)
                 else:
                     st.markdown("<span style='font-size:1.5em; color:red;'>× 不正解</span>", unsafe_allow_html=True)
-                    st.markdown(f"<span style='color:blue;'>正解: {'・'.join(correct_labels)}</span>", unsafe_allow_html=True)
+                    # 複数解答の場合はその旨を表示
+                    if "/" in answer_str or "／" in answer_str:
+                        st.markdown(f"<span style='color:blue;'>正解: {'・'.join(correct_labels)} （複数解答問題 - いずれも正解）</span>", unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"<span style='color:blue;'>正解: {'・'.join(correct_labels)}</span>", unsafe_allow_html=True)
             else:
                 st.text_input("あなたの解答", value=st.session_state.get(f"free_input_{q['number']}", ""), disabled=True)
                 
@@ -3469,78 +3495,82 @@ else:
                     
                     # 学習開始ボタン
                     if st.button("🚀 今日の学習を開始する", type="primary", key="start_today_study"):
-                        # セッション維持：ユーザー活動検知
-                        if not ensure_valid_session():
-                            st.warning("セッションが期限切れです。再度ログインしてください。")
-                            st.rerun()
-                        
-                        # 学習開始中フラグを設定
-                        st.session_state["initializing_study"] = True
-                        
-                        with st.spinner("学習セッションを準備中..."):
-                            # 復習カードをメインキューに追加
-                            grouped_queue = []
-                            
-                            # 復習カードの追加
-                            for q_num, card in cards.items():
-                                if 'next_review' in card:
-                                    next_review = card['next_review']
-                                    should_review = False
-                                    
-                                    if isinstance(next_review, str):
-                                        try:
-                                            next_review_date = datetime.datetime.fromisoformat(next_review).date()
-                                            should_review = next_review_date <= today
-                                        except:
-                                            pass
-                                    elif isinstance(next_review, datetime.datetime):
-                                        should_review = next_review.date() <= today
-                                    elif isinstance(next_review, datetime.date):
-                                        should_review = next_review <= today
-                                    
-                                    if should_review:
-                                        grouped_queue.append([q_num])
-                            
-                            # 新規カードの追加
-                            recent_ids = list(st.session_state.get("result_log", {}).keys())[-15:]
-                            uid = st.session_state.get("uid")
-                            has_gakushi_permission = check_gakushi_permission(uid)
-                            
-                            if has_gakushi_permission:
-                                available_questions = ALL_QUESTIONS
-                            else:
-                                available_questions = [q for q in ALL_QUESTIONS if not q.get("number", "").startswith("G")]
-                            
-                            pick_ids = pick_new_cards_for_today(
-                                available_questions,
-                                st.session_state.get("cards", {}),
-                                N=new_target,
-                                recent_qids=recent_ids
-                            )
-                            
-                            for qid in pick_ids:
-                                grouped_queue.append([qid])
-                                if qid not in st.session_state.cards:
-                                    st.session_state.cards[qid] = {}
-                        
-                            
-                            if grouped_queue:
-                                st.session_state.main_queue = grouped_queue
-                                st.session_state.short_term_review_queue = []
-                                st.session_state.current_q_group = []
-                                
-                                # 一時状態をクリア
-                                for k in list(st.session_state.keys()):
-                                    if k.startswith(("checked_", "user_selection_", "shuffled_", "free_input_", "order_input_")):
-                                        del st.session_state[k]
-                                
-                                save_user_data(st.session_state.get("uid"), st.session_state)
-                                st.session_state["initializing_study"] = False
-                                st.success(f"今日の学習を開始します！（{len(grouped_queue)}問）")
+                        # セッション復帰時は既存キューを優先
+                        if st.session_state.get("continue_previous") or st.session_state.get("main_queue"):
+                            st.info("前回のセッションを継続します")
+                        else:
+                            # セッション維持：ユーザー活動検知
+                            if not ensure_valid_session():
+                                st.warning("セッションが期限切れです。再度ログインしてください。")
                                 st.rerun()
-                            else:
-                                st.session_state["initializing_study"] = False
-                                st.info("今日の学習対象がありません。")
+                            
+                            # 学習開始中フラグを設定
+                            st.session_state["initializing_study"] = True
+                            
+                            with st.spinner("学習セッションを準備中..."):
+                                # 復習カードをメインキューに追加
+                                grouped_queue = []
+                                
+                                # 復習カードの追加
+                                for q_num, card in cards.items():
+                                    if 'next_review' in card:
+                                        next_review = card['next_review']
+                                        should_review = False
+                                        
+                                        if isinstance(next_review, str):
+                                            try:
+                                                next_review_date = datetime.datetime.fromisoformat(next_review).date()
+                                                should_review = next_review_date <= today
+                                            except:
+                                                pass
+                                        elif isinstance(next_review, datetime.datetime):
+                                            should_review = next_review.date() <= today
+                                        elif isinstance(next_review, datetime.date):
+                                            should_review = next_review <= today
+                                        
+                                        if should_review:
+                                            grouped_queue.append([q_num])
+                                
+                                # 新規カードの追加
+                                recent_ids = list(st.session_state.get("result_log", {}).keys())[-15:]
+                                uid = st.session_state.get("uid")
+                                has_gakushi_permission = check_gakushi_permission(uid)
+                                
+                                if has_gakushi_permission:
+                                    available_questions = ALL_QUESTIONS
+                                else:
+                                    available_questions = [q for q in ALL_QUESTIONS if not q.get("number", "").startswith("G")]
+                                
+                                pick_ids = pick_new_cards_for_today(
+                                    available_questions,
+                                    st.session_state.get("cards", {}),
+                                    N=new_target,
+                                    recent_qids=recent_ids
+                                )
+                                
+                                for qid in pick_ids:
+                                    grouped_queue.append([qid])
+                                    if qid not in st.session_state.cards:
+                                        st.session_state.cards[qid] = {}
+                            
+                                
+                                if grouped_queue:
+                                    st.session_state.main_queue = grouped_queue
+                                    st.session_state.short_term_review_queue = []
+                                    st.session_state.current_q_group = []
+                                    
+                                    # 一時状態をクリア
+                                    for k in list(st.session_state.keys()):
+                                        if k.startswith(("checked_", "user_selection_", "shuffled_", "free_input_", "order_input_")):
+                                            del st.session_state[k]
+                                    
+                                    save_user_data(st.session_state.get("uid"), st.session_state)
+                                    st.session_state["initializing_study"] = False
+                                    st.success(f"今日の学習を開始します！（{len(grouped_queue)}問）")
+                                    st.rerun()
+                                else:
+                                    st.session_state["initializing_study"] = False
+                                    st.info("今日の学習対象がありません。")
             
             else:
                 # 自由演習モードのUI
