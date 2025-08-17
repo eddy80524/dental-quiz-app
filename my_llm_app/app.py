@@ -36,6 +36,24 @@ st.markdown("""
 .stSidebar {
     background-color: #f0f2f6;
 }
+
+/* サイドバーのボタン色を統一（メイン画面と同じ青色に） */
+.stSidebar .stButton > button[kind="primary"] {
+    background-color: #0066cc !important;
+    color: white !important;
+    border: none !important;
+}
+
+.stSidebar .stButton > button[kind="primary"]:hover {
+    background-color: #0052a3 !important;
+    color: white !important;
+}
+
+.stSidebar .stButton > button[kind="primary"]:focus {
+    background-color: #0066cc !important;
+    color: white !important;
+    box-shadow: 0 0 0 0.2rem rgba(0, 102, 204, 0.25) !important;
+}
 </style>""", unsafe_allow_html=True)
 
 # Secrets存在チェック（早期エラー検出）
@@ -140,11 +158,30 @@ def get_cookie_manager():
         try:
             cookie_password = st.secrets.get("cookie_password", "default_insecure_password_change_in_production")
             print(f"[DEBUG] Cookie manager初期化開始")
-            st.session_state.cookie_manager = EncryptedCookieManager(
+            cookie_manager = EncryptedCookieManager(
                 prefix="dentai_",
                 password=cookie_password
             )
             print(f"[DEBUG] Cookie manager作成完了")
+            
+            # 初期化直後は準備完了まで待機
+            if hasattr(cookie_manager, '_ready'):
+                if not cookie_manager._ready:
+                    print(f"[DEBUG] Cookie manager created but not ready, waiting...")
+                    st.session_state.cookie_manager = cookie_manager
+                    return cookie_manager
+            
+            # 簡単なテストでアクセス可能性を確認
+            try:
+                test_value = cookie_manager.get("init_test", "default")
+                print(f"[DEBUG] Cookie manager test successful")
+                st.session_state.cookie_manager = cookie_manager
+                return cookie_manager
+            except Exception as test_e:
+                print(f"[DEBUG] Cookie manager test failed: {test_e}")
+                st.session_state.cookie_manager = cookie_manager  # 準備中でも保存
+                return cookie_manager
+                
         except Exception as e:
             print(f"[DEBUG] Cookie manager作成失敗: {e}")
             st.session_state.cookie_manager = None
@@ -189,11 +226,13 @@ def get_cookies():
                     return None
                 # 簡単なアクセステストを行う
                 _ = cookies.get("test", None)
+                print("[DEBUG] Cookie manager is ready and accessible")
                 return cookies
             except Exception as e:
                 print(f"[DEBUG] Cookie access error during get: {str(e)}")
                 return None
         else:
+            print("[DEBUG] Cookie manager is None in session state")
             return None
     
     # 初回のみ初期化を試行
@@ -201,19 +240,20 @@ def get_cookies():
     try:
         cookies = get_cookie_manager()
         if cookies is not None:
-            # 準備完了まで待機
+            # 準備完了まで待機（時間をおいて再試行）
             try:
                 if hasattr(cookies, '_ready'):
                     if not cookies._ready:
-                        print("[DEBUG] Cookie manager created but not ready")
+                        print("[DEBUG] Cookie manager created but not ready, will retry next run")
                         return None
                 # 簡単なアクセステストを行う
-                _ = cookies.get("test", None)
+                test_value = cookies.get("test", None)
                 st.session_state.cookie_manager = cookies
                 print("[DEBUG] Cookie manager ready and functional")
                 return cookies
             except Exception as e:
                 print(f"[DEBUG] Cookie readiness test failed: {str(e)}")
+                print("[DEBUG] Will retry cookie initialization on next app reload")
                 return None
         else:
             print("[DEBUG] Cookie manager is None")
@@ -319,26 +359,68 @@ def firebase_refresh_token(refresh_token):
         print(f"Token refresh error: {e}")
     return None
 
+def firebase_reset_password(email):
+    """Firebase パスワードリセットメール送信"""
+    api_key = st.secrets["firebase_api_key"]
+    password_reset_url = f"https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key={api_key}"
+    
+    payload = {
+        "requestType": "PASSWORD_RESET",
+        "email": email
+    }
+    
+    session = get_http_session()
+    try:
+        r = session.post(password_reset_url, json=payload, timeout=5)
+        result = r.json()
+        
+        if r.status_code == 200:
+            print(f"[DEBUG] パスワードリセットメール送信成功: {email}")
+            return {"success": True, "message": "パスワードリセットメールを送信しました"}
+        else:
+            print(f"[DEBUG] パスワードリセットメール送信失敗: {result}")
+            error_message = result.get("error", {}).get("message", "Unknown error")
+            
+            # エラーメッセージを日本語化
+            if "EMAIL_NOT_FOUND" in error_message:
+                return {"success": False, "message": "このメールアドレスは登録されていません"}
+            elif "INVALID_EMAIL" in error_message:
+                return {"success": False, "message": "メールアドレスの形式が正しくありません"}
+            else:
+                return {"success": False, "message": f"エラー: {error_message}"}
+                
+    except requests.exceptions.RequestException as e:
+        print(f"[DEBUG] パスワードリセット通信エラー: {e}")
+        return {"success": False, "message": "ネットワークエラーが発生しました"}
+    except Exception as e:
+        print(f"[DEBUG] パスワードリセット例外: {e}")
+        return {"success": False, "message": "予期しないエラーが発生しました"}
+
 def is_token_expired(token_timestamp, expires_in=3600):
-    """トークンが期限切れかどうかをチェック（デフォルト1時間だが、30分でリフレッシュ）"""
+    """トークンが期限切れかどうかをチェック（デフォルト1時間だが、50分でリフレッシュで余裕を持つ）"""
     if not token_timestamp:
         return True
     now = datetime.datetime.now(datetime.timezone.utc)
     token_time = datetime.datetime.fromisoformat(token_timestamp)
-    # 30分（1800秒）で期限切れとして扱い、余裕を持ってリフレッシュ
-    return (now - token_time).total_seconds() > 1800
+    # 50分（3000秒）で期限切れとして扱い、余裕を持ってリフレッシュ（従来30分→50分に延長）
+    return (now - token_time).total_seconds() > 3000
 
 def try_auto_login_from_cookie():
     """クッキーからの自動ログイン（超高速版）"""
     import time
     start = time.time()
     
+    # すでにログイン済みの場合は早期リターン
+    if st.session_state.get("user_logged_in"):
+        print(f"[DEBUG] try_auto_login_from_cookie - 既にログイン済み: {time.time() - start:.3f}s")
+        return False
+    
     # Cookie取得（安全に）
     cookies = get_cookies()
     
-    # 早期リターン条件（Noneチェック）
-    if cookies is None or st.session_state.get("user_logged_in"):
-        print(f"[DEBUG] try_auto_login_from_cookie - 早期リターン: {time.time() - start:.3f}s")
+    # Cookie取得に失敗した場合は早期リターン
+    if cookies is None:
+        print(f"[DEBUG] try_auto_login_from_cookie - Cookie取得失敗: {time.time() - start:.3f}s")
         return False
     
     # Cookie取得（高速化・安全性強化）
@@ -353,7 +435,8 @@ def try_auto_login_from_cookie():
             email = cookies.get("email") or ""
             uid = cookies.get("uid") or ""
         except Exception as e:
-            print(f"[DEBUG] Cookie access error during get: {e}")
+            print(f"[DEBUG] Cookie access error during auto-login: {e}")
+            print(f"[DEBUG] try_auto_login_from_cookie - Cookie準備未完了: {time.time() - start:.3f}s")
             return False
             
         if not rt:
@@ -398,7 +481,7 @@ def try_auto_login_from_cookie():
         return False
 
 def ensure_valid_session():
-    """セッションが有効かチェックし、必要に応じてトークンをリフレッシュ"""
+    """セッションが有効かチェックし、必要に応じてトークンをリフレッシュ（強化版）"""
     if not st.session_state.get("user_logged_in"):
         return False
     
@@ -407,15 +490,33 @@ def ensure_valid_session():
     
     # トークンが期限切れの場合はリフレッシュを試行
     if is_token_expired(token_timestamp) and refresh_token:
+        print(f"[DEBUG] トークン期限切れ検出 - 自動リフレッシュ実行中")
         refresh_result = firebase_refresh_token(refresh_token)
         if refresh_result:
             # トークンの更新
             st.session_state["id_token"] = refresh_result["idToken"]
             st.session_state["refresh_token"] = refresh_result["refreshToken"]
             st.session_state["token_timestamp"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            
+            # Cookieも更新（Remember meの場合）
+            cookies = get_cookies()
+            if cookies is not None:
+                cookie_data = {
+                    "refresh_token": refresh_result["refreshToken"],
+                    "uid": st.session_state.get("uid"),
+                    "email": st.session_state.get("email")
+                }
+                safe_save_cookies(cookies, cookie_data)
+            
+            print(f"[DEBUG] セッション自動リフレッシュ成功")
             return True
         else:
             # リフレッシュに失敗した場合はログアウト
+            print(f"[DEBUG] セッションリフレッシュ失敗 - ログアウト実行")
+            # セッション状態をクリア
+            for key in ["user_logged_in", "authenticated", "id_token", "refresh_token", "token_timestamp", "uid", "email"]:
+                if key in st.session_state:
+                    del st.session_state[key]
             return False
     
     return True
@@ -2530,6 +2631,11 @@ def render_practice_page():
             """, unsafe_allow_html=True)
             skipped = st.form_submit_button("スキップ", type="secondary")
             if submitted_check:
+                # セッション維持：ユーザー活動検知
+                if not ensure_valid_session():
+                    st.warning("セッションが期限切れです。再度ログインしてください。")
+                    st.rerun()
+                    
                 for q in q_objects:
                     answer_str = (q.get("answer") or "").strip()
 
@@ -2641,6 +2747,11 @@ def render_practice_page():
                 # 画面を再描画して自己評価フォームを表示
                 st.rerun()
             if skipped:
+                # セッション維持：ユーザー活動検知
+                if not ensure_valid_session():
+                    st.warning("セッションが期限切れです。再度ログインしてください。")
+                    st.rerun()
+                    
                 # スキップ：現在のグループを末尾へ戻して次へ
                 st.session_state.main_queue = st.session_state.get("main_queue", [])
                 st.session_state.main_queue.append(current_q_group)
@@ -2727,6 +2838,11 @@ def render_practice_page():
             
             selected_eval_label = st.radio("自己評価", eval_map.keys(), horizontal=True, label_visibility="collapsed", index=default_index)
             if st.form_submit_button("次の問題へ", type="primary"):
+                # セッション維持：ユーザー活動検知
+                if not ensure_valid_session():
+                    st.warning("セッションが期限切れです。再度ログインしてください。")
+                    st.rerun()
+                    
                 with st.spinner('学習記録を保存中...'):
                     quality = eval_map[selected_eval_label]
                     # ★ 評価送信の処理内（quality を決めた後）
@@ -2865,7 +2981,7 @@ if not st.session_state.get("user_logged_in") or not ensure_valid_session():
     # ログイン画面でのみタイトル表示
     st.title("🦷 歯科国家試験AI対策アプリ")
     st.markdown("### 🔐 ログイン／新規登録")
-    tab_login, tab_signup = st.tabs(["ログイン", "新規登録"])
+    tab_login, tab_signup, tab_reset = st.tabs(["ログイン", "新規登録", "パスワードリセット"])
     with tab_login:
         login_email = st.text_input("メールアドレス", key="login_email", autocomplete="email")
         login_password = st.text_input("パスワード", type="password", key="login_password")
@@ -2970,10 +3086,56 @@ if not st.session_state.get("user_logged_in") or not ensure_valid_session():
         #         st.success("新規登録に成功しました。ログインしてください。")
         #     else:
         #         st.error("新規登録に失敗しました。メールアドレスが既に使われているか、パスワードが短すぎます。")
+    
+    with tab_reset:
+        st.markdown("#### 🔑 パスワードをリセット")
+        st.info("登録済みのメールアドレスを入力すると、パスワードリセット用のリンクをお送りします。")
+        
+        reset_email = st.text_input("メールアドレス", key="reset_email", autocomplete="email")
+        
+        # パスワードリセット処理中のフラグ
+        reset_disabled = st.session_state.get("reset_in_progress", False)
+        if reset_disabled:
+            st.info("パスワードリセットメールを送信中です。しばらくお待ちください...")
+        
+        if st.button("パスワードリセットメールを送信", key="reset_btn", disabled=reset_disabled, type="primary"):
+            if not reset_email:
+                st.error("メールアドレスを入力してください。")
+            else:
+                # リセット処理中フラグを設定
+                st.session_state["reset_in_progress"] = True
+                
+                with st.spinner('パスワードリセットメールを送信中...'):
+                    result = firebase_reset_password(reset_email)
+                
+                # 処理完了後フラグをクリア
+                st.session_state["reset_in_progress"] = False
+                
+                if result["success"]:
+                    st.success("✅ " + result["message"])
+                    st.info("📧 メールボックスをご確認ください。メールが届かない場合は、迷惑メールフォルダもご確認ください。")
+                else:
+                    st.error("❌ " + result["message"])
+        
+        st.markdown("---")
+        st.markdown("**💡 ヒント:**")
+        st.markdown("- パスワードリセット後は、新しいパスワードでログインしてください")
+        st.markdown("- メールが届かない場合は、迷惑メールフォルダを確認してください")
+        st.markdown("- アカウントに関する問題がある場合は、管理者にお問い合わせください")
+    
     st.stop()
 else:
     import time
     main_start = time.time()
+    
+    # セッション維持機能：ユーザー活動検知による自動トークンリフレッシュ
+    if not ensure_valid_session():
+        st.warning("セッションが無効になりました。再度ログインしてください。")
+        # セッション情報をクリア
+        for k in ["user_logged_in", "id_token", "refresh_token", "name", "username", "email", "uid", "user_data_loaded", "token_timestamp"]:
+            if k in st.session_state:
+                del st.session_state[k]
+        st.rerun()
     
     name = st.session_state.get("name")
     username = st.session_state.get("username")
@@ -3205,6 +3367,11 @@ else:
                     
                     # 学習開始ボタン
                     if st.button("🚀 今日の学習を開始する", type="primary", key="start_today_study"):
+                        # セッション維持：ユーザー活動検知
+                        if not ensure_valid_session():
+                            st.warning("セッションが期限切れです。再度ログインしてください。")
+                            st.rerun()
+                        
                         # 学習開始中フラグを設定
                         st.session_state["initializing_study"] = True
                         
@@ -3362,6 +3529,11 @@ else:
 
                 # 学習開始ボタン
                 if st.button("🎯 この条件で演習を開始", type="primary", key="start_free_study"):
+                    # セッション維持：ユーザー活動検知
+                    if not ensure_valid_session():
+                        st.warning("セッションが期限切れです。再度ログインしてください。")
+                        st.rerun()
+                        
                     if not questions_to_load:
                         st.warning("該当する問題がありません。")
                     else:
