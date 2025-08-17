@@ -3177,7 +3177,7 @@ if not st.session_state.get("user_logged_in") or not ensure_valid_session():
                         st.error("このアカウントは無効化されています。")
     with tab_signup:
         # 新規登録の一時停止フラグ（必要に応じて True に変更）
-        SIGNUP_TEMPORARILY_DISABLED = False
+        SIGNUP_TEMPORARILY_DISABLED = True
         
         if SIGNUP_TEMPORARILY_DISABLED:
             st.warning("🚧 新規登録は一時的に停止中です")
