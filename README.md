@@ -363,9 +363,9 @@ pip freeze > requirements.txt
 
 ## 👨‍💻 作者
 
-**宇津瑛人** - 歯科教育DXエンジニア
+**eddy** - 歯科教育DXエンジニア
 
-- 📧 Email: contact@example.com
+- 📧 Email: eddy80524@gmail.com
 - 🌐 GitHub: [@eddy80524](https://github.com/eddy80524)
 - 🎯 Mission: 日本の歯科教育の演習効率を技術で改善する
 
