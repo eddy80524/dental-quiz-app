@@ -787,18 +787,8 @@ def load_user_data_minimal(user_id):
                     }
                     
                     # UI状態の復元 - セッション継続用
-                    ui_state = data.get("ui_state", {})
-                    if ui_state:
-                        # セッション状態にUI設定を復元
-                        if "page_select" not in st.session_state:
-                            st.session_state["page_select"] = ui_state.get("page_select", "演習")
-                        if "learning_mode" not in st.session_state:
-                            st.session_state["learning_mode"] = ui_state.get("learning_mode", "新しい問題を学習")
-                        if "current_filter" not in st.session_state:
-                            st.session_state["current_filter"] = ui_state.get("current_filter", "すべて")
-                        if "search_text" not in st.session_state:
-                            st.session_state["search_text"] = ui_state.get("search_text", "")
-                        print(f"[DEBUG] UI状態復元: ページ={ui_state.get('page_select')}, モード={ui_state.get('learning_mode')}")
+                    # UI状態復元を統合関数で実行
+                    restore_ui_state_from_user_data(data)
                     
                     print(f"[DEBUG] load_user_data_minimal - 成功: {time.time() - start:.3f}s, カード数: {len(result['cards'])}")
                     return result
@@ -866,6 +856,59 @@ def load_user_data_minimal(user_id):
     
     print(f"[DEBUG] load_user_data_minimal - デフォルト: {time.time() - start:.3f}s")
     return {"cards": {}, "new_cards_per_day": 10}
+
+def restore_ui_state_from_user_data(user_data):
+    """保存されたUI状態をセッションに復帰（前回の設定を自動復元）"""
+    if not user_data or "ui_state" not in user_data:
+        print("[DEBUG] UI状態データなし - デフォルト設定を使用")
+        return
+    
+    ui_state = user_data["ui_state"]
+    print(f"[DEBUG] UI状態復帰開始: {list(ui_state.keys())}")
+    
+    # 基本UI状態の復帰
+    if "page_select" in ui_state and ui_state["page_select"]:
+        st.session_state["page_select"] = ui_state["page_select"]
+    
+    if "learning_mode" in ui_state and ui_state["learning_mode"]:
+        st.session_state["learning_mode"] = ui_state["learning_mode"]
+    
+    # 検索・フィルター設定の復帰
+    if "analysis_target" in ui_state:
+        st.session_state["analysis_target"] = ui_state["analysis_target"]
+    
+    if "search_text" in ui_state:
+        st.session_state["search_text"] = ui_state["search_text"]
+    
+    # 演習設定の復帰
+    if "num_questions" in ui_state:
+        st.session_state["num_questions"] = ui_state["num_questions"]
+    
+    if "order_mode" in ui_state:
+        st.session_state["order_mode"] = ui_state["order_mode"]
+    
+    if "show_images" in ui_state:
+        st.session_state["show_images"] = ui_state["show_images"]
+    
+    if "new_cards_per_day" in ui_state:
+        st.session_state["new_cards_per_day"] = ui_state["new_cards_per_day"]
+    
+    # フィルター配列の復帰（安全に）
+    if "year_filter" in ui_state and isinstance(ui_state["year_filter"], list):
+        st.session_state["year_filter"] = ui_state["year_filter"]
+    
+    if "domain_filter" in ui_state and isinstance(ui_state["domain_filter"], list):
+        st.session_state["domain_filter"] = ui_state["domain_filter"]
+    
+    # アクティブセッションの情報表示
+    if ui_state.get("has_active_session"):
+        session_type = ui_state.get("session_type", "不明")
+        print(f"[DEBUG] 前回のアクティブセッション検出: {session_type}")
+        # セッション復帰用のフラグを設定（後でユーザーに選択肢を提示）
+        st.session_state["has_previous_session"] = True
+        st.session_state["previous_session_type"] = session_type
+    
+    print(f"[DEBUG] UI状態復帰完了")
 
 def migrate_email_based_data_to_uid(db, email, uid):
     """emailベースの旧データをUIDベースに移行する"""
@@ -1084,12 +1127,34 @@ def save_user_data(user_id, session_state):
             payload = {
                 "email": session_state.get("email"),  # emailメタデータを保存
                 "last_save": datetime.datetime.now(datetime.timezone.utc).isoformat(),  # 最終保存時刻
-                # UI状態の保存 - セッション継続用
+                # UI状態の保存 - セッション継続用（拡張版）
                 "ui_state": {
                     "page_select": session_state.get("page_select", "演習"),
-                    "learning_mode": session_state.get("learning_mode", "新しい問題を学習"),
+                    "learning_mode": session_state.get("learning_mode", "おまかせ学習（推奨）"),
                     "current_filter": session_state.get("current_filter", "すべて"),
-                    "search_text": session_state.get("search_text", "")
+                    "search_text": session_state.get("search_text", ""),
+                    # 詳細演習設定の保存
+                    "analysis_target": session_state.get("analysis_target", "すべて"),
+                    "year_filter": session_state.get("year_filter", []),
+                    "domain_filter": session_state.get("domain_filter", []),
+                    "num_questions": session_state.get("num_questions", 10),
+                    "order_mode": session_state.get("order_mode", "問題番号順"),
+                    "show_images": session_state.get("show_images", True),
+                    "new_cards_per_day": session_state.get("new_cards_per_day", 10),
+                    # 現在の学習セッション状態（詳細）
+                    "has_active_session": bool(
+                        session_state.get("current_q_group") or 
+                        session_state.get("main_queue") or 
+                        session_state.get("current_question_index") is not None
+                    ),
+                    "session_type": (
+                        "おまかせ演習" if session_state.get("main_queue") 
+                        else "自由演習" if session_state.get("current_q_group") 
+                        else "継続中" if session_state.get("current_question_index") is not None
+                        else None
+                    ),
+                    "current_question_index": session_state.get("current_question_index"),
+                    "total_questions": session_state.get("total_questions")
                 }
             }
 
@@ -2476,6 +2541,15 @@ def enqueue_short_review(group, minutes: int):
 
 # --- 演習ページ ---
 def render_practice_page():
+    # 前回セッション復帰処理
+    if st.session_state.get("continue_previous") and st.session_state.get("session_choice_made"):
+        st.success("🔄 前回のセッションを復帰しました")
+        # 復帰フラグをクリア
+        st.session_state.pop("continue_previous", None)
+        # 前回のアクティブセッション情報があれば、そのまま継続
+        if st.session_state.get("current_question_index") is not None:
+            st.info(f"問題 {st.session_state.get('current_question_index', 0) + 1} から継続します")
+    
     def get_next_q_group():
         now = datetime.datetime.now(datetime.timezone.utc)
         
@@ -3189,6 +3263,34 @@ else:
         else:
             st.success(f"{name} としてログイン中")
 
+        # 前回セッション復帰選択UI
+        if st.session_state.get("has_previous_session") and not st.session_state.get("session_choice_made"):
+            st.divider()
+            st.markdown("### 🔄 前回の続きから")
+            previous_type = st.session_state.get("previous_session_type", "演習")
+            st.info(f"前回の {previous_type} セッションが見つかりました")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("続きから", key="continue_session", type="primary"):
+                    st.session_state["session_choice_made"] = True
+                    st.session_state["continue_previous"] = True
+                    st.rerun()
+            with col2:
+                if st.button("新規開始", key="new_session"):
+                    st.session_state["session_choice_made"] = True
+                    st.session_state["continue_previous"] = False
+                    # 前回のセッション情報をクリア
+                    st.session_state.pop("has_previous_session", None)
+                    st.session_state.pop("previous_session_type", None)
+                    # アクティブセッション状態もクリア
+                    st.session_state.pop("current_q_group", None)
+                    st.session_state.pop("main_queue", None)
+                    st.session_state.pop("current_question_index", None)
+                    st.session_state.pop("total_questions", None)
+                    print("[DEBUG] 新規セッション開始 - 前回の状態をクリア")
+                    st.rerun()
+
         # ページ選択（完成版）
         page = st.radio(
             "ページ選択",
@@ -3714,6 +3816,11 @@ else:
             st.rerun()
 
     # ---------- ページ本体 ----------
+    # 前回セッション復帰選択が未完了の場合、メッセージを表示
+    if st.session_state.get("has_previous_session") and not st.session_state.get("session_choice_made"):
+        st.info("👈 サイドバーで前回のセッションを続けるか選択してください")
+        st.stop()
+    
     # 検索ページから演習開始のフラグをチェック
     if st.session_state.get("start_practice_from_search", False):
         # フラグをクリアして演習ページを表示
