@@ -290,7 +290,6 @@ def firebase_signup(email, password):
         return {"error": {"message": f"Network error: {str(e)}"}}
 
 def firebase_signin(email, password):
-def firebase_signin(email, password):
     """Firebase認証（超高速版）"""
     import time
     start = time.time()
@@ -797,7 +796,6 @@ def load_user_data_minimal(user_id):
 
 @st.cache_data(ttl=900)
 def load_user_data_full(user_id, cache_buster: int = 0):
-def load_user_data_full(user_id, cache_buster: int = 0):
     """演習開始時にユーザーの全カードデータを読み込む2段階読み込み版"""
     import time
     start = time.time()
@@ -857,7 +855,6 @@ def load_user_data(user_id):
     """後方互換性のため - 軽量版を呼び出す"""
     return load_user_data_minimal(user_id)
 
-def save_user_data(user_id, session_state):
 def save_user_data(user_id, session_state):
     """新しいFirestore構造での分散データ保存"""
     try:
@@ -961,7 +958,6 @@ def _recent_subject_penalty(q_subject, recent_qids, qid_to_subject):
     recent_subjects = [qid_to_subject.get(r) for r in recent_qids if r in qid_to_subject]
     return 0.15 if q_subject in recent_subjects else 0.0
 
-def pick_new_cards_for_today(all_questions, cards, N=10, recent_qids=None):
 def pick_new_cards_for_today(all_questions, cards, N=10, recent_qids=None):
     recent_qids = recent_qids or []
     qid_to_subject, subj_to_qids = _make_subject_index(all_questions)
