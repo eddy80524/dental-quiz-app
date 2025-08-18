@@ -156,33 +156,27 @@ def get_cookie_manager():
     if "cookie_manager" not in st.session_state:
         try:
             cookie_password = st.secrets.get("cookie_password", "default_insecure_password_change_in_production")
-            print(f"[DEBUG] Cookie manager初期化開始")
             cookie_manager = EncryptedCookieManager(
                 prefix="dentai_",
                 password=cookie_password
             )
-            print(f"[DEBUG] Cookie manager作成完了")
             
             # 初期化直後は準備完了まで待機
             if hasattr(cookie_manager, '_ready'):
                 if not cookie_manager._ready:
-                    print(f"[DEBUG] Cookie manager created but not ready, waiting...")
                     st.session_state.cookie_manager = cookie_manager
                     return cookie_manager
             
             # 簡単なテストでアクセス可能性を確認
             try:
                 test_value = cookie_manager.get("init_test", "default")
-                print(f"[DEBUG] Cookie manager test successful")
                 st.session_state.cookie_manager = cookie_manager
                 return cookie_manager
             except Exception as test_e:
-                print(f"[DEBUG] Cookie manager test failed: {test_e}")
                 st.session_state.cookie_manager = cookie_manager  # 準備中でも保存
                 return cookie_manager
                 
         except Exception as e:
-            print(f"[DEBUG] Cookie manager作成失敗: {e}")
             st.session_state.cookie_manager = None
     
     return st.session_state.cookie_manager
@@ -190,13 +184,11 @@ def get_cookie_manager():
 def safe_save_cookies(cookies, data_dict):
     """クッキーを安全に保存（エラーハンドリング付き）"""
     if not cookies:
-        print("[DEBUG] Cookie manager is None, skipping save")
         return False
     
     try:
         # Cookieが準備完了かチェック
         if hasattr(cookies, '_ready') and not cookies._ready:
-            print("[DEBUG] Cookies not ready yet; skip saving this run")
             return False
         
         # データを設定
@@ -205,11 +197,9 @@ def safe_save_cookies(cookies, data_dict):
         
         # 保存実行
         cookies.save()
-        print(f"[DEBUG] Cookies saved successfully: {list(data_dict.keys())}")
         return True
         
     except Exception as e:
-        print(f"[DEBUG] Cookie save error: {str(e)}")
         return False
 
 def get_cookies():
@@ -221,17 +211,13 @@ def get_cookies():
             try:
                 # Cookieが準備完了かチェック
                 if hasattr(cookies, '_ready') and not cookies._ready:
-                    print("[DEBUG] Cookies not ready yet")
                     return None
                 # 簡単なアクセステストを行う
                 _ = cookies.get("test", None)
-                print("[DEBUG] Cookie manager is ready and accessible")
                 return cookies
             except Exception as e:
-                print(f"[DEBUG] Cookie access error during get: {str(e)}")
                 return None
         else:
-            print("[DEBUG] Cookie manager is None in session state")
             return None
     
     # 初回のみ初期化を試行
@@ -243,22 +229,16 @@ def get_cookies():
             try:
                 if hasattr(cookies, '_ready'):
                     if not cookies._ready:
-                        print("[DEBUG] Cookie manager created but not ready, will retry next run")
                         return None
                 # 簡単なアクセステストを行う
                 test_value = cookies.get("test", None)
                 st.session_state.cookie_manager = cookies
-                print("[DEBUG] Cookie manager ready and functional")
                 return cookies
             except Exception as e:
-                print(f"[DEBUG] Cookie readiness test failed: {str(e)}")
-                print("[DEBUG] Will retry cookie initialization on next app reload")
                 return None
         else:
-            print("[DEBUG] Cookie manager is None")
             return None
     except Exception as e:
-        print(f"[DEBUG] Cookie initialization error: {str(e)}")
         return None
 
 FIREBASE_API_KEY = st.secrets["firebase_api_key"]
@@ -296,7 +276,6 @@ def firebase_signin(email, password):
     
     # 重複ログイン防止：既にログイン処理中の場合はスキップ
     if st.session_state.get("login_in_progress"):
-        print(f"[DEBUG] firebase_signin - ログイン処理中のためスキップ")
         return {"error": {"message": "Login already in progress"}}
     
     st.session_state["login_in_progress"] = True
@@ -770,6 +749,18 @@ def load_user_data_minimal(user_id):
                 
                 if doc.exists:
                     data = doc.to_dict()
+                    
+                    # 少数のカードデータも読み込む（最新100件）
+                    try:
+                        cards_ref = db.collection("users").document(uid).collection("userCards").limit(100)
+                        cards_docs = cards_ref.stream()
+                        cards = {}
+                        for card_doc in cards_docs:
+                            cards[card_doc.id] = card_doc.to_dict()
+                        data["cards"] = cards
+                    except Exception as e:
+                        data["cards"] = {}
+                    
                     total_time = time.time() - start
                     print(f"[DEBUG] load_user_data_minimal - 読み込み成功: {read_time:.3f}s, 合計: {total_time:.3f}s")
                     return data
@@ -782,7 +773,6 @@ def load_user_data_minimal(user_id):
                         "settings": {"new_cards_per_day": 10}
                     }
                     doc_ref.set(default_profile)
-                    print(f"[DEBUG] load_user_data_minimal - 新規プロフィール作成: {uid}")
                     return default_profile
                 
             except Exception as e:
@@ -794,7 +784,56 @@ def load_user_data_minimal(user_id):
 
 
 
-@st.cache_data(ttl=900)
+def integrate_learning_logs_into_cards(cards, uid):
+    """学習ログをカードデータに統合する"""
+    if not uid:
+        return cards
+    
+    try:
+        db = get_db()
+        if not db:
+            return cards
+            
+        # 学習ログを取得
+        learning_logs_ref = db.collection("learningLogs").where("userId", "==", uid)
+        logs_docs = learning_logs_ref.get()
+        
+        learning_logs = {}
+        for doc in logs_docs:
+            log_data = doc.to_dict()
+            question_id = log_data.get("questionId", "")
+            if question_id not in learning_logs:
+                learning_logs[question_id] = []
+            learning_logs[question_id].append(log_data)
+        
+        # 各カードに学習ログを統合
+        updated_cards = 0
+        for q_num in cards:
+            card = cards[q_num]
+            card_history = card.get("history", [])
+            log_history = learning_logs.get(q_num, [])
+            
+            # 学習ログからhistory形式のデータを作成
+            for log in log_history:
+                if "quality" in log and "timestamp" in log:
+                    card_history.append({
+                        "quality": log["quality"],
+                        "timestamp": log["timestamp"]
+                    })
+                    updated_cards += 1
+            
+            # 時系列でソート（タイムスタンプ順）
+            if card_history:
+                card_history.sort(key=lambda x: x.get("timestamp", ""))
+                cards[q_num]["history"] = card_history
+        
+        print(f"[DEBUG] 学習ログ統合完了: {len(learning_logs)}問題の履歴を統合, 更新されたカード数: {updated_cards}")
+        return cards
+        
+    except Exception as e:
+        print(f"[ERROR] 学習ログ統合エラー: {e}")
+        return cards
+
 def load_user_data_full(user_id, cache_buster: int = 0):
     """演習開始時にユーザーの全カードデータを読み込む2段階読み込み版"""
     import time
@@ -830,6 +869,9 @@ def load_user_data_full(user_id, cache_buster: int = 0):
                 cards = {}
                 for doc in cards_docs:
                     cards[doc.id] = doc.to_dict()
+                
+                # 学習ログを統合
+                cards = integrate_learning_logs_into_cards(cards, uid)
                 
                 cards_time = time.time() - cards_start
                 
@@ -879,6 +921,7 @@ def save_user_data(user_id, session_state):
             print(f"[DEBUG] save_user_data - カードデータ更新: {len(cards)}件")
         
         # 2. 学習ログの新規作成（解答時のみ）
+        # 単一ログ（後方互換性）
         if session_state.get("latest_answer_log"):
             log_data = session_state["latest_answer_log"]
             log_data.update({
@@ -889,6 +932,18 @@ def save_user_data(user_id, session_state):
             # ログ送信後はクリア
             del session_state["latest_answer_log"]
             print(f"[DEBUG] save_user_data - 学習ログ作成: {log_data.get('questionId')}")
+        
+        # 複数ログ（新規）
+        if session_state.get("latest_answer_logs"):
+            for log_data in session_state["latest_answer_logs"]:
+                if "userId" not in log_data:
+                    log_data["userId"] = user_id
+                if "timestamp" not in log_data:
+                    log_data["timestamp"] = datetime.datetime.utcnow().isoformat()
+                db.collection("learningLogs").add(log_data)
+                print(f"[DEBUG] save_user_data - 学習ログ作成: {log_data.get('questionId')}")
+            # ログ送信後はクリア
+            del session_state["latest_answer_logs"]
         
         # 3. 設定の更新（設定変更時のみ）
         settings_changed = session_state.get("settings_changed", False)
@@ -1637,6 +1692,9 @@ def sm2_update_with_policy(card: dict, quality: int, q_num_str: str, now=None):
 
 # --- 検索ページ ---
 def render_search_page():
+    # Firestoreクライアントを取得
+    db = firestore.client()
+    
     # サイドバーのフィルター設定を取得
     uid = st.session_state.get("uid")
     has_gakushi_permission = check_gakushi_permission(uid)
@@ -1646,23 +1704,52 @@ def render_search_page():
     # 学習進捗の可視化セクションを追加
     st.subheader("📈 学習ダッシュボード")
     
-    # 学習データの準備
+    # 学習データの準備 - 新しいFirestore構造に対応
     cards = st.session_state.get("cards", {})
+    
+    # 学習ログを取得（新しいFirestore構造）
+    learning_logs = {}
+    if uid:
+        try:
+            learning_logs_ref = db.collection("learningLogs").where("userId", "==", uid)
+            logs_docs = learning_logs_ref.get()
+            
+            for doc in logs_docs:
+                log_data = doc.to_dict()
+                question_id = log_data.get("questionId", "")  # キャメルケースに修正
+                if question_id not in learning_logs:
+                    learning_logs[question_id] = []
+                learning_logs[question_id].append(log_data)
+            
+        except Exception as e:
+            st.sidebar.error(f"学習ログ取得エラー: {e}")
+    
+    # カードデータが空の場合、完全版データを読み込む
+    if not cards and uid:
+        try:
+            cache_buster = int(datetime.datetime.now().timestamp())
+            full_data = load_user_data_full(uid, cache_buster)
+            cards = full_data.get("cards", {})
+            st.session_state["cards"] = cards
+        except Exception as e:
+            st.error(f"学習データの読み込みエラー: {e}")
     
     # 分析対象に応じたフィルタリング
     filtered_data = []
     for q in ALL_QUESTIONS:
         q_num = q.get("number", "")
+        
         # 権限チェック
         if q_num.startswith("G") and not has_gakushi_permission:
             continue
         
-        # 分析対象フィルタ
-        if analysis_target == "学士試験" and not q_num.startswith("G"):
-            continue
-        elif analysis_target == "国試" and q_num.startswith("G"):
-            continue
-        # analysis_target == "全体" の場合は両方含める（何もしない）
+        # 分析対象フィルタ（明確に国試か学士試験のみ）
+        if analysis_target == "学士試験":
+            if not q_num.startswith("G"):
+                continue
+        elif analysis_target == "国試":
+            if q_num.startswith("G"):
+                continue
             
         card = cards.get(q_num, {})
         
@@ -1681,19 +1768,37 @@ def render_search_page():
             else:
                 level = f"レベル{card_level}"
         
-        # 必修問題チェック
+        # 必修問題チェック（分析対象に応じて正確に判定）
         if analysis_target == "学士試験":
-            is_hisshu = q_num in GAKUSHI_HISSHU_Q_NUMBERS_SET
-        else:
-            is_hisshu = q_num in HISSHU_Q_NUMBERS_SET
+            # 学士試験の必修問題判定にはis_gakushi_hisshu関数を使用
+            is_mandatory = q_num in GAKUSHI_HISSHU_Q_NUMBERS_SET
+        else:  # 国試
+            # 国試の必修問題判定にはis_hisshu関数を使用
+            is_mandatory = q_num in HISSHU_Q_NUMBERS_SET
+        
+        # カードの履歴と学習ログを統合
+        card_history = card.get("history", [])
+        log_history = learning_logs.get(q_num, [])
+        
+        # 学習ログからhistory形式のデータを作成
+        combined_history = list(card_history)  # カードの履歴をコピー
+        for log in log_history:
+            if "quality" in log and "timestamp" in log:
+                combined_history.append({
+                    "quality": log["quality"],
+                    "timestamp": log["timestamp"]
+                })
+        
+        # 時系列でソート（タイムスタンプ順）
+        combined_history.sort(key=lambda x: x.get("timestamp", ""))
         
         filtered_data.append({
             "id": q_num,
             "subject": q.get("subject", "未分類"),
             "level": level,
             "ef": card.get("EF", 2.5),  # 大文字EFに修正
-            "history": card.get("history", []),
-            "is_hisshu": is_hisshu
+            "history": combined_history,
+            "is_hisshu": is_mandatory
         })
     
     # DataFrameに変換
@@ -1729,26 +1834,25 @@ def render_search_page():
                 levels_sorted = ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "習得済み"]
                 level_counts = filtered_df["level"].value_counts().reindex(levels_sorted).fillna(0).astype(int)
                 st.dataframe(level_counts)
+                
             with col2:
                 st.markdown("##### 正解率 (True Retention)")
                 total_reviews = 0
                 correct_reviews = 0
-                for history_list in filtered_df["history"]:
+                
+                for idx, history_list in enumerate(filtered_df["history"]):
                     for review in history_list:
                         if isinstance(review, dict) and "quality" in review:
                             total_reviews += 1
                             if review["quality"] >= 4:
                                 correct_reviews += 1
+                
                 retention_rate = (correct_reviews / total_reviews * 100) if total_reviews > 0 else 0
                 st.metric(label="選択範囲の正解率", value=f"{retention_rate:.1f}%", delta=f"{correct_reviews} / {total_reviews} 回")
                 
                 # 必修問題の正解率計算
-                if analysis_target == "学士試験":
-                    hisshu_df = filtered_df[filtered_df["is_hisshu"] == True]
-                    hisshu_label = "【学士試験・必修問題】の正解率 (目標: 80%以上)"
-                else:
-                    hisshu_df = filtered_df[filtered_df["id"].isin(HISSHU_Q_NUMBERS_SET)]
-                    hisshu_label = "【必修問題】の正解率 (目標: 80%以上)"
+                hisshu_df = filtered_df[filtered_df["is_hisshu"] == True]
+                hisshu_label = "【必修問題】の正解率 (目標: 80%以上)"
                 
                 hisshu_total_reviews = 0
                 hisshu_correct_reviews = 0
@@ -1766,18 +1870,102 @@ def render_search_page():
         if filtered_df.empty:
             st.warning("選択された条件に一致する問題がありません。")
         else:
+            # 科目別進捗状況の可視化
+            st.markdown("##### 科目別進捗状況")
+            subject_progress = []
+            for subject in filtered_df["subject"].unique():
+                subject_data = filtered_df[filtered_df["subject"] == subject]
+                total_problems = len(subject_data)
+                studied_problems = len(subject_data[subject_data["level"] != "未学習"])
+                mastered_problems = len(subject_data[subject_data["level"] == "習得済み"])
+                
+                progress_rate = (studied_problems / total_problems * 100) if total_problems > 0 else 0
+                mastery_rate = (mastered_problems / total_problems * 100) if total_problems > 0 else 0
+                
+                subject_progress.append({
+                    "科目": subject,
+                    "総問題数": total_problems,
+                    "学習済み": studied_problems,
+                    "習得済み": mastered_problems,
+                    "学習進捗率(%)": round(progress_rate, 1),
+                    "習得率(%)": round(mastery_rate, 1)
+                })
+            
+            progress_df = pd.DataFrame(subject_progress)
+            progress_df = progress_df.sort_values("学習進捗率(%)", ascending=False)
+            
+            # 進捗率グラフ
+            try:
+                import plotly.express as px
+                import plotly.graph_objects as go
+                
+                fig = go.Figure()
+                
+                # 学習進捗率のバー
+                fig.add_trace(go.Bar(
+                    name='学習進捗率',
+                    x=progress_df["科目"],
+                    y=progress_df["学習進捗率(%)"],
+                    marker_color='lightblue',
+                    text=progress_df["学習進捗率(%)"].astype(str) + '%',
+                    textposition='outside'
+                ))
+                
+                # 習得率のバー
+                fig.add_trace(go.Bar(
+                    name='習得率',
+                    x=progress_df["科目"],
+                    y=progress_df["習得率(%)"],
+                    marker_color='green',
+                    text=progress_df["習得率(%)"].astype(str) + '%',
+                    textposition='outside'
+                ))
+                
+                fig.update_layout(
+                    title="科目別進捗状況（100%=全問題演習済み）",
+                    xaxis_title="科目",
+                    yaxis_title="進捗率 (%)",
+                    yaxis=dict(range=[0, 105]),
+                    barmode='group',
+                    xaxis_tickangle=-45,
+                    height=500
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+                
+            except ImportError:
+                st.bar_chart(progress_df.set_index("科目")[["学習進捗率(%)", "習得率(%)"]])
+            
+            # 詳細テーブル
+            st.dataframe(progress_df, use_container_width=True)
+            
             st.markdown("##### 学習の記録")
+            
+            # 学習記録の取得と最初の学習日の特定
             review_history = []
+            first_study_date = None
+            
             for history_list in filtered_df["history"]:
                 for review in history_list:
                     if isinstance(review, dict) and "timestamp" in review:
-                        review_history.append(datetime.datetime.fromisoformat(review["timestamp"]).date())
+                        review_date = datetime.datetime.fromisoformat(review["timestamp"]).date()
+                        review_history.append(review_date)
+                        if first_study_date is None or review_date < first_study_date:
+                            first_study_date = review_date
             
-            if review_history:
+            if review_history and first_study_date:
                 from collections import Counter
                 review_counts = Counter(review_history)
-                ninety_days_ago = datetime.datetime.now(datetime.timezone.utc).date() - datetime.timedelta(days=90)
-                dates = [ninety_days_ago + datetime.timedelta(days=i) for i in range(91)]
+                
+                # 最初の学習日から今日までの日付範囲を作成
+                today = datetime.datetime.now(datetime.timezone.utc).date()
+                days_since_start = (today - first_study_date).days + 1
+                
+                # 表示する日数を90日に制限
+                display_days = min(days_since_start, 90)
+                start_date = today - datetime.timedelta(days=display_days - 1)
+                
+                dates = [start_date + datetime.timedelta(days=i) for i in range(display_days)]
                 counts = [review_counts.get(d, 0) for d in dates]
                 chart_df = pd.DataFrame({"Date": dates, "Reviews": counts})
                 
@@ -1785,12 +1973,28 @@ def render_search_page():
                 try:
                     import plotly.express as px
                     fig = px.bar(chart_df, x="Date", y="Reviews", 
-                                title="日々の学習量（過去90日間）")
+                                title=f"日々の学習量（過去90日間）")
                     fig.update_layout(
                         yaxis=dict(range=[0, max(counts) * 1.1] if counts else [0, 5]),
                         showlegend=False
                     )
                     st.plotly_chart(fig, use_container_width=True)
+                    
+                    # 学習統計の表示（90日間のデータに基づく）
+                    total_reviews = sum(counts)
+                    active_days = len([c for c in counts if c > 0])
+                    avg_reviews_per_active_day = total_reviews / active_days if active_days > 0 else 0
+                    
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("総学習回数", f"{total_reviews}回", help="過去90日間")
+                    with col2:
+                        st.metric("学習日数", f"{active_days}日", help="過去90日間")
+                    with col3:
+                        st.metric("学習継続日数", f"{display_days}日", help="表示期間")
+                    with col4:
+                        st.metric("1日平均学習回数", f"{avg_reviews_per_active_day:.1f}回", help="過去90日間")
+                        
                 except ImportError:
                     # plotlyが利用できない場合は従来のbar_chart
                     st.bar_chart(chart_df.set_index("Date"))
@@ -1908,11 +2112,12 @@ def render_search_page():
                     continue
                 
                 # 分析対象フィルタチェック（サイドバーの設定を使用）
-                if analysis_target == "学士試験" and not question_number.startswith("G"):
-                    continue
-                elif analysis_target == "国試" and question_number.startswith("G"):
-                    continue
-                # analysis_target == "全体" の場合は全て含める
+                if analysis_target == "学士試験":
+                    if not question_number.startswith("G"):
+                        continue
+                elif analysis_target == "国試":
+                    if question_number.startswith("G"):
+                        continue
                 
                 # キーワード検索
                 text_to_search = f"{q.get('question', '')} {q.get('subject', '')} {q.get('number', '')}"
@@ -1997,12 +2202,12 @@ def render_search_page():
                     
                     # 必修問題チェック
                     if search_type == "学士試験":
-                        is_hisshu = question_number in GAKUSHI_HISSHU_Q_NUMBERS_SET
+                        is_mandatory_question = question_number in GAKUSHI_HISSHU_Q_NUMBERS_SET
                     else:
-                        is_hisshu = question_number in HISSHU_Q_NUMBERS_SET
+                        is_mandatory_question = question_number in HISSHU_Q_NUMBERS_SET
                     
                     level_color = level_colors.get(level, "#888888")
-                    hisshu_mark = "🔥" if is_hisshu else ""
+                    hisshu_mark = "🔥" if is_mandatory_question else ""
                     
                     # 色付きドットアイコンをHTMLで生成
                     color_dot = f'<span style="color: {level_color}; font-size: 1.2em; font-weight: bold;">●</span>'
@@ -2197,7 +2402,6 @@ def render_practice_page():
         pending_new = len(st.session_state.get("main_queue", []))
         
         if ready_reviews + pending_new > 0:
-            st.warning(f"📊 **学習キュー状況**: 復習待ち{ready_reviews}問、新規待ち{pending_new}問")
             st.info("学習を開始するには、サイドバーで「🚀 今日の学習を開始する」をクリックしてください。")
         else:
             st.success("🎉 このセッションの学習はすべて完了しました！")
@@ -2212,13 +2416,9 @@ def render_practice_page():
     # 問題タイプの表示（復習か新規か）
     cards = st.session_state.get("cards", {})
     if group_id in cards and cards[group_id].get('n', 0) > 0:
-        study_count = cards[group_id].get('n', 0)
-        if study_count == 1:
-            st.info(f"🔄 **復習問題** - この問題は{study_count}回目の学習です")
-        else:
-            st.info(f"🔄 **復習問題** - この問題は{study_count}回目の学習です")
+        st.info(f"🔄 **復習問題**")
     else:
-        st.info("🆕 **新規問題** - 初回の学習です")
+        st.info("🆕 **新規問題**")
 
     if case_data:
         st.info(f"【連問】この症例には{len(q_objects)}問の問題が含まれています。")
@@ -2503,6 +2703,21 @@ def render_practice_page():
                     for q_num_str in current_q_group:
                         card = st.session_state.cards.get(q_num_str, {})
                         st.session_state.cards[q_num_str] = sm2_update_with_policy(card, quality, q_num_str, now=now_utc)
+                        
+                        # 学習ログを作成してセッション状態に保存
+                        is_correct = st.session_state.result_log.get(q_num_str, False)
+                        log_data = {
+                            "questionId": q_num_str,
+                            "quality": quality,
+                            "isCorrect": is_correct,
+                            "timestamp": now_utc.isoformat(),
+                            "userId": uid
+                        }
+                        
+                        # latest_answer_logとして保存（save_user_dataで処理される）
+                        if not st.session_state.get("latest_answer_logs"):
+                            st.session_state["latest_answer_logs"] = []
+                        st.session_state["latest_answer_logs"].append(log_data)
 
                     # ★ 短期復習キュー積み直し
                     if quality == 1:
@@ -2830,6 +3045,11 @@ else:
         st.session_state.result_log = {}
         if "new_cards_per_day" not in st.session_state:
             st.session_state["new_cards_per_day"] = user_data.get("new_cards_per_day", 10)
+        
+        # 既存のカードデータに学習ログを統合
+        if st.session_state.cards:
+            st.session_state.cards = integrate_learning_logs_into_cards(st.session_state.cards, uid)
+        
         st.session_state.user_data_loaded = True
         session_update_time = time.time() - session_update_start
         
@@ -3312,9 +3532,10 @@ else:
                 st.info("セッションを初期化しました")
                 st.rerun()
 
-            # 学習記録セクション
+            # 学習記録セクション（演習ページでも表示）
             st.divider()
             st.markdown("#### 📈 学習記録")
+            
             if st.session_state.cards and len(st.session_state.cards) > 0:
                 quality_to_mark = {1: "×", 2: "△", 4: "◯", 5: "◎"}
                 mark_to_label = {"◎": "簡単", "◯": "普通", "△": "難しい", "×": "もう一度"}
@@ -3331,21 +3552,31 @@ else:
                 
                 with st.expander("最近の評価ログ", expanded=False):
                     cards_with_history = [(q_num, card) for q_num, card in st.session_state.cards.items() if card.get('history')]
-                    sorted_cards = sorted(cards_with_history, key=lambda item: item[1]['history'][-1]['timestamp'], reverse=True)
-                    for q_num, card in sorted_cards[:10]:
-                        last_history = card['history'][-1]
-                        last_eval_mark = quality_to_mark.get(last_history.get('quality'))
-                        timestamp_str = datetime.datetime.fromisoformat(last_history['timestamp']).strftime('%Y-%m-%d %H:%M')
-                        jump_btn = st.button(f"{q_num}", key=f"jump_{q_num}")
-                        st.markdown(f"- `{q_num}` : **{last_eval_mark}** ({timestamp_str})", unsafe_allow_html=True)
-                        if jump_btn:
-                            st.session_state.current_q_group = [q_num]
-                            for key in list(st.session_state.keys()):
-                                if key.startswith("checked_") or key.startswith("user_selection_") or key.startswith("shuffled_") or key.startswith("free_input_"):
-                                    del st.session_state[key]
-                            st.rerun()
+                    
+                    if cards_with_history:
+                        sorted_cards = sorted(cards_with_history, key=lambda item: item[1]['history'][-1]['timestamp'], reverse=True)
+                        
+                        for q_num, card in sorted_cards[:10]:
+                            last_history = card['history'][-1]
+                            last_eval_mark = quality_to_mark.get(last_history.get('quality'))
+                            timestamp_str = datetime.datetime.fromisoformat(last_history['timestamp']).strftime('%Y-%m-%d %H:%M')
+                            
+                            # 問題番号を緑色のボタンとして表示
+                            if st.button(q_num, key=f"jump_practice_{q_num}", type="secondary"):
+                                st.session_state.current_q_group = [q_num]
+                                for key in list(st.session_state.keys()):
+                                    if key.startswith("checked_") or key.startswith("user_selection_") or key.startswith("shuffled_") or key.startswith("free_input_") or key.startswith("order_input_"):
+                                        del st.session_state[key]
+                                st.rerun()
+                            
+                            # 評価情報を下に表示
+                            st.markdown(f"<span style='color: green'>{q_num}</span> : **{last_eval_mark}** ({timestamp_str})", unsafe_allow_html=True)
+                    else:
+                        st.info("まだ評価された問題がありません。")
             else:
                 st.info("まだ評価された問題がありません。")
+
+
 
         else:
             # --- 検索・進捗ページのサイドバー ---
@@ -3359,7 +3590,7 @@ else:
             
             # 対象範囲
             if has_gakushi_permission:
-                analysis_target = st.radio("分析対象", ["国試", "学士試験", "全体"], key="analysis_target")
+                analysis_target = st.radio("分析対象", ["国試", "学士試験"], key="analysis_target")
             else:
                 analysis_target = "国試"
             
@@ -3381,6 +3612,52 @@ else:
                 )
             else:
                 subject_filter = []
+            
+            # 学習記録セクション（検索・進捗ページでも表示）
+            st.divider()
+            st.markdown("#### 📈 学習記録")
+            if st.session_state.cards and len(st.session_state.cards) > 0:
+                quality_to_mark = {1: "×", 2: "△", 4: "◯", 5: "◎"}
+                mark_to_label = {"◎": "簡単", "◯": "普通", "△": "難しい", "×": "もう一度"}
+                evaluated_marks = [quality_to_mark.get(card.get('quality')) for card in st.session_state.cards.values() if card.get('quality')]
+                total_evaluated = len(evaluated_marks)
+                counter = Counter(evaluated_marks)
+                
+                with st.expander("自己評価の分布", expanded=True):
+                    st.markdown(f"**合計評価数：{total_evaluated}問**")
+                    for mark, label in mark_to_label.items():
+                        count = counter.get(mark, 0)
+                        percent = int(round(count / total_evaluated * 100)) if total_evaluated else 0
+                        st.markdown(f"{mark} {label}：{count}問 ({percent}％)")
+                
+                with st.expander("最近の評価ログ", expanded=False):
+                    cards_with_history = [(q_num, card) for q_num, card in st.session_state.cards.items() if card.get('history')]
+                    
+                    if cards_with_history:
+                        sorted_cards = sorted(cards_with_history, key=lambda item: item[1]['history'][-1]['timestamp'], reverse=True)
+                        
+                        for q_num, card in sorted_cards[:10]:
+                            last_history = card['history'][-1]
+                            last_eval_mark = quality_to_mark.get(last_history.get('quality'))
+                            timestamp_str = datetime.datetime.fromisoformat(last_history['timestamp']).strftime('%Y-%m-%d %H:%M')
+                            
+                            # 問題番号を緑色のボタンとして表示
+                            if st.button(q_num, key=f"jump_search_{q_num}", type="secondary"):
+                                # 演習ページに移動して該当問題を表示
+                                st.session_state.current_q_group = [q_num]
+                                st.session_state.page_select = "演習"
+                                # 問題関連のセッション状態をクリア
+                                for key in list(st.session_state.keys()):
+                                    if key.startswith(("checked_", "user_selection_", "shuffled_", "free_input_", "order_input_")):
+                                        del st.session_state[key]
+                                st.rerun()
+                            
+                            # 評価情報を下に表示
+                            st.markdown(f"<span style='color: green'>{q_num}</span> : **{last_eval_mark}** ({timestamp_str})", unsafe_allow_html=True)
+                    else:
+                        st.info("まだ評価された問題がありません。")
+            else:
+                st.info("まだ評価された問題がありません。")
 
         # ログアウトボタン
         st.divider()
