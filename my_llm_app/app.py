@@ -6,8 +6,7 @@ import datetime
 import re
 from collections import Counter
 import firebase_admin
-from firebase_admin import credentials, firestore
-from firebase_admin import storage
+from firebase_admin import credentials, firestore, storage, performance
 import requests
 import tempfile
 import collections.abc
@@ -290,6 +289,7 @@ def firebase_signup(email, password):
     except requests.exceptions.RequestException as e:
         return {"error": {"message": f"Network error: {str(e)}"}}
 
+@performance.trace
 def firebase_signin(email, password):
     """Firebase認証（超高速版）"""
     import time
@@ -749,274 +749,56 @@ ALL_QUESTIONS_DICT, ALL_SUBJECTS, ALL_EXAM_NUMBERS, ALL_EXAM_SESSIONS, HISSHU_Q_
 
 # --- Firestore連携 ---
 def load_user_data_minimal(user_id):
-    """ログイン時に必要最小限のデータのみ読み込む軽量版（UIDベース＋emailメタデータ）"""
+    """ログイン時にユーザーの基本プロフィール情報のみを高速読み込み"""
     import time
     start = time.time()
     
     if not ensure_valid_session():
         print(f"[DEBUG] load_user_data_minimal - セッション無効: {time.time() - start:.3f}s")
-        return {"cards": {}, "new_cards_per_day": 10}
+        return {"email": "", "settings": {"new_cards_per_day": 10}}
 
-    # UIDを主キーとして使用（Firebase推奨方式）
     uid = st.session_state.get("uid")
-    email = st.session_state.get("email")
     
     if uid:
-        db = get_db()  # 安全にDB取得
+        db = get_db()
         if db:
             try:
-                # デバッグ: Firebaseプロジェクト情報を表示
-                project_id = getattr(db, "project", "unknown")
-                print(f"[DEBUG] Firebase接続先プロジェクト: {project_id}")
-                print(f"[DEBUG] UID: {uid}, Email: {email}")
-                
-                # UIDベースでデータ検索
-                doc_ref = db.collection("user_progress").document(uid)
-                doc = doc_ref.get(timeout=10)
+                # /users/{uid} から基本プロフィールのみ読み込み
+                start_read = time.time()
+                doc_ref = db.collection("users").document(uid)
+                doc = doc_ref.get(timeout=5)
+                read_time = time.time() - start_read
                 
                 if doc.exists:
                     data = doc.to_dict()
-                    # emailメタデータを更新（管理のため）
-                    if email and data.get("email") != email:
-                        doc_ref.update({"email": email, "last_login": datetime.datetime.now(datetime.timezone.utc).isoformat()})
-                        print(f"[DEBUG] emailメタデータ更新: {email}")
-                    
-                    result = {
-                        "cards": data.get("cards", {}),
-                        "new_cards_per_day": data.get("new_cards_per_day", 10),
-                    }
-                    
-                    # UI状態の復元 - セッション継続用
-                    # UI状態復元を統合関数で実行
-                    restore_ui_state_from_user_data(data)
-                    
-                    print(f"[DEBUG] load_user_data_minimal - 成功: {time.time() - start:.3f}s, カード数: {len(result['cards'])}")
-                    return result
+                    total_time = time.time() - start
+                    print(f"[DEBUG] load_user_data_minimal - 読み込み成功: {read_time:.3f}s, 合計: {total_time:.3f}s")
+                    return data
                 else:
-                    # UIDでデータが見つからない場合、emailベースの旧データを検索・移行
-                    print(f"[DEBUG] load_user_data_minimal - UIDでデータなし、emailベース旧データを検索: {email}")
-                    print(f"[DEBUG] 検索対象UID: {uid}")
-                    
-                    # 既にマイグレーション済みかチェック
-                    if email:
-                        email_doc_ref = db.collection("user_progress").document(email)
-                        email_doc = email_doc_ref.get(timeout=10)
-                        if email_doc.exists:
-                            email_data = email_doc.to_dict()
-                            if email_data.get("migrated_to_uid") == uid:
-                                print(f"[DEBUG] マイグレーション済みだが、UIDドキュメントが見つからない。再作成を試行。")
-                                # マイグレーション済みだが、UIDドキュメントが消失している場合の対処
-                                new_data = {
-                                    "cards": email_data.get("cards", {}),
-                                    "new_cards_per_day": email_data.get("new_cards_per_day", 10),
-                                    "email": email,
-                                    "migrated_from": email,
-                                    "migrated_at": email_data.get("migrated_at", datetime.datetime.now(datetime.timezone.utc).isoformat()),
-                                    "last_login": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                                    "recreated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
-                                }
-                                
-                                # その他のフィールドも復元
-                                for key in ["main_queue", "short_term_review_queue", "current_q_group"]:
-                                    if key in email_data:
-                                        new_data[key] = email_data[key]
-                                
-                                doc_ref.set(new_data)
-                                print(f"[DEBUG] UIDドキュメント再作成完了: {len(new_data.get('cards', {}))}カード")
-                                return {
-                                    "cards": new_data.get("cards", {}),
-                                    "new_cards_per_day": new_data.get("new_cards_per_day", 10),
-                                }
-                    
-                    if email:
-                        migrated_data = migrate_email_based_data_to_uid(db, email, uid)
-                        if migrated_data:
-                            print(f"[DEBUG] 旧データマイグレーション成功: {len(migrated_data.get('cards', {}))}カード")
-                            return migrated_data
-                        else:
-                            print(f"[DEBUG] emailベース旧データ見つからず: {email}")
-                    else:
-                        print(f"[DEBUG] email情報なし、マイグレーション不可")
-                    
-                    # 新規ユーザーの場合、emailメタデータ付きで初期化
-                    if email:
-                        initial_data = {
-                            "cards": {},
-                            "new_cards_per_day": 10,
-                            "email": email,
-                            "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                            "last_login": datetime.datetime.now(datetime.timezone.utc).isoformat()
-                        }
-                        doc_ref.set(initial_data)
-                        print(f"[DEBUG] 新規ユーザー初期化: {email}")
-                        return {"cards": {}, "new_cards_per_day": 10}
-                        
+                    # 新規ユーザーのデフォルトプロフィール作成
+                    email = st.session_state.get("email", "")
+                    default_profile = {
+                        "email": email,
+                        "createdAt": datetime.datetime.utcnow().isoformat(),
+                        "settings": {"new_cards_per_day": 10}
+                    }
+                    doc_ref.set(default_profile)
+                    print(f"[DEBUG] load_user_data_minimal - 新規プロフィール作成: {uid}")
+                    return default_profile
+                
             except Exception as e:
-                print(f"[DEBUG] load_user_data_minimal - エラー: {e}, 時間: {time.time() - start:.3f}s")
+                print(f"[ERROR] load_user_data_minimal エラー: {e}")
     
     print(f"[DEBUG] load_user_data_minimal - デフォルト: {time.time() - start:.3f}s")
-    return {"cards": {}, "new_cards_per_day": 10}
+    return {"email": "", "settings": {"new_cards_per_day": 10}}
 
-def restore_ui_state_from_user_data(user_data):
-    """保存されたUI状態をセッションに復帰（前回の設定を自動復元）"""
-    if not user_data or "ui_state" not in user_data:
-        print("[DEBUG] UI状態データなし - デフォルト設定を使用")
-        return
-    
-    ui_state = user_data["ui_state"]
-    print(f"[DEBUG] UI状態復帰開始: {list(ui_state.keys())}")
-    
-    # 基本UI状態の復帰
-    if "page_select" in ui_state and ui_state["page_select"]:
-        st.session_state["page_select"] = ui_state["page_select"]
-    
-    if "learning_mode" in ui_state and ui_state["learning_mode"]:
-        st.session_state["learning_mode"] = ui_state["learning_mode"]
-    
-    # 検索・フィルター設定の復帰
-    if "analysis_target" in ui_state:
-        st.session_state["analysis_target"] = ui_state["analysis_target"]
-    
-    if "search_text" in ui_state:
-        st.session_state["search_text"] = ui_state["search_text"]
-    
-    # 演習設定の復帰
-    if "num_questions" in ui_state:
-        st.session_state["num_questions"] = ui_state["num_questions"]
-    
-    if "order_mode" in ui_state:
-        st.session_state["order_mode"] = ui_state["order_mode"]
-    
-    if "show_images" in ui_state:
-        st.session_state["show_images"] = ui_state["show_images"]
-    
-    if "new_cards_per_day" in ui_state:
-        st.session_state["new_cards_per_day"] = ui_state["new_cards_per_day"]
-    
-    # フィルター配列の復帰（安全に）
-    if "year_filter" in ui_state and isinstance(ui_state["year_filter"], list):
-        st.session_state["year_filter"] = ui_state["year_filter"]
-    
-    if "domain_filter" in ui_state and isinstance(ui_state["domain_filter"], list):
-        st.session_state["domain_filter"] = ui_state["domain_filter"]
-    
-    # アクティブセッションの情報表示
-    if ui_state.get("has_active_session"):
-        session_type = ui_state.get("session_type", "不明")
-        print(f"[DEBUG] 前回のアクティブセッション検出: {session_type}")
-        # セッション復帰用のフラグを設定（後でユーザーに選択肢を提示）
-        st.session_state["has_previous_session"] = True
-        st.session_state["previous_session_type"] = session_type
-        
-        # おまかせ演習の場合は学習モードを強制的に設定
-        if session_type == "おまかせ演習":
-            st.session_state["learning_mode"] = "おまかせ学習（推奨）"
-    
-    print(f"[DEBUG] UI状態復帰完了")
 
-def migrate_email_based_data_to_uid(db, email, uid):
-    """emailベースの旧データをUIDベースに移行する"""
-    try:
-        print(f"[DEBUG] マイグレーション開始: {email} -> {uid}")
-        
-        # emailをドキュメントIDとして使用していた旧データを検索
-        email_doc_ref = db.collection("user_progress").document(email)
-        email_doc = email_doc_ref.get(timeout=10)
-        
-        if email_doc.exists:
-            old_data = email_doc.to_dict()
-            print(f"[DEBUG] 旧emailベースデータ発見:")
-            print(f"[DEBUG]   - カード数: {len(old_data.get('cards', {}))}")
-            print(f"[DEBUG]   - main_queue: {len(old_data.get('main_queue', []))}")
-            print(f"[DEBUG]   - 新規カード/日: {old_data.get('new_cards_per_day', 10)}")
-            print(f"[DEBUG]   - その他のキー: {list(old_data.keys())}")
-            
-            # UIDベースの新しいドキュメントに移行
-            new_data = {
-                "cards": old_data.get("cards", {}),
-                "new_cards_per_day": old_data.get("new_cards_per_day", 10),
-                "email": email,
-                "migrated_from": email,
-                "migrated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                "last_login": datetime.datetime.now(datetime.timezone.utc).isoformat()
-            }
-            
-            # その他のフィールドも移行
-            for key in ["main_queue", "short_term_review_queue", "current_q_group"]:
-                if key in old_data:
-                    new_data[key] = old_data[key]
-                    print(f"[DEBUG]   - {key} を移行: {type(old_data[key])}")
-            
-            # 新しいUIDドキュメントに保存
-            uid_doc_ref = db.collection("user_progress").document(uid)
-            uid_doc_ref.set(new_data)
-            print(f"[DEBUG] UIDドキュメント作成完了: {uid}")
-            
-            # 旧データに移行済みマークを付けて保持（バックアップとして）
-            email_doc_ref.update({
-                "migrated_to_uid": uid,
-                "migrated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                "migration_status": "completed"
-            })
-            
-            print(f"[DEBUG] データマイグレーション完了: {email} -> {uid}")
-            return {
-                "cards": new_data.get("cards", {}),
-                "new_cards_per_day": new_data.get("new_cards_per_day", 10),
-            }
-        else:
-            # emailでもemailを正規化した形（ドット、@マーク変換など）での検索を試行
-            normalized_email = email.replace(".", "_").replace("@", "_at_")
-            print(f"[DEBUG] 正規化email検索: {normalized_email}")
-            normalized_doc_ref = db.collection("user_progress").document(normalized_email)
-            normalized_doc = normalized_doc_ref.get(timeout=10)
-            
-            if normalized_doc.exists:
-                old_data = normalized_doc.to_dict()
-                print(f"[DEBUG] 正規化email旧データ発見:")
-                print(f"[DEBUG]   - カード数: {len(old_data.get('cards', {}))}")
-                print(f"[DEBUG]   - その他のキー: {list(old_data.keys())}")
-                
-                # 同様の移行処理
-                new_data = {
-                    "cards": old_data.get("cards", {}),
-                    "new_cards_per_day": old_data.get("new_cards_per_day", 10),
-                    "email": email,
-                    "migrated_from": normalized_email,
-                    "migrated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                    "last_login": datetime.datetime.now(datetime.timezone.utc).isoformat()
-                }
-                
-                # その他のフィールドも移行
-                for key in ["main_queue", "short_term_review_queue", "current_q_group"]:
-                    if key in old_data:
-                        new_data[key] = old_data[key]
-                
-                uid_doc_ref = db.collection("user_progress").document(uid)
-                uid_doc_ref.set(new_data)
-                
-                normalized_doc_ref.update({
-                    "migrated_to_uid": uid,
-                    "migrated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                    "migration_status": "completed"
-                })
-                
-                print(f"[DEBUG] 正規化データマイグレーション完了: {normalized_email} -> {uid}")
-                return {
-                    "cards": new_data.get("cards", {}),
-                    "new_cards_per_day": new_data.get("new_cards_per_day", 10),
-                }
-            
-        print(f"[DEBUG] emailベース旧データなし: {email}")
-        return None
-        
-    except Exception as e:
-        print(f"[DEBUG] データマイグレーションエラー: {e}")
-        return None
+
 
 @st.cache_data(ttl=900)
+@performance.trace
 def load_user_data_full(user_id, cache_buster: int = 0):
-    """演習開始時に全データを読み込む完全版（UIDベース＋emailメタデータ）"""
+    """演習開始時にユーザーの全カードデータを読み込む2段階読み込み版"""
     import time
     start = time.time()
     
@@ -1024,274 +806,110 @@ def load_user_data_full(user_id, cache_buster: int = 0):
         print(f"[DEBUG] load_user_data_full - セッション無効: {time.time() - start:.3f}s")
         return {"cards": {}, "main_queue": [], "short_term_review_queue": [], "current_q_group": [], "new_cards_per_day": 10}
 
-    # UIDを主キーとして使用
     uid = st.session_state.get("uid")
-    email = st.session_state.get("email")
     
     if uid:
-        db = get_db()  # 安全にDB取得
+        db = get_db()
         if db:
             try:
-                # UIDベースでデータ検索
-                doc_ref = db.collection("user_progress").document(uid)
-                doc = doc_ref.get(timeout=15)
+                # 段階1: /users/{uid} から基本プロフィールを取得
+                profile_start = time.time()
+                user_ref = db.collection("users").document(uid)
+                user_doc = user_ref.get(timeout=10)
+                profile_time = time.time() - profile_start
                 
-                if doc.exists:
-                    data = doc.to_dict()
-                    main_queue_str_list = data.get("main_queue", [])
-                    current_q_group_str = data.get("current_q_group", "")
-                    main_queue = [item.split(',') for item in main_queue_str_list if item]
-                    current_q_group = current_q_group_str.split(',') if current_q_group_str else []
-                    
-                    # 短期復習キューの新形式対応
-                    raw = data.get("short_term_review_queue", [])
-                    short_term_review_queue = []
-                    now_utc = datetime.datetime.now(datetime.timezone.utc)
-
-                    def _parse_ready_at(v):
-                        if isinstance(v, datetime.datetime): return v
-                        if isinstance(v, str):
-                            try: return datetime.datetime.fromisoformat(v)
-                            except Exception: return now_utc
-                        return now_utc
-
-                    for item in raw:
-                        if isinstance(item, dict):
-                            grp = item.get("group", [])
-                            ra = _parse_ready_at(item.get("ready_at"))
-                            short_term_review_queue.append({"group": grp, "ready_at": ra})
-                        elif isinstance(item, str):
-                            grp = item.split(",") if item else []
-                            short_term_review_queue.append({"group": grp, "ready_at": now_utc})
-                        elif isinstance(item, list):
-                            short_term_review_queue.append({"group": item, "ready_at": now_utc})
-                    
-                    result = {
-                        "cards": data.get("cards", {}),
-                        "main_queue": main_queue,
-                        "short_term_review_queue": short_term_review_queue,
-                        "current_q_group": current_q_group,
-                        "new_cards_per_day": data.get("new_cards_per_day", 10),
-                    }
-                    print(f"[DEBUG] load_user_data_full - 成功: {time.time() - start:.3f}s, カード数: {len(result['cards'])}")
-                    return result
-                else:
-                    # UIDでデータが見つからない場合、emailベースの旧データを検索・移行
-                    print(f"[DEBUG] load_user_data_full - UIDでデータなし、emailベース旧データを検索: {email}")
-                    if email:
-                        migrated_data = migrate_email_based_data_to_uid(db, email, uid)
-                        if migrated_data:
-                            print(f"[DEBUG] load_user_data_full - 旧データマイグレーション成功: {len(migrated_data.get('cards', {}))}カード")
-                            # マイグレーションしたデータに空のキューを追加して完全版として返す
-                            result = {
-                                "cards": migrated_data.get("cards", {}),
-                                "main_queue": [],
-                                "short_term_review_queue": [],
-                                "current_q_group": [],
-                                "new_cards_per_day": migrated_data.get("new_cards_per_day", 10),
-                            }
-                            return result
-                        else:
-                            print(f"[DEBUG] load_user_data_full - emailベース旧データ見つからず: {email}")
-                            
+                if not user_doc.exists:
+                    print(f"[DEBUG] load_user_data_full - ユーザープロフィール未存在: {uid}")
+                    return {"cards": {}, "main_queue": [], "short_term_review_queue": [], "current_q_group": [], "new_cards_per_day": 10}
+                
+                user_data = user_doc.to_dict()
+                
+                # 段階2: /users/{uid}/userCards サブコレクションから全カードを取得
+                cards_start = time.time()
+                cards_ref = db.collection("users").document(uid).collection("userCards")
+                cards_docs = cards_ref.stream()
+                
+                cards = {}
+                for doc in cards_docs:
+                    cards[doc.id] = doc.to_dict()
+                
+                cards_time = time.time() - cards_start
+                
+                result = {
+                    "cards": cards,
+                    "main_queue": user_data.get("main_queue", []),
+                    "short_term_review_queue": user_data.get("short_term_review_queue", []),
+                    "current_q_group": user_data.get("current_q_group", []),
+                    "new_cards_per_day": user_data.get("settings", {}).get("new_cards_per_day", 10),
+                }
+                
+                total_time = time.time() - start
+                print(f"[DEBUG] load_user_data_full - 成功: プロフィール {profile_time:.3f}s, カード {cards_time:.3f}s, 合計 {total_time:.3f}s, カード数: {len(cards)}")
+                return result
+                
             except Exception as e:
-                print(f"[DEBUG] load_user_data_full - エラー: {e}, 時間: {time.time() - start:.3f}s")
+                print(f"[ERROR] load_user_data_full エラー: {e}")
     
-    print(f"[DEBUG] load_user_data_full - 新規ユーザー（デフォルト値を返却）: {time.time() - start:.3f}s")
+    print(f"[DEBUG] load_user_data_full - デフォルト: {time.time() - start:.3f}s")
     return {"cards": {}, "main_queue": [], "short_term_review_queue": [], "current_q_group": [], "new_cards_per_day": 10}
 
 def load_user_data(user_id):
     """後方互換性のため - 軽量版を呼び出す"""
     return load_user_data_minimal(user_id)
 
+@performance.trace
 def save_user_data(user_id, session_state):
-    """user_id には UID を渡す（UIDベース＋emailメタデータ＋UI状態保存）"""
-    def flatten_and_str(obj):
-        if isinstance(obj, (list, set)):
-            result = []
-            for item in obj:
-                result.extend(flatten_and_str(item))
-            return result
-        elif isinstance(obj, dict):
-            return [str(k) for k in obj.keys()]
-        elif obj is None:
-            return []
-        else:
-            return [str(obj)]
-
+    """新しいFirestore構造での分散データ保存"""
     try:
         if not ensure_valid_session():
             return
 
-        # 安全にDB取得
         db = get_db()
-        if db and user_id:
-            doc_ref = db.collection("user_progress").document(user_id)  # UIDを主キーとして使用
+        if not db or not user_id:
+            return
             
-            payload = {
-                "email": session_state.get("email"),  # emailメタデータを保存
-                "last_save": datetime.datetime.now(datetime.timezone.utc).isoformat(),  # 最終保存時刻
-                # UI状態の保存 - セッション継続用（拡張版）
-                "ui_state": {
-                    "page_select": session_state.get("page_select", "演習"),
-                    "learning_mode": session_state.get("learning_mode", "おまかせ学習（推奨）"),
-                    "current_filter": session_state.get("current_filter", "すべて"),
-                    "search_text": session_state.get("search_text", ""),
-                    # 詳細演習設定の保存
-                    "analysis_target": session_state.get("analysis_target", "すべて"),
-                    "year_filter": session_state.get("year_filter", []),
-                    "domain_filter": session_state.get("domain_filter", []),
-                    "num_questions": session_state.get("num_questions", 10),
-                    "order_mode": session_state.get("order_mode", "問題番号順"),
-                    "show_images": session_state.get("show_images", True),
-                    "new_cards_per_day": session_state.get("new_cards_per_day", 10),
-                    # 現在の学習セッション状態（詳細）
-                    "has_active_session": bool(
-                        session_state.get("current_q_group") or 
-                        session_state.get("main_queue") or 
-                        session_state.get("current_question_index") is not None
-                    ),
-                    "session_type": (
-                        "おまかせ演習" if session_state.get("main_queue") 
-                        else "自由演習" if session_state.get("current_q_group") 
-                        else "継続中" if session_state.get("current_question_index") is not None
-                        else None
-                    ),
-                    "current_question_index": session_state.get("current_question_index"),
-                    "total_questions": session_state.get("total_questions")
-                }
+        # 1. SM-2進捗の更新: 変更されたカードのみ更新
+        cards = session_state.get("cards", {})
+        if cards:
+            batch = db.batch()
+            user_cards_ref = db.collection("users").document(user_id).collection("userCards")
+            
+            for question_id, card_data in cards.items():
+                card_ref = user_cards_ref.document(question_id)
+                batch.set(card_ref, card_data, merge=True)
+            
+            batch.commit()
+            print(f"[DEBUG] save_user_data - カードデータ更新: {len(cards)}件")
+        
+        # 2. 学習ログの新規作成（解答時のみ）
+        if session_state.get("latest_answer_log"):
+            log_data = session_state["latest_answer_log"]
+            log_data.update({
+                "userId": user_id,
+                "timestamp": datetime.datetime.utcnow().isoformat()
+            })
+            db.collection("learningLogs").add(log_data)
+            # ログ送信後はクリア
+            del session_state["latest_answer_log"]
+            print(f"[DEBUG] save_user_data - 学習ログ作成: {log_data.get('questionId')}")
+        
+        # 3. 設定の更新（設定変更時のみ）
+        settings_changed = session_state.get("settings_changed", False)
+        if settings_changed:
+            user_ref = db.collection("users").document(user_id)
+            settings_update = {
+                "settings": {
+                    "new_cards_per_day": session_state.get("new_cards_per_day", 10)
+                },
+                "lastUpdated": datetime.datetime.utcnow().isoformat()
             }
-
-            # ▼ 修正：空の cards を保存して既存を消さない
-            cards_obj = session_state.get("cards", None)
-            if isinstance(cards_obj, dict) and len(cards_obj) > 0:
-                payload["cards"] = cards_obj
-            if "main_queue" in session_state:
-                payload["main_queue"] = [','.join(flatten_and_str(g)) for g in session_state.get("main_queue", [])]
-            # ★ 短期復習キューの新形式保存（ready_at付きMap配列）
-            if "short_term_review_queue" in session_state:
-                ser = []
-                for item in session_state.get("short_term_review_queue", []):
-                    if isinstance(item, dict):
-                        grp = item.get("group", [])
-                        ra = item.get("ready_at")
-                        if isinstance(ra, datetime.datetime):
-                            ra = ra.isoformat()
-                        ser.append({"group": [str(x) for x in grp], "ready_at": ra})
-                    else:
-                        # 後方互換（古い形式が残っていても壊さない）
-                        grp = item if isinstance(item, list) else [str(item)]
-                        ser.append({"group": grp, "ready_at": datetime.datetime.now(datetime.timezone.utc).isoformat()})
-                payload["short_term_review_queue"] = ser
-            if "current_q_group" in session_state:
-                payload["current_q_group"] = ','.join(flatten_and_str(session_state.get("current_q_group", [])))
-            if "new_cards_per_day" in session_state:
-                payload["new_cards_per_day"] = session_state["new_cards_per_day"]
-            doc_ref.set(payload, merge=True)
-            
-            # ▼ グローバル全消しは危険＆重いので削除（必要なら対象関数のキーで運用）
-            # st.cache_data.clear()
+            user_ref.update(settings_update)
+            session_state["settings_changed"] = False
+            print(f"[DEBUG] save_user_data - 設定更新完了")
             
     except Exception as e:
         print(f"[ERROR] save_user_data エラー: {e}")
         # エラーが発生してもアプリケーションを停止させない
-
-def migrate_progress_doc_if_needed(uid: str, email: str):
-    """初回ログイン時などに email Doc を UID Doc へコピー（冪等）"""
-    import time
-    start = time.time()
-
-    db = get_db()  # ← 追加
-    if not db or not uid or not email:
-        print(f"[DEBUG] migrate_progress_doc_if_needed - 早期リターン: {time.time() - start:.3f}s")
-        return
-    
-    # セッションで移行済みかチェック（同一セッション内での重複実行を防ぐ）
-    migration_key = f"migration_done_{uid}"
-    if st.session_state.get(migration_key):
-        print(f"[DEBUG] migrate_progress_doc_if_needed - セッション内スキップ: {time.time() - start:.3f}s")
-        return
-    
-    uid_check_start = time.time()
-    uid_ref = db.collection("user_progress").document(uid)
-    uid_exists = uid_ref.get().exists
-    uid_check_time = time.time() - uid_check_start
-    
-    if uid_exists:
-        # 移行済みマークをセッションに保存
-        st.session_state[migration_key] = True
-        print(f"[DEBUG] migrate_progress_doc_if_needed - UID存在確認のみ: {uid_check_time:.3f}s")
-        return
-    
-    email_check_start = time.time()
-    email_ref = db.collection("user_progress").document(email)
-    snap = email_ref.get()
-    email_check_time = time.time() - email_check_start
-    
-    if snap.exists:
-        copy_start = time.time()
-        uid_ref.set(snap.to_dict(), merge=True)
-        copy_time = time.time() - copy_start
-        
-        meta_start = time.time()
-        # 旧ドキュメントに移行メタ（必要なら後で削除可能）
-        email_ref.set({
-            "__migrated_to": uid,
-            "__migrated_at": datetime.datetime.utcnow().isoformat()
-        }, merge=True)
-        meta_time = time.time() - meta_start
-        
-        total_time = time.time() - start
-        print(f"[DEBUG] migrate_progress_doc_if_needed - UID確認: {uid_check_time:.3f}s, Email確認: {email_check_time:.3f}s, コピー: {copy_time:.3f}s, メタ保存: {meta_time:.3f}s, 合計: {total_time:.3f}s")
-    else:
-        total_time = time.time() - start
-        print(f"[DEBUG] migrate_progress_doc_if_needed - データなし, 合計: {total_time:.3f}s")
-    
-    # 移行済みマークをセッションに保存
-    st.session_state[migration_key] = True
-
-def migrate_permission_if_needed(uid: str, email: str):
-    """user_permissions も email → uid を一度だけ複製（冪等）"""
-    import time
-    start = time.time()
-
-    db = get_db()  # ← 追加
-    if not db or not uid or not email:
-        print(f"[DEBUG] migrate_permission_if_needed - 早期リターン: {time.time() - start:.3f}s")
-        return
-    
-    # セッションで移行済みかチェック（同一セッション内での重複実行を防ぐ）
-    permission_key = f"permission_migration_done_{uid}"
-    if st.session_state.get(permission_key):
-        print(f"[DEBUG] migrate_permission_if_needed - セッション内スキップ: {time.time() - start:.3f}s")
-        return
-    
-    src_check_start = time.time()
-    src = db.collection("user_permissions").document(email).get()
-    src_check_time = time.time() - src_check_start
-    
-    if src.exists:
-        dst_check_start = time.time()
-        dst = db.collection("user_permissions").document(uid)
-        dst_exists = dst.get().exists
-        dst_check_time = time.time() - dst_check_start
-        
-        if not dst_exists:
-            copy_start = time.time()
-            dst.set(src.to_dict(), merge=True)
-            copy_time = time.time() - copy_start
-            
-            total_time = time.time() - start
-            print(f"[DEBUG] migrate_permission_if_needed - Email確認: {src_check_time:.3f}s, UID確認: {dst_check_time:.3f}s, コピー: {copy_time:.3f}s, 合計: {total_time:.3f}s")
-        else:
-            total_time = time.time() - start
-            print(f"[DEBUG] migrate_permission_if_needed - すでに存在, 合計: {total_time:.3f}s")
-    else:
-        total_time = time.time() - start
-        print(f"[DEBUG] migrate_permission_if_needed - データなし, 合計: {total_time:.3f}s")
-    
-    # 移行済みマークをセッションに保存
-    st.session_state[permission_key] = True
 
 # ユーザー権限チェック（キャッシュを復活）
 @st.cache_data(ttl=300)  # 5分間キャッシュ
@@ -1299,97 +917,31 @@ def check_gakushi_permission(user_id):
     """
     Firestoreのuser_permissionsコレクションから権限を判定。
     can_access_gakushi: trueならTrue, それ以外はFalse
-    UIDベース管理＋emailメタデータ併用＋旧データマイグレーション対応
+    新しいFirestore構造対応版
     """
-    db = get_db()  # 安全にDB取得
+    db = get_db()
     if not db:
         return False
     
-    # UIDを主キーとして使用
     uid = st.session_state.get("uid")
-    email = st.session_state.get("email")
-    
     if not uid:
         return False
     
-    doc_ref = db.collection("user_permissions").document(uid)
-    doc = doc_ref.get()
-    if doc.exists:
-        data = doc.to_dict()
-        # emailメタデータも更新
-        if email and data.get("email") != email:
-            doc_ref.update({"email": email})
-        print(f"[DEBUG] 学士権限チェック(UID): {bool(data.get('can_access_gakushi', False))}")
-        return bool(data.get("can_access_gakushi", False))
-    else:
-        # UIDで権限が見つからない場合、emailベースの旧権限を検索・移行
-        print(f"[DEBUG] UID権限なし、emailベース権限検索: {email}")
-        if email:
-            # 直接email検索
-            email_doc_ref = db.collection("user_permissions").document(email)
-            email_doc = email_doc_ref.get()
-            if email_doc.exists:
-                old_data = email_doc.to_dict()
-                print(f"[DEBUG] 旧email権限発見:")
-                print(f"[DEBUG]   - can_access_gakushi: {old_data.get('can_access_gakushi', False)}")
-                print(f"[DEBUG]   - 権限データ: {old_data}")
-                
-                # 権限をUIDベースに移行
-                new_permission_data = {
-                    "can_access_gakushi": old_data.get("can_access_gakushi", False),
-                    "email": email,
-                    "migrated_from": email,
-                    "migrated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
-                }
-                
-                # その他の権限フィールドも移行
-                for key, value in old_data.items():
-                    if key not in ["email", "migrated_from", "migrated_at", "migrated_to_uid"]:
-                        new_permission_data[key] = value
-                
-                doc_ref.set(new_permission_data)
-                
-                # 旧データに移行済みマーク
-                email_doc_ref.update({
-                    "migrated_to_uid": uid,
-                    "migrated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
-                })
-                
-                print(f"[DEBUG] 権限マイグレーション完了: {bool(old_data.get('can_access_gakushi', False))}")
-                return bool(old_data.get("can_access_gakushi", False))
-            else:
-                # 正規化されたemail形式でも検索
-                normalized_email = email.replace(".", "_").replace("@", "_at_")
-                print(f"[DEBUG] 正規化email権限検索: {normalized_email}")
-                normalized_doc_ref = db.collection("user_permissions").document(normalized_email)
-                normalized_doc = normalized_doc_ref.get()
-                if normalized_doc.exists:
-                    old_data = normalized_doc.to_dict()
-                    print(f"[DEBUG] 正規化email権限発見: {old_data}")
-                    
-                    new_permission_data = {
-                        "can_access_gakushi": old_data.get("can_access_gakushi", False),
-                        "email": email,
-                        "migrated_from": normalized_email,
-                        "migrated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
-                    }
-                    
-                    # その他の権限フィールドも移行
-                    for key, value in old_data.items():
-                        if key not in ["email", "migrated_from", "migrated_at", "migrated_to_uid"]:
-                            new_permission_data[key] = value
-                    
-                    doc_ref.set(new_permission_data)
-                    normalized_doc_ref.update({
-                        "migrated_to_uid": uid,
-                        "migrated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
-                    })
-                    
-                    print(f"[DEBUG] 正規化権限マイグレーション完了: {bool(old_data.get('can_access_gakushi', False))}")
-                    return bool(old_data.get("can_access_gakushi", False))
-    
-    print(f"[DEBUG] 学士権限なし")
-    return False
+    try:
+        # /user_permissions/{uid} から権限情報を取得
+        doc_ref = db.collection("user_permissions").document(uid)
+        doc = doc_ref.get()
+        if doc.exists:
+            data = doc.to_dict()
+            result = bool(data.get("can_access_gakushi", False))
+            print(f"[DEBUG] 学士権限チェック(UID): {result}")
+            return result
+        else:
+            print(f"[DEBUG] 学士権限なし: {uid}")
+            return False
+    except Exception as e:
+        print(f"[ERROR] 学士権限チェックエラー: {e}")
+        return False
 
 def _subject_of(q):
     return (q.get("subject") or "未分類").strip()
@@ -1409,6 +961,7 @@ def _recent_subject_penalty(q_subject, recent_qids, qid_to_subject):
     recent_subjects = [qid_to_subject.get(r) for r in recent_qids if r in qid_to_subject]
     return 0.15 if q_subject in recent_subjects else 0.0
 
+@performance.trace
 def pick_new_cards_for_today(all_questions, cards, N=10, recent_qids=None):
     recent_qids = recent_qids or []
     qid_to_subject, subj_to_qids = _make_subject_index(all_questions)
