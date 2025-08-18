@@ -757,12 +757,14 @@ def load_user_data_minimal(user_id):
                         cards = {}
                         for card_doc in cards_docs:
                             cards[card_doc.id] = card_doc.to_dict()
+                        
+                        # 学習ログを統合してSM2パラメータを復元
+                        cards = integrate_learning_logs_into_cards(cards, uid)
                         data["cards"] = cards
                     except Exception as e:
                         data["cards"] = {}
                     
                     total_time = time.time() - start
-                    print(f"[DEBUG] load_user_data_minimal - 読み込み成功: {read_time:.3f}s, 合計: {total_time:.3f}s")
                     return data
                 else:
                     # 新規ユーザーのデフォルトプロフィール作成
@@ -785,7 +787,7 @@ def load_user_data_minimal(user_id):
 
 
 def integrate_learning_logs_into_cards(cards, uid):
-    """学習ログをカードデータに統合する"""
+    """学習ログをカードデータに統合してSM2パラメータを復元する"""
     if not uid:
         return cards
     
@@ -794,44 +796,86 @@ def integrate_learning_logs_into_cards(cards, uid):
         if not db:
             return cards
             
-        # 学習ログを取得
+        # 学習ログを取得（全件）
         learning_logs_ref = db.collection("learningLogs").where("userId", "==", uid)
         logs_docs = learning_logs_ref.get()
         
+        # 問題IDごとに学習ログをグループ化
         learning_logs = {}
         for doc in logs_docs:
             log_data = doc.to_dict()
             question_id = log_data.get("questionId", "")
-            if question_id not in learning_logs:
-                learning_logs[question_id] = []
-            learning_logs[question_id].append(log_data)
+            if question_id:
+                if question_id not in learning_logs:
+                    learning_logs[question_id] = []
+                learning_logs[question_id].append(log_data)
         
-        # 各カードに学習ログを統合
+        # 各問題IDの学習ログを時系列でソート
+        for question_id in learning_logs:
+            learning_logs[question_id].sort(key=lambda x: x.get("timestamp", ""))
+        
+        # カードデータに学習ログを統合
         updated_cards = 0
-        for q_num in cards:
+        for q_num in learning_logs:
+            # カードが存在しない場合は新規作成
+            if q_num not in cards:
+                cards[q_num] = {
+                    "n": 0,
+                    "EF": 2.5,
+                    "interval": 0,
+                    "due": None,
+                    "history": []
+                }
+            
             card = cards[q_num]
-            card_history = card.get("history", [])
-            log_history = learning_logs.get(q_num, [])
+            logs = learning_logs[q_num]
             
-            # 学習ログからhistory形式のデータを作成
-            for log in log_history:
-                if "quality" in log and "timestamp" in log:
-                    card_history.append({
-                        "quality": log["quality"],
-                        "timestamp": log["timestamp"]
-                    })
-                    updated_cards += 1
-            
-            # 時系列でソート（タイムスタンプ順）
-            if card_history:
-                card_history.sort(key=lambda x: x.get("timestamp", ""))
-                cards[q_num]["history"] = card_history
+            # 学習ログから最新のSM2パラメータを復元
+            if logs:
+                latest_log = logs[-1]  # 最新のログ
+                
+                # SM2パラメータを復元
+                card["n"] = len(logs)  # 学習回数
+                card["EF"] = latest_log.get("EF", 2.5)
+                card["interval"] = latest_log.get("interval", 0)
+                
+                # dueの計算（最新の学習タイムスタンプ + interval）
+                last_timestamp = latest_log.get("timestamp")
+                if last_timestamp and card["interval"] > 0:
+                    try:
+                        if isinstance(last_timestamp, str):
+                            # ISO形式の文字列をパース
+                            last_dt = datetime.datetime.fromisoformat(last_timestamp.replace('Z', '+00:00'))
+                        else:
+                            last_dt = last_timestamp
+                        
+                        due_dt = last_dt + datetime.timedelta(days=card["interval"])
+                        card["due"] = due_dt.isoformat()
+                    except Exception:
+                        card["due"] = None
+                else:
+                    card["due"] = None
+                
+                # historyの構築
+                card["history"] = []
+                for log in logs:
+                    if "quality" in log and "timestamp" in log:
+                        card["history"].append({
+                            "quality": log["quality"],
+                            "timestamp": log["timestamp"]
+                        })
+                
+                updated_cards += 1
         
-        print(f"[DEBUG] 学習ログ統合完了: {len(learning_logs)}問題の履歴を統合, 更新されたカード数: {updated_cards}")
+        if updated_cards > 0:
+            print(f"学習ログ統合完了: {len(learning_logs)}問題の履歴を統合, 更新されたカード数: {updated_cards}")
+        
         return cards
         
     except Exception as e:
         print(f"[ERROR] 学習ログ統合エラー: {e}")
+        import traceback
+        traceback.print_exc()
         return cards
 
 def load_user_data_full(user_id, cache_buster: int = 0):
@@ -1707,23 +1751,6 @@ def render_search_page():
     # 学習データの準備 - 新しいFirestore構造に対応
     cards = st.session_state.get("cards", {})
     
-    # 学習ログを取得（新しいFirestore構造）
-    learning_logs = {}
-    if uid:
-        try:
-            learning_logs_ref = db.collection("learningLogs").where("userId", "==", uid)
-            logs_docs = learning_logs_ref.get()
-            
-            for doc in logs_docs:
-                log_data = doc.to_dict()
-                question_id = log_data.get("questionId", "")  # キャメルケースに修正
-                if question_id not in learning_logs:
-                    learning_logs[question_id] = []
-                learning_logs[question_id].append(log_data)
-            
-        except Exception as e:
-            st.sidebar.error(f"学習ログ取得エラー: {e}")
-    
     # カードデータが空の場合、完全版データを読み込む
     if not cards and uid:
         try:
@@ -1733,6 +1760,11 @@ def render_search_page():
             st.session_state["cards"] = cards
         except Exception as e:
             st.error(f"学習データの読み込みエラー: {e}")
+    
+    # 学習ログを統合してSM2パラメータを最新化
+    if uid and cards:
+        cards = integrate_learning_logs_into_cards(cards, uid)
+        st.session_state["cards"] = cards
     
     # 分析対象に応じたフィルタリング
     filtered_data = []
@@ -1776,28 +1808,15 @@ def render_search_page():
             # 国試の必修問題判定にはis_hisshu関数を使用
             is_mandatory = q_num in HISSHU_Q_NUMBERS_SET
         
-        # カードの履歴と学習ログを統合
+        # カードの履歴を取得（学習ログ統合済み）
         card_history = card.get("history", [])
-        log_history = learning_logs.get(q_num, [])
-        
-        # 学習ログからhistory形式のデータを作成
-        combined_history = list(card_history)  # カードの履歴をコピー
-        for log in log_history:
-            if "quality" in log and "timestamp" in log:
-                combined_history.append({
-                    "quality": log["quality"],
-                    "timestamp": log["timestamp"]
-                })
-        
-        # 時系列でソート（タイムスタンプ順）
-        combined_history.sort(key=lambda x: x.get("timestamp", ""))
         
         filtered_data.append({
             "id": q_num,
             "subject": q.get("subject", "未分類"),
             "level": level,
             "ef": card.get("EF", 2.5),  # 大文字EFに修正
-            "history": combined_history,
+            "history": card_history,
             "is_hisshu": is_mandatory
         })
     
@@ -2299,6 +2318,11 @@ def enqueue_short_review(group, minutes: int):
 
 # --- 演習ページ ---
 def render_practice_page():
+    # 学習ログを統合してカードデータを最新化
+    uid = st.session_state.get("uid")
+    if uid and st.session_state.get("cards"):
+        st.session_state.cards = integrate_learning_logs_into_cards(st.session_state.cards, uid)
+    
     # 前回セッション復帰処理
     if st.session_state.get("continue_previous") and st.session_state.get("session_choice_made"):
         st.success("🔄 前回のセッションを復帰しました")
@@ -3616,6 +3640,12 @@ else:
             # 学習記録セクション（検索・進捗ページでも表示）
             st.divider()
             st.markdown("#### 📈 学習記録")
+            
+            # 学習ログを統合してカードデータを最新化
+            uid = st.session_state.get("uid")
+            if uid and st.session_state.cards:
+                st.session_state.cards = integrate_learning_logs_into_cards(st.session_state.cards, uid)
+            
             if st.session_state.cards and len(st.session_state.cards) > 0:
                 quality_to_mark = {1: "×", 2: "△", 4: "◯", 5: "◎"}
                 mark_to_label = {"◎": "簡単", "◯": "普通", "△": "難しい", "×": "もう一度"}
