@@ -270,7 +270,7 @@ def firebase_signup(email, password):
         return {"error": {"message": f"Network error: {str(e)}"}}
 
 def firebase_signin(email, password):
-    """Firebase認証（超高速版）"""
+    """Firebase認証（超高速版 + UID統一機能）"""
     import time
     start = time.time()
     
@@ -294,24 +294,68 @@ def firebase_signin(email, password):
         parse_time = time.time() - parse_start
         
         total_time = time.time() - start
-        print(f"[DEBUG] firebase_signin - API通信: {api_time:.3f}s, JSON解析: {parse_time:.3f}s, 合計: {total_time:.3f}s")
-        print(f"[DEBUG] firebase_signin - HTTPステータス: {r.status_code}")
         
-        if r.status_code != 200:
-            print(f"[DEBUG] firebase_signin - HTTPエラー: {r.status_code}, レスポンス: {result}")
+        if r.status_code == 200:
+            # ログイン成功 - UID統一処理
+            uid = result["localId"]
+            
+            # 既存のメールアドレスでの他のUIDがないかチェック
+            try:
+                db = get_db()
+                if db:
+                    # 同じメールアドレスを持つ既存ユーザーを検索
+                    users_ref = db.collection("users").where("email", "==", email)
+                    existing_users = users_ref.get()
+                    
+                    # 複数のUIDが存在する場合の統合処理
+                    if len(existing_users) > 1:
+                        print(f"メールアドレス {email} に複数のUID ({len(existing_users)}個) が検出されました")
+                        
+                        # 最もデータが多いUIDを統一UIDとして使用
+                        primary_uid = None
+                        max_data_score = 0
+                        
+                        for user_doc in existing_users:
+                            user_uid = user_doc.id
+                            try:
+                                # カードデータの数をカウント
+                                cards_ref = db.collection("users").document(user_uid).collection("userCards")
+                                cards_count = len(list(cards_ref.limit(100).stream()))
+                                
+                                # 学習ログの数をカウント
+                                logs_ref = db.collection("learningLogs").where("userId", "==", user_uid)
+                                logs_count = len(list(logs_ref.limit(100).stream()))
+                                
+                                # データスコア = カード数 + ログ数
+                                data_score = cards_count + logs_count
+                                
+                                if data_score > max_data_score or primary_uid is None:
+                                    primary_uid = user_uid
+                                    max_data_score = data_score
+                                    
+                                print(f"UID {user_uid}: カード{cards_count}件, ログ{logs_count}件, スコア{data_score}")
+                                
+                            except:
+                                continue
+                        
+                        # 統一UIDが現在のUIDと異なる場合
+                        if primary_uid and primary_uid != uid:
+                            print(f"UID統一: {uid} -> {primary_uid} (最多データUIDを使用)")
+                            # セッション状態で統一UIDを使用
+                            result["localId"] = primary_uid
+                            
+            except Exception as e:
+                print(f"[WARNING] UID統一処理エラー: {e}")
         
         return result
     except requests.exceptions.Timeout:
         total_time = time.time() - start
-        print(f"[DEBUG] firebase_signin - タイムアウト: {total_time:.3f}s")
         return {"error": {"message": "Authentication timeout. Please check your network connection."}}
     except requests.exceptions.RequestException as e:
         total_time = time.time() - start
-        print(f"[DEBUG] firebase_signin - ネットワークエラー: {e}, 時間: {total_time:.3f}s")
         return {"error": {"message": f"Network error: {str(e)}"}}
     except Exception as e:
         total_time = time.time() - start
-        print(f"[DEBUG] firebase_signin - 例外発生: {e}, 時間: {total_time:.3f}s")
         return {"error": {"message": str(e)}}
     finally:
         # ログイン処理完了フラグをクリア
@@ -795,28 +839,68 @@ def integrate_learning_logs_into_cards(cards, uid):
         db = get_db()
         if not db:
             return cards
-            
-        # 学習ログを取得（全件）
-        learning_logs_ref = db.collection("learningLogs").where("userId", "==", uid)
-        logs_docs = learning_logs_ref.get()
         
-        # 問題IDごとに学習ログをグループ化
-        learning_logs = {}
-        for doc in logs_docs:
-            log_data = doc.to_dict()
-            question_id = log_data.get("questionId", "")
-            if question_id:
-                if question_id not in learning_logs:
-                    learning_logs[question_id] = []
-                learning_logs[question_id].append(log_data)
+        # 現在のユーザーのメールアドレスを取得
+        current_email = st.session_state.get("email", "")
+        
+        # メールアドレスが存在する場合、そのメールに関連する全UIDを取得
+        all_uids = [uid]  # 現在のUIDは必ず含める
+        
+        if current_email:
+            try:
+                # users コレクションから同じメールアドレスを持つ全ユーザーを検索
+                users_ref = db.collection("users").where("email", "==", current_email)
+                users_docs = users_ref.get()
+                
+                for user_doc in users_docs:
+                    user_uid = user_doc.id
+                    if user_uid not in all_uids:
+                        all_uids.append(user_uid)
+                        
+                print(f"メールアドレス {current_email} に関連するUID: {len(all_uids)}個")
+                
+            except Exception as e:
+                print(f"[WARNING] UID検索エラー: {e}")
+        
+        # 全UIDの学習ログを取得
+        all_learning_logs = {}
+        total_logs = 0
+        
+        for search_uid in all_uids:
+            try:
+                learning_logs_ref = db.collection("learningLogs").where("userId", "==", search_uid)
+                logs_docs = learning_logs_ref.get()
+                
+                uid_log_count = 0
+                for doc in logs_docs:
+                    log_data = doc.to_dict()
+                    question_id = log_data.get("questionId", "")
+                    if question_id:
+                        if question_id not in all_learning_logs:
+                            all_learning_logs[question_id] = []
+                        all_learning_logs[question_id].append(log_data)
+                        uid_log_count += 1
+                        total_logs += 1
+                
+                if uid_log_count > 0:
+                    print(f"UID {search_uid}: {uid_log_count}件のログを取得")
+                    
+            except Exception as e:
+                print(f"[WARNING] UID {search_uid} のログ取得エラー: {e}")
+        
+        print(f"総学習ログ数: {total_logs}件, 問題数: {len(all_learning_logs)}問")
+        
+        # 統合前の状態を記録
+        initial_cards_with_history = len([card for card in cards.values() if card.get('history')])
+        initial_total_history = sum(len(card.get('history', [])) for card in cards.values())
         
         # 各問題IDの学習ログを時系列でソート
-        for question_id in learning_logs:
-            learning_logs[question_id].sort(key=lambda x: x.get("timestamp", ""))
+        for question_id in all_learning_logs:
+            all_learning_logs[question_id].sort(key=lambda x: x.get("timestamp", ""))
         
         # カードデータに学習ログを統合
         updated_cards = 0
-        for q_num in learning_logs:
+        for q_num in all_learning_logs:
             # カードが存在しない場合は新規作成
             if q_num not in cards:
                 cards[q_num] = {
@@ -828,7 +912,7 @@ def integrate_learning_logs_into_cards(cards, uid):
                 }
             
             card = cards[q_num]
-            logs = learning_logs[q_num]
+            logs = all_learning_logs[q_num]
             
             # 学習ログから最新のSM2パラメータを復元
             if logs:
@@ -867,8 +951,17 @@ def integrate_learning_logs_into_cards(cards, uid):
                 
                 updated_cards += 1
         
+        # 統合後の状態を記録
+        final_cards_with_history = len([card for card in cards.values() if card.get('history')])
+        final_total_history = sum(len(card.get('history', [])) for card in cards.values())
+        
         if updated_cards > 0:
-            print(f"学習ログ統合完了: {len(learning_logs)}問題の履歴を統合, 更新されたカード数: {updated_cards}")
+            history_increase = final_total_history - initial_total_history
+            cards_increase = final_cards_with_history - initial_cards_with_history
+            print(f"学習ログ統合完了: {len(all_learning_logs)}問題の履歴を統合")
+            print(f"  - 更新されたカード数: {updated_cards}")
+            print(f"  - 履歴のあるカード数: {initial_cards_with_history} → {final_cards_with_history} (+{cards_increase})")
+            print(f"  - 総履歴数: {initial_total_history} → {final_total_history} (+{history_increase})")
         
         return cards
         
@@ -1748,6 +1841,81 @@ def render_search_page():
     # 学習進捗の可視化セクションを追加
     st.subheader("📈 学習ダッシュボード")
     
+    # 学習ログ統合情報表示
+    if uid:
+        try:
+            # 現在のユーザーメールアドレスを取得
+            current_email = st.session_state.get("email", "")
+            if current_email:
+                # 同一メールアドレスの全UIDを検索
+                users_ref = db.collection("users")
+                matching_users = users_ref.where("email", "==", current_email).get()
+                
+                if len(matching_users) > 1:
+                    st.info(f"🔄 **学習ログ統合情報**")
+                    st.write(f"メールアドレス: `{current_email}`")
+                    st.write(f"関連アカウント数: **{len(matching_users)}個**")
+                    
+                    # 各UIDのデータ量を表示
+                    with st.expander("📊 アカウント別データ詳細", expanded=False):
+                        uid_data_info = []
+                        for user_doc in matching_users:
+                            other_uid = user_doc.id
+                            
+                            # カード数を取得
+                            cards_count = 0
+                            try:
+                                cards_ref = db.collection("cards").document(other_uid)
+                                cards_doc = cards_ref.get()
+                                if cards_doc.exists:
+                                    cards_data = cards_doc.to_dict()
+                                    cards_count = len(cards_data.get("cards", {}))
+                            except:
+                                cards_count = 0
+                            
+                            # 学習ログ数を取得
+                            logs_count = 0
+                            try:
+                                logs_ref = db.collection("learningLogs").where("uid", "==", other_uid)
+                                logs_docs = logs_ref.get()
+                                logs_count = len(logs_docs)
+                            except:
+                                logs_count = 0
+                            
+                            uid_data_info.append({
+                                "UID": other_uid,
+                                "カード数": cards_count,
+                                "学習ログ数": logs_count,
+                                "現在使用中": "✅" if other_uid == uid else ""
+                            })
+                        
+                        # データフレームで表示
+                        import pandas as pd
+                        uid_df = pd.DataFrame(uid_data_info)
+                        st.dataframe(uid_df, use_container_width=True)
+                        
+                        total_logs = sum([info["学習ログ数"] for info in uid_data_info])
+                        st.success(f"**統合済み学習ログ総数: {total_logs}問**")
+                        
+                        # 統合効果の表示
+                        if total_logs > 0:
+                            current_uid_logs = next((info["学習ログ数"] for info in uid_data_info if info["UID"] == uid), 0)
+                            if current_uid_logs < total_logs:
+                                improvement = total_logs - current_uid_logs
+                                st.info(f"🎯 **統合により追加されたログ: +{improvement}問**")
+                                
+                                # 統合前後の比較表示
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    st.metric("統合前", f"{current_uid_logs}問", delta=f"現在のUID単体")
+                                with col2:
+                                    st.metric("統合後", f"{total_logs}問", delta=f"+{improvement}問")
+                else:
+                    st.success("✅ 学習ログは既に統合済みです")
+                
+        except Exception as e:
+            st.warning(f"学習ログ統合情報の取得中にエラーが発生しました: {e}")
+    
     # 学習データの準備 - 新しいFirestore構造に対応
     cards = st.session_state.get("cards", {})
     
@@ -1838,6 +2006,43 @@ def render_search_page():
         ]
     else:
         st.session_state.available_subjects = []
+    
+    # 統合後の学習状況サマリーを表示
+    if uid and not filtered_df.empty:
+        st.markdown("---")
+        st.markdown("### 📊 統合後学習状況")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            total_studied = len(filtered_df[filtered_df["level"] != "未学習"])
+            total_problems = len(filtered_df)
+            st.metric("学習済み問題", f"{total_studied}", 
+                     delta=f"{total_studied}/{total_problems}")
+        
+        with col2:
+            mastered_count = len(filtered_df[filtered_df["level"] == "習得済み"])
+            st.metric("習得済み問題", f"{mastered_count}",
+                     delta=f"{mastered_count/total_problems*100:.1f}%" if total_problems > 0 else "0%")
+        
+        with col3:
+            # 全履歴から学習回数を計算
+            total_learning_sessions = 0
+            for _, row in filtered_df.iterrows():
+                history_list = row["history"]
+                if isinstance(history_list, list):
+                    total_learning_sessions += len(history_list)
+            st.metric("総学習回数", f"{total_learning_sessions}")
+        
+        with col4:
+            # 平均EF値
+            studied_cards = filtered_df[filtered_df["level"] != "未学習"]
+            if not studied_cards.empty:
+                avg_ef = studied_cards["ef"].mean()
+                st.metric("平均記憶定着度", f"{avg_ef:.2f}",
+                         delta="良好" if avg_ef >= 2.5 else "要復習")
+            else:
+                st.metric("平均記憶定着度", "N/A")
     
     # 4タブ構成の可視化
     tab1, tab2, tab3, tab4 = st.tabs(["概要", "グラフ分析", "問題リスト", "キーワード検索"])
@@ -2896,6 +3101,11 @@ if not st.session_state.get("user_logged_in") or not ensure_valid_session():
                 auth_time = time.time() - start_time
                 print(f"[DEBUG] Firebase認証レスポンス取得: {auth_time:.2f}秒")
             
+            # エラーチェック
+            if "error" in result:
+                st.error(f"ログインエラー: {result['error'].get('message', '認証に失敗しました')}")
+                st.stop()
+            
             if "idToken" in result:
                 print(f"[DEBUG] 認証成功 - idToken取得")
                 # 高速セッション更新（emailベース管理）
@@ -3560,10 +3770,31 @@ else:
             st.divider()
             st.markdown("#### 📈 学習記録")
             
+            # 学習ログを統合してカードデータを最新化
+            uid = st.session_state.get("uid")
+            if uid and st.session_state.cards:
+                st.session_state.cards = integrate_learning_logs_into_cards(st.session_state.cards, uid)
+            
             if st.session_state.cards and len(st.session_state.cards) > 0:
                 quality_to_mark = {1: "×", 2: "△", 4: "◯", 5: "◎"}
                 mark_to_label = {"◎": "簡単", "◯": "普通", "△": "難しい", "×": "もう一度"}
-                evaluated_marks = [quality_to_mark.get(card.get('quality')) for card in st.session_state.cards.values() if card.get('quality')]
+                
+                # 統合されたhistoryから最新のqualityを取得
+                evaluated_marks = []
+                for card in st.session_state.cards.values():
+                    # historyがある場合は最新のqualityを使用
+                    if card.get('history'):
+                        latest_quality = card['history'][-1].get('quality')
+                        if latest_quality:
+                            mark = quality_to_mark.get(latest_quality)
+                            if mark:
+                                evaluated_marks.append(mark)
+                    # historyがない場合はqualityフィールドを使用（後方互換性）
+                    elif card.get('quality'):
+                        mark = quality_to_mark.get(card.get('quality'))
+                        if mark:
+                            evaluated_marks.append(mark)
+                
                 total_evaluated = len(evaluated_marks)
                 counter = Counter(evaluated_marks)
                 
@@ -3649,7 +3880,23 @@ else:
             if st.session_state.cards and len(st.session_state.cards) > 0:
                 quality_to_mark = {1: "×", 2: "△", 4: "◯", 5: "◎"}
                 mark_to_label = {"◎": "簡単", "◯": "普通", "△": "難しい", "×": "もう一度"}
-                evaluated_marks = [quality_to_mark.get(card.get('quality')) for card in st.session_state.cards.values() if card.get('quality')]
+                
+                # 統合されたhistoryから最新のqualityを取得
+                evaluated_marks = []
+                for card in st.session_state.cards.values():
+                    # historyがある場合は最新のqualityを使用
+                    if card.get('history'):
+                        latest_quality = card['history'][-1].get('quality')
+                        if latest_quality:
+                            mark = quality_to_mark.get(latest_quality)
+                            if mark:
+                                evaluated_marks.append(mark)
+                    # historyがない場合はqualityフィールドを使用（後方互換性）
+                    elif card.get('quality'):
+                        mark = quality_to_mark.get(card.get('quality'))
+                        if mark:
+                            evaluated_marks.append(mark)
+                
                 total_evaluated = len(evaluated_marks)
                 counter = Counter(evaluated_marks)
                 
