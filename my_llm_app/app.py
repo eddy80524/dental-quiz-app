@@ -189,6 +189,7 @@ def safe_save_cookies(cookies, data_dict):
     try:
         # Cookieが準備完了かチェック
         if hasattr(cookies, '_ready') and not cookies._ready:
+            print("[DEBUG] Cookie not ready for saving")
             return False
         
         # データを設定
@@ -197,6 +198,7 @@ def safe_save_cookies(cookies, data_dict):
         
         # 保存実行
         cookies.save()
+        print(f"[DEBUG] Cookies saved successfully: {list(data_dict.keys())}")
         return True
         
     except Exception as e:
@@ -309,7 +311,8 @@ def firebase_signin(email, password):
                     
                     # 複数のUIDが存在する場合の統合処理
                     if len(existing_users) > 1:
-                        print(f"メールアドレス {email} に複数のUID ({len(existing_users)}個) が検出されました")
+                        # 内部処理ログ（ユーザーには表示しない）
+                        # print(f"メールアドレス {email} に複数のUID ({len(existing_users)}個) が検出されました")
                         
                         # 最もデータが多いUIDを統一UIDとして使用
                         primary_uid = None
@@ -456,6 +459,7 @@ def try_auto_login_from_cookie():
             rt = cookies.get("refresh_token")
             email = cookies.get("email") or ""
             uid = cookies.get("uid") or ""
+            print(f"[DEBUG] Cookie values - rt: {'***' if rt else 'None'}, email: {email}, uid: {'***' if uid else 'None'}")
         except Exception as e:
             print(f"[DEBUG] Cookie access error during auto-login: {e}")
             print(f"[DEBUG] try_auto_login_from_cookie - Cookie準備未完了: {time.time() - start:.3f}s")
@@ -857,7 +861,8 @@ def integrate_learning_logs_into_cards(cards, uid):
                     if user_uid not in all_uids:
                         all_uids.append(user_uid)
                         
-                print(f"メールアドレス {current_email} に関連するUID: {len(all_uids)}個")
+                # 内部処理ログ（デバッグ時のみ）
+                # print(f"メールアドレス {current_email} に関連するUID: {len(all_uids)}個")
                 
             except Exception as e:
                 print(f"[WARNING] UID検索エラー: {e}")
@@ -883,7 +888,8 @@ def integrate_learning_logs_into_cards(cards, uid):
                         total_logs += 1
                 
                 if uid_log_count > 0:
-                    print(f"UID {search_uid}: {uid_log_count}件のログを取得")
+                    # 内部処理ログ（デバッグ時のみ）
+                    pass  # print(f"UID {search_uid}: {uid_log_count}件のログを取得")
                     
             except Exception as e:
                 print(f"[WARNING] UID {search_uid} のログ取得エラー: {e}")
@@ -920,8 +926,37 @@ def integrate_learning_logs_into_cards(cards, uid):
                 
                 # SM2パラメータを復元
                 card["n"] = len(logs)  # 学習回数
-                card["EF"] = latest_log.get("EF", 2.5)
-                card["interval"] = latest_log.get("interval", 0)
+                
+                # 最新ログからSM2パラメータを取得、なければ再計算
+                latest_ef = latest_log.get("EF")
+                latest_interval = latest_log.get("interval")
+                
+                if latest_ef is None or latest_interval is None:
+                    # SM2パラメータが記録されていない場合、履歴から再計算
+                    ef = 2.5
+                    interval = 0
+                    n = 0
+                    
+                    for log in logs:
+                        quality = log.get("quality", 0)
+                        # SM2アルゴリズムで再計算
+                        if n == 0:
+                            interval = 1
+                        elif n == 1:
+                            interval = 6
+                        else:
+                            interval = max(1, round(interval * ef))
+                        
+                        ef = ef + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02))
+                        ef = max(1.3, ef)
+                        
+                        n += 1
+                    
+                    card["EF"] = ef
+                    card["interval"] = interval
+                else:
+                    card["EF"] = latest_ef
+                    card["interval"] = latest_interval
                 
                 # dueの計算（最新の学習タイムスタンプ + interval）
                 last_timestamp = latest_log.get("timestamp")
@@ -934,11 +969,15 @@ def integrate_learning_logs_into_cards(cards, uid):
                             last_dt = last_timestamp
                         
                         due_dt = last_dt + datetime.timedelta(days=card["interval"])
-                        card["due"] = due_dt.isoformat()
+                        due_iso = due_dt.isoformat()
+                        card["due"] = due_iso
+                        card["next_review"] = due_iso  # 復習カード計算との互換性のため追加
                     except Exception:
                         card["due"] = None
+                        card["next_review"] = None
                 else:
                     card["due"] = None
+                    card["next_review"] = None
                 
                 # historyの構築
                 card["history"] = []
@@ -962,6 +1001,31 @@ def integrate_learning_logs_into_cards(cards, uid):
             print(f"  - 更新されたカード数: {updated_cards}")
             print(f"  - 履歴のあるカード数: {initial_cards_with_history} → {final_cards_with_history} (+{cards_increase})")
             print(f"  - 総履歴数: {initial_total_history} → {final_total_history} (+{history_increase})")
+            
+            # 復習対象カードをチェック
+            now = datetime.datetime.now(datetime.timezone.utc).date()
+            review_cards = 0
+            sample_review_cards = []
+            
+            for q_num, card in cards.items():
+                review_date_field = card.get('next_review') or card.get('due')
+                if review_date_field:
+                    try:
+                        if isinstance(review_date_field, str):
+                            review_date = datetime.datetime.fromisoformat(review_date_field.replace('Z', '+00:00')).date()
+                        else:
+                            review_date = review_date_field.date() if isinstance(review_date_field, datetime.datetime) else review_date_field
+                        
+                        if review_date <= now:
+                            review_cards += 1
+                            if len(sample_review_cards) < 5:
+                                sample_review_cards.append((q_num, review_date, card.get('interval', 0)))
+                    except:
+                        pass
+            
+            print(f"  - 本日の復習対象カード数: {review_cards}")
+            if sample_review_cards:
+                print(f"  - 復習対象例: {sample_review_cards}")
         
         return cards
         
@@ -1840,81 +1904,6 @@ def render_search_page():
     
     # 学習進捗の可視化セクションを追加
     st.subheader("📈 学習ダッシュボード")
-    
-    # 学習ログ統合情報表示
-    if uid:
-        try:
-            # 現在のユーザーメールアドレスを取得
-            current_email = st.session_state.get("email", "")
-            if current_email:
-                # 同一メールアドレスの全UIDを検索
-                users_ref = db.collection("users")
-                matching_users = users_ref.where("email", "==", current_email).get()
-                
-                if len(matching_users) > 1:
-                    st.info(f"🔄 **学習ログ統合情報**")
-                    st.write(f"メールアドレス: `{current_email}`")
-                    st.write(f"関連アカウント数: **{len(matching_users)}個**")
-                    
-                    # 各UIDのデータ量を表示
-                    with st.expander("📊 アカウント別データ詳細", expanded=False):
-                        uid_data_info = []
-                        for user_doc in matching_users:
-                            other_uid = user_doc.id
-                            
-                            # カード数を取得
-                            cards_count = 0
-                            try:
-                                cards_ref = db.collection("cards").document(other_uid)
-                                cards_doc = cards_ref.get()
-                                if cards_doc.exists:
-                                    cards_data = cards_doc.to_dict()
-                                    cards_count = len(cards_data.get("cards", {}))
-                            except:
-                                cards_count = 0
-                            
-                            # 学習ログ数を取得
-                            logs_count = 0
-                            try:
-                                logs_ref = db.collection("learningLogs").where("uid", "==", other_uid)
-                                logs_docs = logs_ref.get()
-                                logs_count = len(logs_docs)
-                            except:
-                                logs_count = 0
-                            
-                            uid_data_info.append({
-                                "UID": other_uid,
-                                "カード数": cards_count,
-                                "学習ログ数": logs_count,
-                                "現在使用中": "✅" if other_uid == uid else ""
-                            })
-                        
-                        # データフレームで表示
-                        import pandas as pd
-                        uid_df = pd.DataFrame(uid_data_info)
-                        st.dataframe(uid_df, use_container_width=True)
-                        
-                        total_logs = sum([info["学習ログ数"] for info in uid_data_info])
-                        st.success(f"**統合済み学習ログ総数: {total_logs}問**")
-                        
-                        # 統合効果の表示
-                        if total_logs > 0:
-                            current_uid_logs = next((info["学習ログ数"] for info in uid_data_info if info["UID"] == uid), 0)
-                            if current_uid_logs < total_logs:
-                                improvement = total_logs - current_uid_logs
-                                st.info(f"🎯 **統合により追加されたログ: +{improvement}問**")
-                                
-                                # 統合前後の比較表示
-                                col1, col2 = st.columns(2)
-                                with col1:
-                                    st.metric("統合前", f"{current_uid_logs}問", delta=f"現在のUID単体")
-                                with col2:
-                                    st.metric("統合後", f"{total_logs}問", delta=f"+{improvement}問")
-                else:
-                    st.success("✅ 学習ログは既に統合済みです")
-                
-        except Exception as e:
-            st.warning(f"学習ログ統合情報の取得中にエラーが発生しました: {e}")
     
     # 学習データの準備 - 新しいFirestore構造に対応
     cards = st.session_state.get("cards", {})
@@ -3129,34 +3118,14 @@ if not st.session_state.get("user_logged_in") or not ensure_valid_session():
                         "uid": result.get("localId"),
                         "email": login_email
                     }
-                    safe_save_cookies(cookies, cookie_data)
+                    if safe_save_cookies(cookies, cookie_data):
+                        print(f"[DEBUG] クッキー保存成功")
+                    else:
+                        print(f"[DEBUG] クッキー保存失敗")
                 
                 st.success("ログイン成功！")
                 print(f"[DEBUG] ログイン処理完了")
                 st.rerun()
-                    
-                #     perm_start = time.time()
-                #     migrate_permission_if_needed(st.session_state["uid"], login_email)
-                #     perm_time = time.time() - perm_start
-                #     st.write(f"権限データ移行完了: {perm_time:.2f}秒")
-                
-                # Remember me: クッキー保存（emailベース）
-                if remember_me and cookies is not None and st.session_state.get("refresh_token"):
-                    cookie_start = time.time()
-                    cookie_data = {
-                        "refresh_token": st.session_state["refresh_token"],
-                        "uid": st.session_state["uid"],
-                        "email": login_email
-                    }
-                    if safe_save_cookies(cookies, cookie_data):
-                        cookie_time = time.time() - cookie_start
-                        st.write(f"クッキー保存完了: {cookie_time:.3f}秒")
-                        print(f"[DEBUG] クッキー保存成功: {cookie_time:.3f}秒")
-                else:
-                    if not remember_me:
-                        print("[DEBUG] クッキー保存スキップ - remember_meがFalse")
-                    elif not cookies:
-                        print("[DEBUG] クッキー保存スキップ - cookiesが無効")
             else:
                 print(f"[DEBUG] 認証失敗 - レスポンス: {result}")
                 st.session_state["login_in_progress"] = False  # ログイン失敗時もフラグをクリア
@@ -3377,23 +3346,33 @@ else:
                     # 本日の復習対象カード数を計算
                     review_count = 0
                     cards = st.session_state.get("cards", {})
+                    debug_review_cards = []  # デバッグ用
                 
-                    for card in cards.values():
-                        if 'next_review' in card:
-                            next_review = card['next_review']
-                            if isinstance(next_review, str):
+                    for q_num, card in cards.items():
+                        # next_reviewまたはdueフィールドで復習期日をチェック
+                        review_date_field = card.get('next_review') or card.get('due')
+                        if review_date_field:
+                            if isinstance(review_date_field, str):
                                 try:
-                                    next_review_date = datetime.datetime.fromisoformat(next_review).date()
-                                    if next_review_date <= today:
+                                    review_date = datetime.datetime.fromisoformat(review_date_field.replace('Z', '+00:00')).date()
+                                    if review_date <= today:
                                         review_count += 1
+                                        debug_review_cards.append((q_num, review_date, card.get('interval', 0)))
                                 except:
                                     pass
-                            elif isinstance(next_review, datetime.datetime):
-                                if next_review.date() <= today:
+                            elif isinstance(review_date_field, datetime.datetime):
+                                if review_date_field.date() <= today:
                                     review_count += 1
-                            elif isinstance(next_review, datetime.date):
-                                if next_review <= today:
+                                    debug_review_cards.append((q_num, review_date_field.date(), card.get('interval', 0)))
+                            elif isinstance(review_date_field, datetime.date):
+                                if review_date_field <= today:
                                     review_count += 1
+                                    debug_review_cards.append((q_num, review_date_field, card.get('interval', 0)))
+                    
+                    # デバッグ情報をコンソールに出力
+                    if debug_review_cards:
+                        print(f"[DEBUG] 復習対象カード数: {review_count}")
+                        print(f"[DEBUG] 復習対象例（最初の5件）: {debug_review_cards[:5]}")
                     
                     # 本日の学習完了数を計算（重複カウント防止強化版）
                     today_reviews_done = 0
@@ -3753,9 +3732,28 @@ else:
                         ra = now_utc
                 if not ra or ra <= now_utc:
                     ready_short += 1
+            
+            # 長期復習対象カード数も表示
+            today = datetime.datetime.now(datetime.timezone.utc).date()
+            long_term_review_count = 0
+            cards = st.session_state.get("cards", {})
+            for card in cards.values():
+                review_date_field = card.get('next_review') or card.get('due')
+                if review_date_field:
+                    try:
+                        if isinstance(review_date_field, str):
+                            review_date = datetime.datetime.fromisoformat(review_date_field.replace('Z', '+00:00')).date()
+                        else:
+                            review_date = review_date_field.date() if isinstance(review_date_field, datetime.datetime) else review_date_field
+                        
+                        if review_date <= today:
+                            long_term_review_count += 1
+                    except:
+                        pass
 
             st.write(f"メインキュー: **{len(st.session_state.get('main_queue', []))}** グループ")
             st.write(f"短期復習: **{ready_short}** グループ準備完了")
+            st.write(f"長期復習: **{long_term_review_count}** カード復習期限到来")
 
             # セッション初期化
             if st.button("🔄 セッションを初期化", key="reset_session"):
