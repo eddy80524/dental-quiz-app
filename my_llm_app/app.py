@@ -13,6 +13,7 @@ import collections.abc
 import pandas as pd
 import glob
 from streamlit_cookies_manager import EncryptedCookieManager
+import pytz  # 日本時間対応
 
 # plotlyインポート（未インストール時の案内付き）
 try:
@@ -20,6 +21,9 @@ try:
     PLOTLY_AVAILABLE = True
 except ImportError:
     PLOTLY_AVAILABLE = False
+
+# 日本時間のタイムゾーン設定
+JST = pytz.timezone('Asia/Tokyo')
 
 st.set_page_config(layout="wide")
 
@@ -376,7 +380,7 @@ def firebase_refresh_token(refresh_token):
             return {
                 "idToken": result["id_token"],
                 "refreshToken": result["refresh_token"],
-                "expiresIn": int(result.get("expires_in", 3600))
+                "expiresIn": int(result.get("expires_in", 1800))  # 30分セッション
             }
     except requests.exceptions.RequestException as e:
         print(f"Token refresh error: {e}")
@@ -421,14 +425,14 @@ def firebase_reset_password(email):
         print(f"[DEBUG] パスワードリセット例外: {e}")
         return {"success": False, "message": "予期しないエラーが発生しました"}
 
-def is_token_expired(token_timestamp, expires_in=3600):
-    """トークンが期限切れかどうかをチェック（デフォルト1時間だが、50分でリフレッシュで余裕を持つ）"""
+def is_token_expired(token_timestamp, expires_in=1800):
+    """トークンが期限切れかどうかをチェック（30分間有効）"""
     if not token_timestamp:
         return True
     now = datetime.datetime.now(datetime.timezone.utc)
     token_time = datetime.datetime.fromisoformat(token_timestamp)
-    # 50分（3000秒）で期限切れとして扱い、余裕を持ってリフレッシュ（従来30分→50分に延長）
-    return (now - token_time).total_seconds() > 3000
+    # 25分（1500秒）で期限切れとして扱い、余裕を持ってリフレッシュ
+    return (now - token_time).total_seconds() > 1500
 
 def try_auto_login_from_cookie():
     """クッキーからの自動ログイン（超高速版）"""
@@ -514,9 +518,9 @@ def ensure_valid_session():
     token_timestamp = st.session_state.get("token_timestamp")
     refresh_token = st.session_state.get("refresh_token")
     
-    # トークンが期限切れの場合はリフレッシュを試行
+    # トークンが期限切れの場合はリフレッシュを試行（30分セッション対応）
     if is_token_expired(token_timestamp) and refresh_token:
-        print(f"[DEBUG] トークン期限切れ検出 - 自動リフレッシュ実行中")
+        print(f"[DEBUG] トークン期限切れ検出（30分セッション） - 自動リフレッシュ実行中")
         refresh_result = firebase_refresh_token(refresh_token)
         if refresh_result:
             # トークンの更新
@@ -618,7 +622,11 @@ def load_master_data(version="v2025-08-14-gakushi-1-2-fixed"):  # キャッシ�
             print(f"{file_path} の読み込みでエラー: {e}")
     
     total_time = time.time() - start
-    print(f"[DEBUG] load_master_data - 総時間: {total_time:.3f}s, 問題数: {len(all_questions)}")
+    
+    # 学士問題数のカウント（デバッグ用）
+    gakushi_count = sum(1 for q in all_questions if q.get('number', '').startswith('G'))
+    
+    print(f"[DEBUG] load_master_data - 総時間: {total_time:.3f}s, 問題数: {len(all_questions)} (学士: {gakushi_count}問)")
     for filename, file_time in file_load_times:
         print(f"[DEBUG] load_master_data - {filename}: {file_time:.3f}s")
     
@@ -757,16 +765,36 @@ def filter_gakushi_by_year_area(all_questions, year, area):
     return res
 
 def filter_gakushi_by_year_session_area(all_questions, year, session, area):
-    """学士試験の年度、回数、領域で問題をフィルタリング"""
+    """学士試験の年度、回数、領域で問題をフィルタリング（改良版）"""
     yy = str(year)[2:]  # 2024 -> "24"
-    # セッション部分をエスケープして正確にマッチさせる
-    escaped_session = re.escape(session)
-    pat = re.compile(rf'^G{yy}-{escaped_session}-{area}-\d+$')
+    
+    # より柔軟なパターンマッチング（デバッグ用ログ付き）
     res = []
+    pattern_count = 0
+    
     for q in all_questions:
         qn = q.get("number", "")
-        if qn.startswith("G") and pat.match(qn):
-            res.append(q)
+        if not qn.startswith("G"):
+            continue
+            
+        # 複数のパターンに対応
+        # G23-2-A-1, G25-1-1-A-1, G22-1再-A-1 など
+        patterns = [
+            rf'^G{yy}-{re.escape(session)}-{area}-\d+$',  # 基本パターン
+            rf'^G{yy}-{re.escape(session)}-{area}\d+$',   # ハイフンなしパターン
+        ]
+        
+        matched = False
+        for pattern in patterns:
+            if re.match(pattern, qn):
+                res.append(q)
+                matched = True
+                break
+        
+        if matched:
+            pattern_count += 1
+    
+    print(f"[DEBUG] 学士フィルタ - 年度:{year}, セッション:{session}, 領域:{area} -> {len(res)}問マッチ")
     return res
 
 # 初期データ読み込み
@@ -1076,16 +1104,36 @@ def load_user_data_full(user_id, cache_buster: int = 0):
                 
                 cards_time = time.time() - cards_start
                 
+                # 段階3: /users/{uid}/sessionState から演習セッション状態を取得
+                session_start = time.time()
+                session_ref = db.collection("users").document(uid).collection("sessionState").document("current")
+                session_doc = session_ref.get(timeout=5)
+                
+                if session_doc.exists:
+                    session_data = session_doc.to_dict()
+                    # セッション状態があれば優先して使用
+                    if session_data.get("current_q_group") or session_data.get("main_queue"):
+                        result["current_q_group"] = session_data.get("current_q_group", [])
+                        result["main_queue"] = session_data.get("main_queue", [])
+                        result["short_term_review_queue"] = session_data.get("short_term_review_queue", [])
+                        print(f"[DEBUG] セッション状態復元成功: current_q_group={len(result['current_q_group'])}, main_queue={len(result['main_queue'])}")
+                    else:
+                        print(f"[DEBUG] セッション状態は空のため復元スキップ")
+                else:
+                    print(f"[DEBUG] セッション状態データなし")
+                
+                session_time = time.time() - session_start
+                
                 result = {
                     "cards": cards,
-                    "main_queue": user_data.get("main_queue", []),
-                    "short_term_review_queue": user_data.get("short_term_review_queue", []),
-                    "current_q_group": user_data.get("current_q_group", []),
+                    "main_queue": result.get("main_queue", user_data.get("main_queue", [])),
+                    "short_term_review_queue": result.get("short_term_review_queue", user_data.get("short_term_review_queue", [])),
+                    "current_q_group": result.get("current_q_group", user_data.get("current_q_group", [])),
                     "new_cards_per_day": user_data.get("settings", {}).get("new_cards_per_day", 10),
                 }
                 
                 total_time = time.time() - start
-                print(f"[DEBUG] load_user_data_full - 成功: プロフィール {profile_time:.3f}s, カード {cards_time:.3f}s, 合計 {total_time:.3f}s, カード数: {len(cards)}")
+                print(f"[DEBUG] load_user_data_full - 成功: プロフィール {profile_time:.3f}s, カード {cards_time:.3f}s, セッション {session_time:.3f}s, 合計 {total_time:.3f}s, カード数: {len(cards)}")
                 return result
                 
             except Exception as e:
@@ -1121,7 +1169,25 @@ def save_user_data(user_id, session_state):
             batch.commit()
             print(f"[DEBUG] save_user_data - カードデータ更新: {len(cards)}件")
         
-        # 2. 学習ログの新規作成（解答時のみ）
+        # 3. セッション状態保存（演習途中の状態保持）
+        session_data = {
+            "current_q_group": session_state.get("current_q_group", []),
+            "main_queue": session_state.get("main_queue", []),
+            "short_term_review_queue": session_state.get("short_term_review_queue", []),
+            "result_log": session_state.get("result_log", {}),
+            "last_updated": datetime.datetime.utcnow().isoformat()
+        }
+        
+        # 演習セッション状態の保存
+        if session_data["current_q_group"] or session_data["main_queue"]:
+            try:
+                session_ref = db.collection("users").document(user_id).collection("sessionState").document("current")
+                session_ref.set(session_data, merge=True)
+                print(f"[DEBUG] save_user_data - セッション状態保存: current_q_group={len(session_data['current_q_group'])}, main_queue={len(session_data['main_queue'])}")
+            except Exception as e:
+                print(f"[ERROR] セッション状態保存失敗: {e}")
+        
+        # 4. 学習ログの新規作成（解答時のみ）
         # 単一ログ（後方互換性）
         if session_state.get("latest_answer_log"):
             log_data = session_state["latest_answer_log"]
@@ -1999,7 +2065,7 @@ def render_search_page():
     # 統合後の学習状況サマリーを表示
     if uid and not filtered_df.empty:
         st.markdown("---")
-        st.markdown("### 📊 統合後学習状況")
+        st.markdown("### 📊 学習状況")
         
         col1, col2, col3, col4 = st.columns(4)
         
@@ -2302,7 +2368,6 @@ def render_search_page():
     with tab4:
         # キーワード検索フォーム（サイドバーフィルター連動）
         st.subheader("🔍 キーワード検索")
-        st.info(f"🎯 検索対象: {analysis_target} （サイドバーの分析対象フィルターで変更可能）")
         
         col1, col2 = st.columns([4, 1])
         with col1:
@@ -2602,13 +2667,33 @@ def render_practice_page():
     q_objects = []
     uid = st.session_state.get("uid")
     has_gakushi_permission = check_gakushi_permission(uid)
+    processed_case_ids = set()
     
     for q_num in current_q_group:
         if q_num in ALL_QUESTIONS_DICT:
             # 権限チェック：学士試験の問題で権限がない場合はスキップ
             if q_num.startswith("G") and not has_gakushi_permission:
                 continue
-            q_objects.append(ALL_QUESTIONS_DICT[q_num])
+            
+            q_obj = ALL_QUESTIONS_DICT[q_num]
+            case_id = q_obj.get('case_id')
+            
+            # case_idがある場合、同じcase_idの全ての問題を取得（二連問対応）
+            if case_id and case_id in CASES and case_id not in processed_case_ids:
+                processed_case_ids.add(case_id)
+                # 同じcase_idの全問題を取得
+                case_questions = []
+                for candidate_q in ALL_QUESTIONS:
+                    if candidate_q.get('case_id') == case_id:
+                        if candidate_q['number'].startswith("G") and not has_gakushi_permission:
+                            continue
+                        case_questions.append(candidate_q)
+                
+                # 問題番号順にソート
+                case_questions.sort(key=lambda x: x['number'])
+                q_objects.extend(case_questions)
+            elif not case_id:  # case_idがない単問のみ追加
+                q_objects.append(q_obj)
     if not q_objects:
         # デバッグ情報の表示
         now = datetime.datetime.now(datetime.timezone.utc)
@@ -2804,6 +2889,15 @@ def render_practice_page():
 
                 # フォーム全体の後処理：解答結果を保存し、自己評価段階へ移行
                 st.session_state[f"checked_{group_id}"] = True
+                
+                # セッション状態を自動保存（途中状態の保持）
+                if st.session_state.get("user_logged_in") and st.session_state.get("uid"):
+                    try:
+                        save_user_data(st.session_state.get("uid"), st.session_state)
+                        print(f"[DEBUG] 解答後のセッション状態自動保存完了")
+                    except Exception as e:
+                        print(f"[ERROR] セッション状態自動保存失敗: {e}")
+                
                 # 画面を再描画して自己評価フォームを表示
                 st.rerun()
             if skipped:
@@ -2953,6 +3047,14 @@ def render_practice_page():
                     uid = st.session_state.get("uid")  # UIDベース管理
                     save_user_data(uid, st.session_state)  # UIDを使用
                     st.session_state.current_q_group = next_group
+                    
+                    # 次の問題セットに移る際も状態保存
+                    try:
+                        save_user_data(uid, st.session_state)
+                        print(f"[DEBUG] 次問題移行時のセッション状態保存完了")
+                    except Exception as e:
+                        print(f"[ERROR] 次問題移行時のセッション状態保存失敗: {e}")
+                        
                 for key in list(st.session_state.keys()):
                     if key.startswith(("checked_", "user_selection_", "shuffled_", "free_input_", "order_input_")):
                         del st.session_state[key]
@@ -3065,7 +3167,16 @@ if not st.session_state.get("user_logged_in") or not ensure_valid_session():
     st.markdown("### 🔐 ログイン／新規登録")
     tab_login, tab_signup, tab_reset = st.tabs(["ログイン", "新規登録", "パスワードリセット"])
     with tab_login:
-        login_email = st.text_input("メールアドレス", key="login_email", autocomplete="email")
+        # Cookieから保存されたメールアドレスを取得（自動入力用）
+        saved_email = ""
+        try:
+            cookies = get_cookies()
+            if cookies and cookies.ready:
+                saved_email = cookies.get("saved_email", "")
+        except Exception as e:
+            print(f"[DEBUG] Cookie読み込みエラー: {e}")
+        
+        login_email = st.text_input("メールアドレス", value=saved_email, key="login_email", autocomplete="email")
         login_password = st.text_input("パスワード", type="password", key="login_password")
         remember_me = st.checkbox("ログイン状態を保存する", value=True, help="このブラウザで次回から自動ログインします。")
         
@@ -3110,16 +3221,18 @@ if not st.session_state.get("user_logged_in") or not ensure_valid_session():
                     "login_in_progress": False  # ログイン完了
                 })
                 
-                # Cookie保存（remember me・emailベース）
+                # Cookie保存（remember me・emailベース・完全自動ログイン対応）
                 cookies = get_cookies()  # 安全にCookie取得
                 if remember_me and cookies is not None and result.get("refreshToken"):
                     cookie_data = {
                         "refresh_token": result["refreshToken"],
                         "uid": result.get("localId"),
-                        "email": login_email
+                        "email": login_email,
+                        "saved_email": login_email,  # ログインフォーム用
+                        "auto_login_enabled": True  # 完全自動ログイン有効
                     }
                     if safe_save_cookies(cookies, cookie_data):
-                        print(f"[DEBUG] クッキー保存成功")
+                        print(f"[DEBUG] クッキー保存成功（完全自動ログイン有効）")
                     else:
                         print(f"[DEBUG] クッキー保存失敗")
                 
@@ -3609,8 +3722,9 @@ else:
                                     if g_session:
                                         areas = g_areas_map.get(g_year, {}).get(g_session, ["A", "B", "C", "D"])
                                         g_area = st.selectbox("領域", areas, key="free_g_area")
-                                        if g_area:
-                                            questions_to_load = filter_gakushi_by_year_session_area(ALL_QUESTIONS, g_year, g_session, g_area)
+                        if g_area:
+                            questions_to_load = filter_gakushi_by_year_session_area(ALL_QUESTIONS, g_year, g_session, g_area)
+                            st.info(f"学士{g_year}年度-{g_session}-{g_area}領域: {len(questions_to_load)}問が見つかりました")
 
                 elif mode == "科目別":
                     if target_exam == "国試":
@@ -3628,12 +3742,15 @@ else:
                             selected_subject = st.selectbox("科目", g_subjects, key="free_g_subject")
                             if selected_subject:
                                 questions_to_load = [q for q in ALL_QUESTIONS if str(q.get("number","")).startswith("G") and (q.get("subject") == selected_subject)]
+                                st.info(f"学士試験-{selected_subject}: {len(questions_to_load)}問が見つかりました")
 
                 elif mode == "必修問題のみ":
                     if target_exam == "国試":
                         questions_to_load = [q for q in ALL_QUESTIONS if q.get("number") in HISSHU_Q_NUMBERS_SET]
+                        st.info(f"国試必修問題: {len(questions_to_load)}問が見つかりました")
                     else:
                         questions_to_load = [q for q in ALL_QUESTIONS if q.get("number") in GAKUSHI_HISSHU_Q_NUMBERS_SET]
+                        st.info(f"学士必修問題: {len(questions_to_load)}問が見つかりました")
 
                 elif mode == "キーワード検索":
                     search_keyword = st.text_input("キーワード", placeholder="例: インプラント、根管治療", key="free_keyword")
@@ -3645,6 +3762,8 @@ else:
                             has_gakushi_permission=has_gakushi_permission
                         )
                         questions_to_load = keyword_results if keyword_results else []
+                        exam_type = "学士試験" if gakushi_only else "国試"
+                        st.info(f"{exam_type}キーワード検索「{search_keyword.strip()}」: {len(questions_to_load)}問が見つかりました")
 
                 # 出題順
                 order_mode = st.selectbox("出題順", ["順番通り", "シャッフル"], key="free_order")
@@ -3699,6 +3818,14 @@ else:
                             st.session_state.main_queue = grouped_queue
                             st.session_state.short_term_review_queue = []
                             st.session_state.current_q_group = []
+                            
+                            # セッション状態を保存（演習開始時）
+                            if st.session_state.get("user_logged_in") and st.session_state.get("uid"):
+                                try:
+                                    save_user_data(st.session_state.get("uid"), st.session_state)
+                                    print(f"[DEBUG] 演習開始時のセッション状態保存完了")
+                                except Exception as e:
+                                    print(f"[ERROR] 演習開始時のセッション状態保存失敗: {e}")
                             
                             # カード初期化
                             if "cards" not in st.session_state:
@@ -3812,7 +3939,17 @@ else:
                         for q_num, card in sorted_cards[:10]:
                             last_history = card['history'][-1]
                             last_eval_mark = quality_to_mark.get(last_history.get('quality'))
-                            timestamp_str = datetime.datetime.fromisoformat(last_history['timestamp']).strftime('%Y-%m-%d %H:%M')
+                            
+                            # UTCからJSTに変換して表示
+                            try:
+                                utc_time = datetime.datetime.fromisoformat(last_history['timestamp'].replace('Z', '+00:00'))
+                                if utc_time.tzinfo is None:
+                                    utc_time = utc_time.replace(tzinfo=pytz.UTC)
+                                jst_time = utc_time.astimezone(JST)
+                                timestamp_str = jst_time.strftime('%Y-%m-%d %H:%M')
+                            except:
+                                # フォールバック：元の処理
+                                timestamp_str = datetime.datetime.fromisoformat(last_history['timestamp']).strftime('%Y-%m-%d %H:%M')
                             
                             # 問題番号を緑色のボタンとして表示
                             if st.button(q_num, key=f"jump_practice_{q_num}", type="secondary"):
@@ -3823,7 +3960,7 @@ else:
                                 st.rerun()
                             
                             # 評価情報を下に表示
-                            st.markdown(f"<span style='color: green'>{q_num}</span> : **{last_eval_mark}** ({timestamp_str})", unsafe_allow_html=True)
+                            st.markdown(f"<span style='color: green'>{q_num}</span> : **{last_eval_mark}** ({timestamp_str} JST)", unsafe_allow_html=True)
                     else:
                         st.info("まだ評価された問題がありません。")
             else:
@@ -3839,7 +3976,6 @@ else:
             uid = st.session_state.get("uid")
             has_gakushi_permission = check_gakushi_permission(uid)
             
-            st.markdown("#### 🔍 表示フィルター")
             
             # 対象範囲
             if has_gakushi_permission:
@@ -3914,21 +4050,32 @@ else:
                         for q_num, card in sorted_cards[:10]:
                             last_history = card['history'][-1]
                             last_eval_mark = quality_to_mark.get(last_history.get('quality'))
-                            timestamp_str = datetime.datetime.fromisoformat(last_history['timestamp']).strftime('%Y-%m-%d %H:%M')
+                            
+                            # UTCからJSTに変換して表示
+                            try:
+                                utc_time = datetime.datetime.fromisoformat(last_history['timestamp'].replace('Z', '+00:00'))
+                                if utc_time.tzinfo is None:
+                                    utc_time = utc_time.replace(tzinfo=pytz.UTC)
+                                jst_time = utc_time.astimezone(JST)
+                                timestamp_str = jst_time.strftime('%Y-%m-%d %H:%M')
+                            except:
+                                # フォールバック：元の処理
+                                timestamp_str = datetime.datetime.fromisoformat(last_history['timestamp']).strftime('%Y-%m-%d %H:%M')
                             
                             # 問題番号を緑色のボタンとして表示
                             if st.button(q_num, key=f"jump_search_{q_num}", type="secondary"):
                                 # 演習ページに移動して該当問題を表示
                                 st.session_state.current_q_group = [q_num]
-                                st.session_state.page_select = "演習"
                                 # 問題関連のセッション状態をクリア
                                 for key in list(st.session_state.keys()):
                                     if key.startswith(("checked_", "user_selection_", "shuffled_", "free_input_", "order_input_")):
                                         del st.session_state[key]
+                                # セッション状態更新後にページ遷移
+                                st.session_state.page_select = "演習"
                                 st.rerun()
                             
-                            # 評価情報を下に表示
-                            st.markdown(f"<span style='color: green'>{q_num}</span> : **{last_eval_mark}** ({timestamp_str})", unsafe_allow_html=True)
+                            # 評価情報を下に表示（日本時間表示）
+                            st.markdown(f"<span style='color: green'>{q_num}</span> : **{last_eval_mark}** ({timestamp_str} JST)", unsafe_allow_html=True)
                     else:
                         st.info("まだ評価された問題がありません。")
             else:
