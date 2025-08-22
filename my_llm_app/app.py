@@ -552,7 +552,7 @@ def ensure_valid_session():
     return True
 
 @st.cache_data(ttl=3600)  # 1時間キャッシュ
-def load_master_data(version="v2025-08-14-gakushi-1-2-fixed"):  # キャッシュ更新用バージョン
+def load_master_data(version="v2025-08-22-all-gakushi-files"):  # キャッシュ更新用バージョン
     import time
     start = time.time()
     
@@ -571,7 +571,8 @@ def load_master_data(version="v2025-08-14-gakushi-1-2-fixed"):  # キャッシ�
         'gakushi-2023-1-2.json',
         'gakushi-2023-1-3.json',
         'gakushi-2023-1再.json', 
-        'gakushi-2023-2.json',  
+        'gakushi-2023-2.json',
+        'gakushi-2023-2再.json',
         'gakushi-2024-1-1.json', 
         'gakushi-2024-2.json', 
         'gakushi-2025-1-1.json'
