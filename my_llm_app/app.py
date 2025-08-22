@@ -1166,6 +1166,152 @@ def integrate_learning_logs_into_cards(cards, uid):
         traceback.print_exc()
         return cards
 
+def attempt_data_recovery(uid):
+    """
+    データ復旧を試行する
+    """
+    try:
+        db = get_db()
+        if not db:
+            return "データベース接続エラー"
+        
+        recovery_log = ["🔄 データ復旧を開始..."]
+        
+        # 1. 同じメールアドレスの他のUIDから残存データを収集
+        current_email = st.session_state.get("email", "")
+        if not current_email:
+            return "メールアドレス情報がありません"
+        
+        # 2. 他のUIDを検索
+        users_ref = db.collection("users").where("email", "==", current_email)
+        users_docs = users_ref.get()
+        
+        other_uids = []
+        for user_doc in users_docs:
+            if user_doc.id != uid:
+                other_uids.append(user_doc.id)
+        
+        recovery_log.append(f"📧 {current_email} に関連するUID: {len(other_uids) + 1}個")
+        
+        # 3. 他のUIDのlearningLogsとuserCardsを確認
+        recovered_logs = {}
+        recovered_cards = {}
+        
+        for other_uid in other_uids:
+            # learningLogsをチェック
+            logs_ref = db.collection("learningLogs").where("userId", "==", other_uid)
+            logs_docs = logs_ref.get()
+            
+            for doc in logs_docs:
+                log_data = doc.to_dict()
+                question_id = log_data.get("questionId", "")
+                if question_id:
+                    if question_id not in recovered_logs:
+                        recovered_logs[question_id] = []
+                    recovered_logs[question_id].append(log_data)
+            
+            # userCardsもチェック
+            cards_ref = db.collection("users").document(other_uid).collection("userCards")
+            cards_docs = cards_ref.stream()
+            
+            for doc in cards_docs:
+                card_data = doc.to_dict()
+                if card_data.get("history"):  # historyがあるカードのみ
+                    recovered_cards[doc.id] = card_data
+            
+            recovery_log.append(f"UID {other_uid}: learningLogs={len(logs_docs)}, userCards={len(list(cards_docs))}")
+        
+        # 4. 復旧可能性の評価
+        total_recoverable_logs = sum(len(logs) for logs in recovered_logs.values())
+        total_recoverable_cards = len(recovered_cards)
+        
+        recovery_log.append(f"\n📊 復旧可能データ:")
+        recovery_log.append(f"- 学習ログ: {total_recoverable_logs}件")
+        recovery_log.append(f"- カード: {total_recoverable_cards}枚")
+        
+        if total_recoverable_logs > 0 or total_recoverable_cards > 0:
+            recovery_log.append(f"\n✅ データ復旧の可能性があります！")
+            # 実際の復旧処理はここに実装する
+        else:
+            recovery_log.append(f"\n❌ 復旧可能なデータが見つかりませんでした")
+        
+        return "\n".join(recovery_log)
+        
+    except Exception as e:
+        return f"復旧チェックエラー: {e}"
+
+def emergency_data_check(uid):
+    """
+    緊急データチェック: Firestoreの実際の状態を確認
+    """
+    try:
+        db = get_db()
+        if not db:
+            return "データベース接続エラー"
+        
+        # 1. userCardsコレクションの確認
+        cards_ref = db.collection("users").document(uid).collection("userCards")
+        cards_docs = list(cards_ref.stream())
+        
+        cards_with_history = 0
+        total_history_entries = 0
+        sample_history = []
+        
+        for doc in cards_docs[:10]:  # 最初の10件をサンプル
+            card_data = doc.to_dict()
+            history = card_data.get("history", [])
+            if history:
+                cards_with_history += 1
+                total_history_entries += len(history)
+                if len(sample_history) < 3:  # 3件のサンプルを収集
+                    sample_history.append({
+                        "card_id": doc.id,
+                        "history_count": len(history),
+                        "sample": history[-1] if history else None  # 最新の履歴
+                    })
+        
+        # 2. 元のlearningLogsが本当に削除されているかチェック
+        learning_logs_ref = db.collection("learningLogs").where("userId", "==", uid)
+        logs_docs = list(learning_logs_ref.stream())
+        
+        # 3. 同じメールアドレスの他のUIDをチェック
+        current_email = st.session_state.get("email", "")
+        other_uids = []
+        if current_email:
+            users_ref = db.collection("users").where("email", "==", current_email)
+            users_docs = users_ref.get()
+            for user_doc in users_docs:
+                if user_doc.id != uid:
+                    other_uids.append(user_doc.id)
+        
+        # 4. 他のUIDのlearningLogsをチェック
+        other_logs_count = 0
+        for other_uid in other_uids:
+            other_logs_ref = db.collection("learningLogs").where("userId", "==", other_uid)
+            other_logs_count += len(list(other_logs_ref.stream()))
+        
+        result = f"""
+🚨 緊急データチェック結果:
+
+【現在のUID: {uid}】
+- userCards総数: {len(cards_docs)}
+- history有りカード数: {cards_with_history}
+- 総history記録数: {total_history_entries}
+- 残存learningLogs: {len(logs_docs)}
+
+【他のUID ({len(other_uids)}個)】
+- 他のUIDのlearningLogs残数: {other_logs_count}
+
+【サンプルhistory】
+"""
+        for sample in sample_history:
+            result += f"- カード{sample['card_id']}: {sample['history_count']}回 最新={sample['sample']}\n"
+        
+        return result
+        
+    except Exception as e:
+        return f"エラー: {e}"
+
 # --- Google Analytics連携 ---
 def log_to_ga(event_name: str, user_id: str, params: dict):
     """
@@ -2005,6 +2151,19 @@ def render_search_page():
     
     # 学習進捗の可視化セクションを追加
     st.subheader("📈 学習ダッシュボード")
+    
+    # 🚨 緊急データチェック
+    if uid:
+        with st.expander("🚨 緊急データチェック（データ消失確認）", expanded=True):
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("データ状態を詳細確認"):
+                    check_result = emergency_data_check(uid)
+                    st.text(check_result)
+            with col2:
+                if st.button("データ復旧を試行"):
+                    recovery_result = attempt_data_recovery(uid)
+                    st.text(recovery_result)
     
     # 学習データの準備 - 新しいFirestore構造に対応
     cards = st.session_state.get("cards", {})
