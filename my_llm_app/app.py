@@ -789,8 +789,9 @@ def load_user_data_minimal(user_id):
                         for card_doc in cards_docs:
                             cards[card_doc.id] = card_doc.to_dict()
                         
-                        # 学習ログを統合してSM2パラメータを復元
-                        cards = integrate_learning_logs_into_cards(cards, uid)
+                        # 学習ログを統合してSM2パラメータを復元（必要な場合のみ）
+                        if should_integrate_logs(uid):
+                            cards = integrate_learning_logs_into_cards(cards, uid)
                         data["cards"] = cards
                     except Exception as e:
                         data["cards"] = {}
@@ -853,8 +854,9 @@ def load_user_data_full(user_id, cache_buster: int = 0):
                 for doc in cards_docs:
                     cards[doc.id] = doc.to_dict()
                 
-                # 学習ログを統合してSM2パラメータを復元
-                cards = integrate_learning_logs_into_cards(cards, uid)
+                # 学習ログを統合してSM2パラメータを復元（必要な場合のみ）
+                if should_integrate_logs(uid):
+                    cards = integrate_learning_logs_into_cards(cards, uid)
                 
                 cards_time = time.time() - cards_start
                 
@@ -918,6 +920,31 @@ def load_user_data_full(user_id, cache_buster: int = 0):
 def load_user_data(user_id):
     """後方互換性のため - 軽量版を呼び出す"""
     return load_user_data_minimal(user_id)
+
+def should_integrate_logs(uid):
+    """
+    学習ログ統合が必要かどうかをチェックする
+    """
+    try:
+        db = get_db()
+        if not db:
+            return False
+        
+        user_ref = db.collection("users").document(uid)
+        user_doc = user_ref.get()
+        user_data = user_doc.to_dict() if user_doc.exists else {}
+        
+        # 統合済みフラグをチェック
+        logs_integrated = user_data.get("logs_integrated", False)
+        if logs_integrated:
+            print(f"[INFO] UID {uid}: 学習ログ統合済みのためスキップ")
+            return False
+        else:
+            print(f"[INFO] UID {uid}: 学習ログ統合が必要")
+            return True
+    except Exception as e:
+        print(f"[WARNING] 統合済みフラグチェックエラー: {e}")
+        return False  # エラーの場合は安全のため統合しない
 
 def integrate_learning_logs_into_cards(cards, uid):
     """
@@ -1992,8 +2019,9 @@ def render_search_page():
         except Exception as e:
             st.error(f"学習データの読み込みエラー: {e}")
     
-    # 学習ログを統合してSM2パラメータを最新化
-    if uid and cards:
+    # 学習ログを統合してSM2パラメータを最新化（統合済みの場合はスキップ）
+    if uid and cards and should_integrate_logs(uid):
+        print(f"[INFO] ダッシュボード: 学習ログ統合を実行")
         cards = integrate_learning_logs_into_cards(cards, uid)
         st.session_state["cards"] = cards
     
@@ -2585,9 +2613,9 @@ def enqueue_short_review(group, minutes: int):
 
 # --- 演習ページ ---
 def render_practice_page():
-    # 学習ログを統合してカードデータを最新化
+    # 学習ログを統合してカードデータを最新化（必要な場合のみ）
     uid = st.session_state.get("uid")
-    if uid and st.session_state.get("cards"):
+    if uid and st.session_state.get("cards") and should_integrate_logs(uid):
         st.session_state.cards = integrate_learning_logs_into_cards(st.session_state.cards, uid)
     
     # 前回セッション復帰処理
@@ -3367,8 +3395,8 @@ else:
         if "new_cards_per_day" not in st.session_state:
             st.session_state["new_cards_per_day"] = user_data.get("new_cards_per_day", 10)
         
-        # 既存のカードデータに学習ログを統合
-        if st.session_state.cards:
+        # 既存のカードデータに学習ログを統合（必要な場合のみ）
+        if st.session_state.cards and should_integrate_logs(uid):
             st.session_state.cards = integrate_learning_logs_into_cards(st.session_state.cards, uid)
         
         st.session_state.user_data_loaded = True
@@ -3901,9 +3929,9 @@ else:
             st.divider()
             st.markdown("#### 📈 学習記録")
             
-            # 学習ログを統合してカードデータを最新化
+            # 学習ログを統合してカードデータを最新化（必要な場合のみ）
             uid = st.session_state.get("uid")
-            if uid and st.session_state.cards:
+            if uid and st.session_state.cards and should_integrate_logs(uid):
                 st.session_state.cards = integrate_learning_logs_into_cards(st.session_state.cards, uid)
             
             if st.session_state.cards and len(st.session_state.cards) > 0:
@@ -4012,9 +4040,9 @@ else:
             st.divider()
             st.markdown("#### 📈 学習記録")
             
-            # 学習ログを統合してカードデータを最新化
+            # 学習ログを統合してカードデータを最新化（必要な場合のみ）
             uid = st.session_state.get("uid")
-            if uid and st.session_state.cards:
+            if uid and st.session_state.cards and should_integrate_logs(uid):
                 st.session_state.cards = integrate_learning_logs_into_cards(st.session_state.cards, uid)
             
             if st.session_state.cards and len(st.session_state.cards) > 0:
