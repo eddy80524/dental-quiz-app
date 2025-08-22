@@ -914,9 +914,13 @@ def log_to_ga(event_name: str, user_id: str, params: dict):
 
     payload = {
         "client_id": user_id, # ユーザーを一意に識別するID（uidが最適）
+        "non_personalized_ads": False, # デバッグ時にはこれがあると良い
         "events": [{
             "name": event_name,
-            "params": params
+            "params": {
+                **params, # 元のパラメータを展開
+                "debug_mode": True # ★ DebugViewでリアルタイム確認用
+            }
         }]
     }
     
