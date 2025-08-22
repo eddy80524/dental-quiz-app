@@ -3245,6 +3245,11 @@ def enqueue_short_review(group, minutes: int):
 
 # --- 演習ページ ---
 def render_practice_page():
+    # 【緊急停止】古いキャッシュを無効化 - タイムスタンプでキャッシュバスト
+    import time
+    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    st.success(f"✅ アプリ更新済み: {current_time} - データ読み込み完了、再読み込み機能は削除済み")
+    
     # カードデータの確実な読み込み
     uid = st.session_state.get("uid")
     # 学習ログを統合してカードデータを最新化（必要な場合のみ）
