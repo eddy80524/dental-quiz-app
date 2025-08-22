@@ -865,10 +865,29 @@ def load_user_data_full(user_id, cache_buster: int = 0):
                 
                 if session_doc.exists:
                     session_data = session_doc.to_dict()
+                    
+                    # --- Firestore対応：JSON文字列を元のリスト形式に復元 ---
+                    def deserialize_queue(queue):
+                        # 各要素（JSON文字列）を元のリストに変換する
+                        deserialized = []
+                        for item in queue:
+                            try:
+                                # 文字列であればJSONとしてロード
+                                if isinstance(item, str):
+                                    deserialized.append(json.loads(item))
+                                # 既にリスト形式ならそのまま追加（後方互換性）
+                                elif isinstance(item, list):
+                                    deserialized.append(item)
+                            except (json.JSONDecodeError, TypeError):
+                                # 変換に失敗したデータはスキップ
+                                continue
+                        return deserialized
+                    
                     # セッション状態があれば優先して使用
                     if session_data.get("current_q_group") or session_data.get("main_queue"):
-                        result["current_q_group"] = session_data.get("current_q_group", [])
-                        result["main_queue"] = session_data.get("main_queue", [])
+                        result["current_q_group"] = deserialize_queue(session_data.get("current_q_group", []))
+                        result["main_queue"] = deserialize_queue(session_data.get("main_queue", []))
+                        # short_term_review_queueは構造が異なるので、そのまま
                         result["short_term_review_queue"] = session_data.get("short_term_review_queue", [])
                         print(f"[DEBUG] セッション状態復元成功: current_q_group={len(result['current_q_group'])}, main_queue={len(result['main_queue'])}")
                     else:
@@ -1179,10 +1198,15 @@ def save_user_data(user_id, question_id=None, updated_card_data=None, session_st
         
         # 2. セッション状態保存（学習キューの保存）
         if session_state:
+            # --- Firestore対応：ネストした配列をJSON文字列に変換 ---
+            def serialize_queue(queue):
+                # 各グループ（リスト）をJSON文字列に変換する
+                return [json.dumps(group) for group in queue]
+
             session_data = {
-                "current_q_group": session_state.get("current_q_group", []),
-                "main_queue": session_state.get("main_queue", []),
-                "short_term_review_queue": session_state.get("short_term_review_queue", []),
+                "current_q_group": serialize_queue(session_state.get("current_q_group", [])),
+                "main_queue": serialize_queue(session_state.get("main_queue", [])),
+                "short_term_review_queue": session_state.get("short_term_review_queue", []), # これは既に文字列にできる形式のはず
                 "result_log": session_state.get("result_log", {}),
                 "last_updated": datetime.datetime.utcnow().isoformat()
             }
