@@ -4606,29 +4606,53 @@ else:
                 quality_to_mark = {1: "×", 2: "△", 4: "◯", 5: "◎"}
                 mark_to_label = {"◎": "簡単", "◯": "普通", "△": "難しい", "×": "もう一度"}
                 
-                # 統合されたhistoryから最新のqualityを取得（デバッグ情報付き）
+                # 統合されたhistoryから最新のqualityを取得（詳細デバッグ付き）
                 evaluated_marks = []
                 cards_with_history = 0
                 cards_without_history = 0
+                debug_info = []
                 
-                for card in st.session_state.cards.values():
+                for q_num, card in st.session_state.cards.items():
                     # historyがある場合は最新のqualityを使用
                     if card.get('history') and len(card['history']) > 0:
                         cards_with_history += 1
-                        latest_quality = card['history'][-1].get('quality')
-                        if latest_quality:
+                        history = card['history']
+                        latest_entry = history[-1]
+                        latest_quality = latest_entry.get('quality')
+                        
+                        # デバッグ情報を収集
+                        if len(debug_info) < 5:  # 最初の5件のみ
+                            debug_info.append(f"カード{q_num}: history={len(history)}件, 最新quality={latest_quality}, type={type(latest_quality)}")
+                        
+                        if latest_quality is not None:
                             mark = quality_to_mark.get(latest_quality)
                             if mark:
                                 evaluated_marks.append(mark)
+                            else:
+                                # quality値が想定外の場合のデバッグ
+                                if len(debug_info) < 10:
+                                    debug_info.append(f"⚠️ 未対応quality値: {latest_quality} (カード{q_num})")
+                    
                     # historyがない場合はqualityフィールドを使用（後方互換性）
                     elif card.get('quality'):
                         cards_without_history += 1
-                        mark = quality_to_mark.get(card.get('quality'))
+                        quality_value = card.get('quality')
+                        mark = quality_to_mark.get(quality_value)
                         if mark:
                             evaluated_marks.append(mark)
+                        elif len(debug_info) < 10:
+                            debug_info.append(f"⚠️ 未対応quality値（direct）: {quality_value} (カード{q_num})")
                 
                 total_evaluated = len(evaluated_marks)
                 counter = Counter(evaluated_marks)
+                
+                # デバッグ情報を表示
+                st.info(f"📊 デバッグ情報: 総カード数={len(st.session_state.cards)}, history有り={cards_with_history}, history無し={cards_without_history}, 評価済み={total_evaluated}")
+                
+                if debug_info:
+                    with st.expander("🔍 デバッグ詳細", expanded=False):
+                        for info in debug_info:
+                            st.text(info)
                 
                 with st.expander("自己評価の分布", expanded=True):
                     st.markdown(f"**合計評価数：{total_evaluated}問**")
