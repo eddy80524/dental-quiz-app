@@ -924,27 +924,33 @@ def load_user_data(user_id):
 def should_integrate_logs(uid):
     """
     学習ログ統合が必要かどうかをチェックする
+    🚨 緊急: データ消失問題により統合プロセスを一時停止
     """
-    try:
-        db = get_db()
-        if not db:
-            return False
-        
-        user_ref = db.collection("users").document(uid)
-        user_doc = user_ref.get()
-        user_data = user_doc.to_dict() if user_doc.exists else {}
-        
-        # 統合済みフラグをチェック
-        logs_integrated = user_data.get("logs_integrated", False)
-        if logs_integrated:
-            print(f"[INFO] UID {uid}: 学習ログ統合済みのためスキップ")
-            return False
-        else:
-            print(f"[INFO] UID {uid}: 学習ログ統合が必要")
-            return True
-    except Exception as e:
-        print(f"[WARNING] 統合済みフラグチェックエラー: {e}")
-        return False  # エラーの場合は安全のため統合しない
+    # 緊急停止: データ消失問題が解決されるまで統合を無効化
+    print(f"[EMERGENCY STOP] UID {uid}: 学習ログ統合を緊急停止中（データ消失問題のため）")
+    return False
+    
+    # 元のコード（一時的にコメントアウト）
+    # try:
+    #     db = get_db()
+    #     if not db:
+    #         return False
+    #     
+    #     user_ref = db.collection("users").document(uid)
+    #     user_doc = user_ref.get()
+    #     user_data = user_doc.to_dict() if user_doc.exists else {}
+    #     
+    #     # 統合済みフラグをチェック
+    #     logs_integrated = user_data.get("logs_integrated", False)
+    #     if logs_integrated:
+    #         print(f"[INFO] UID {uid}: 学習ログ統合済みのためスキップ")
+    #         return False
+    #     else:
+    #         print(f"[INFO] UID {uid}: 学習ログ統合が必要")
+    #         return True
+    # except Exception as e:
+    #     print(f"[WARNING] 統合済みフラグチェックエラー: {e}")
+    #     return False  # エラーの場合は安全のため統合しない
 
 def integrate_learning_logs_into_cards(cards, uid):
     """
@@ -1165,6 +1171,84 @@ def integrate_learning_logs_into_cards(cards, uid):
         import traceback
         traceback.print_exc()
         return cards
+
+def detailed_remaining_data_analysis(uid):
+    """
+    残存データの詳細分析で統合問題を特定
+    """
+    try:
+        db = get_db()
+        if not db:
+            return "データベース接続エラー"
+        
+        analysis_log = ["🔍 残存データの詳細分析..."]
+        
+        # 1. 残存カードの詳細情報
+        cards_ref = db.collection("users").document(uid).collection("userCards")
+        cards_docs = list(cards_ref.stream())
+        
+        cards_with_history = []
+        cards_without_history = []
+        
+        for doc in cards_docs:
+            card_data = doc.to_dict()
+            if card_data.get("history"):
+                cards_with_history.append({
+                    "id": doc.id,
+                    "history": card_data["history"],
+                    "n": card_data.get("n", 0),
+                    "EF": card_data.get("EF", 2.5),
+                    "interval": card_data.get("interval", 0)
+                })
+            else:
+                cards_without_history.append({
+                    "id": doc.id,
+                    "has_quality": "quality" in card_data,
+                    "quality": card_data.get("quality"),
+                    "n": card_data.get("n", 0)
+                })
+        
+        analysis_log.append(f"\n📊 残存データ詳細:")
+        analysis_log.append(f"- history有り: {len(cards_with_history)}枚")
+        analysis_log.append(f"- history無し: {len(cards_without_history)}枚")
+        
+        # 2. history有りカードの詳細
+        if cards_with_history:
+            analysis_log.append(f"\n✅ history有りカード詳細:")
+            for card in cards_with_history[:10]:  # 最大10件
+                history_count = len(card["history"])
+                first_date = card["history"][0].get("timestamp", "不明")[:10] if card["history"] else "不明"
+                last_date = card["history"][-1].get("timestamp", "不明")[:10] if card["history"] else "不明"
+                analysis_log.append(f"  {card['id']}: {history_count}回 ({first_date} → {last_date})")
+        
+        # 3. 統合ログの確認
+        user_ref = db.collection("users").document(uid)
+        user_doc = user_ref.get()
+        user_data = user_doc.to_dict() if user_doc.exists else {}
+        
+        logs_integrated = user_data.get("logs_integrated", False)
+        logs_integrated_at = user_data.get("logs_integrated_at", "未設定")
+        
+        analysis_log.append(f"\n🔄 統合プロセス情報:")
+        analysis_log.append(f"- 統合完了フラグ: {logs_integrated}")
+        analysis_log.append(f"- 統合日時: {logs_integrated_at}")
+        
+        # 4. 可能な復旧方法の提案
+        analysis_log.append(f"\n💡 可能な対策:")
+        analysis_log.append(f"1. Firestore管理コンソールでバックアップ確認")
+        analysis_log.append(f"2. 統合プロセスのバグ修正後、手動でログ再生成")
+        analysis_log.append(f"3. 残存データから学習パターンを推定して部分復旧")
+        
+        # 5. 緊急停止フラグの設定提案
+        analysis_log.append(f"\n⚠️ 推奨アクション:")
+        analysis_log.append(f"- 他ユーザーの統合プロセスを緊急停止")
+        analysis_log.append(f"- 統合アルゴリズムの修正")
+        analysis_log.append(f"- バックアップ復旧の検討")
+        
+        return "\n".join(analysis_log)
+        
+    except Exception as e:
+        return f"分析エラー: {e}"
 
 def attempt_data_recovery(uid):
     """
@@ -2155,12 +2239,18 @@ def render_search_page():
     # 🚨 緊急データチェック
     if uid:
         with st.expander("🚨 緊急データチェック（データ消失確認）", expanded=True):
-            col1, col2 = st.columns(2)
+            st.error("⚠️ データ消失が確認されました。統合プロセスを緊急停止中です。")
+            
+            col1, col2, col3 = st.columns(3)
             with col1:
                 if st.button("データ状態を詳細確認"):
                     check_result = emergency_data_check(uid)
                     st.text(check_result)
             with col2:
+                if st.button("残存データ詳細分析"):
+                    analysis_result = detailed_remaining_data_analysis(uid)
+                    st.text(analysis_result)
+            with col3:
                 if st.button("データ復旧を試行"):
                     recovery_result = attempt_data_recovery(uid)
                     st.text(recovery_result)
