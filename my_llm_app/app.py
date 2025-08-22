@@ -2613,8 +2613,36 @@ def enqueue_short_review(group, minutes: int):
 
 # --- 演習ページ ---
 def render_practice_page():
-    # 学習ログを統合してカードデータを最新化（必要な場合のみ）
+    # カードデータの確実な読み込み
     uid = st.session_state.get("uid")
+    if uid:
+        # カードデータが空、または統合済みなのに一部のカードにhistoryがない場合、再読み込み
+        cards = st.session_state.get("cards", {})
+        need_reload = False
+        
+        if not cards:
+            need_reload = True
+            st.info("🔄 カードデータを読み込み中...")
+        else:
+            # 統合済みなのにhistoryがないカードが多い場合、データが古い可能性
+            cards_with_history = sum(1 for card in cards.values() if card.get('history'))
+            total_cards = len(cards)
+            
+            if total_cards > 0 and cards_with_history < total_cards * 0.1:  # 10%未満の場合
+                need_reload = True
+                st.warning(f"⚠️ カードデータが古い可能性があります。再読み込み中... (history有り: {cards_with_history}/{total_cards})")
+        
+        if need_reload:
+            try:
+                cache_buster = int(time.time())
+                full_data = load_user_data_full(uid, cache_buster)
+                st.session_state["cards"] = full_data.get("cards", {})
+                st.success("✅ カードデータを更新しました")
+                st.rerun()
+            except Exception as e:
+                st.error(f"カードデータの読み込みエラー: {e}")
+    
+    # 学習ログを統合してカードデータを最新化（必要な場合のみ）
     if uid and st.session_state.get("cards") and should_integrate_logs(uid):
         st.session_state.cards = integrate_learning_logs_into_cards(st.session_state.cards, uid)
     
@@ -3934,15 +3962,37 @@ else:
             if uid and st.session_state.cards and should_integrate_logs(uid):
                 st.session_state.cards = integrate_learning_logs_into_cards(st.session_state.cards, uid)
             
+            # カードデータの状態確認
+            if uid and st.session_state.cards:
+                cards_with_history = sum(1 for card in st.session_state.cards.values() if card.get('history'))
+                total_cards = len(st.session_state.cards)
+                
+                # データが古い可能性がある場合の警告と再読み込みボタン
+                if total_cards > 0 and cards_with_history < total_cards * 0.1:
+                    st.warning(f"⚠️ 学習記録が正しく表示されていない可能性があります (history有り: {cards_with_history}/{total_cards})")
+                    if st.button("🔄 学習記録を再読み込み", key="reload_records"):
+                        try:
+                            cache_buster = int(time.time())
+                            full_data = load_user_data_full(uid, cache_buster)
+                            st.session_state["cards"] = full_data.get("cards", {})
+                            st.success("✅ 学習記録を更新しました")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"学習記録の更新エラー: {e}")
+            
             if st.session_state.cards and len(st.session_state.cards) > 0:
                 quality_to_mark = {1: "×", 2: "△", 4: "◯", 5: "◎"}
                 mark_to_label = {"◎": "簡単", "◯": "普通", "△": "難しい", "×": "もう一度"}
                 
-                # 統合されたhistoryから最新のqualityを取得
+                # 統合されたhistoryから最新のqualityを取得（デバッグ情報付き）
                 evaluated_marks = []
+                cards_with_history = 0
+                cards_without_history = 0
+                
                 for card in st.session_state.cards.values():
                     # historyがある場合は最新のqualityを使用
-                    if card.get('history'):
+                    if card.get('history') and len(card['history']) > 0:
+                        cards_with_history += 1
                         latest_quality = card['history'][-1].get('quality')
                         if latest_quality:
                             mark = quality_to_mark.get(latest_quality)
@@ -3950,6 +4000,7 @@ else:
                                 evaluated_marks.append(mark)
                     # historyがない場合はqualityフィールドを使用（後方互換性）
                     elif card.get('quality'):
+                        cards_without_history += 1
                         mark = quality_to_mark.get(card.get('quality'))
                         if mark:
                             evaluated_marks.append(mark)
