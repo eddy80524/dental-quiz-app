@@ -4292,6 +4292,24 @@ else:
                             if not ensure_valid_session():
                                 st.warning("セッションが期限切れです。再度ログインしてください。")
                                 st.rerun()
+                                import requests
+                                st.session_state["initializing_study"] = True
+                                with st.spinner("学習セッションを準備中..."):
+                                    id_token = st.session_state.get("id_token")
+                                    url = st.secrets["firebase_functions"]["get_daily_quiz_url"]
+                                    headers = {"Authorization": f"Bearer {id_token}"}
+                                    response = requests.post(url, headers=headers, json={"data": {}})
+                                    if response.status_code == 200:
+                                        result = response.json().get("result", {})
+                                        review_cards = result.get("reviewCards", [])
+                                        new_cards = result.get("newCards", [])
+                                        question_ids = review_cards + new_cards
+                                        st.session_state.main_queue = [[qid] for qid in question_ids]
+                                        # ...（セッション初期化の続き）...
+                                        st.success(f"今日の学習を開始します！（{len(question_ids)}問）")
+                                        st.rerun()
+                                    else:
+                                        st.error(f"学習の準備に失敗しました: {response.text}")
                             
                             # 学習開始中フラグを設定
                             st.session_state["initializing_study"] = True
