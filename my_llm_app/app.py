@@ -3247,30 +3247,8 @@ def enqueue_short_review(group, minutes: int):
 def render_practice_page():
     # カードデータの確実な読み込み
     uid = st.session_state.get("uid")
-    if uid:
-        # 【緊急停止】カードデータ自動再読み込みを一時的に無効化
-        cards = st.session_state.get("cards", {})
-        need_reload = False
-        
-        if not cards:
-            # 初回読み込みのみ許可
-            need_reload = True
-            st.info("🔄 カードデータを読み込み中...")
-        else:
-            # 【無限ループ防止】古いデータのチェックを一時的に無効化
-            need_reload = False  # 強制的にFalse
-        
-        if need_reload:
-            try:
-                cache_buster = int(time.time())
-                full_data = load_user_data_full(uid, cache_buster)
-                st.session_state["cards"] = full_data.get("cards", {})
-                st.success("✅ カードデータを更新しました")
-                # st.rerun()  # 【緊急停止】一時的に無効化
-            except Exception as e:
-                st.error(f"カードデータの読み込みエラー: {e}")
-    
     # 学習ログを統合してカードデータを最新化（必要な場合のみ）
+    uid = st.session_state.get("uid")
     if uid and st.session_state.get("cards") and should_integrate_logs(uid):
         st.session_state.cards = integrate_learning_logs_into_cards(st.session_state.cards, uid)
     
@@ -4599,17 +4577,8 @@ else:
                 if cards_with_history > 0:
                     st.success(f"✅ 演習記録: {cards_with_history}枚のカードに学習履歴があります（総カード数: {total_cards}枚）")
                 else:
-                    # 本当に記録がない場合のみ警告
-                    st.warning(f"⚠️ 学習記録が見つかりません")
-                    if st.button("🔄 学習記録を再読み込み", key="reload_records"):
-                        try:
-                            cache_buster = int(time.time())
-                            full_data = load_user_data_full(uid, cache_buster)
-                            st.session_state["cards"] = full_data.get("cards", {})
-                            st.success("✅ 学習記録を更新しました")
-                            # st.rerun()  # 【緊急停止】一時的に無効化
-                        except Exception as e:
-                            st.error(f"学習記録の更新エラー: {e}")
+                    # 学習記録がない場合も情報として表示（再読み込み機能は削除）
+                    st.info(f"📝 新規ユーザー: これから演習を始めて学習記録を蓄積していきましょう！")
             
             if st.session_state.cards and len(st.session_state.cards) > 0:
                 quality_to_mark = {1: "×", 2: "△", 4: "◯", 5: "◎"}
@@ -4662,14 +4631,6 @@ else:
                     with st.expander("🔍 デバッグ詳細", expanded=False):
                         for info in debug_info:
                             st.text(info)
-                
-                # 【緊急停止】強制再読み込みを一時的に無効化（無限ループ防止）
-                # カードデータが不完全な場合の警告と強制再読み込みボタン（セッション中1回のみ）
-                reload_attempted = st.session_state.get("force_reload_attempted", False)
-                if False:  # 一時的に無効化
-                    pass  # 処理を完全にスキップ
-                elif len(st.session_state.cards) < 5000 and reload_attempted:
-                    st.info("💡 今回のセッション中に既に再読み込みを実行しました。データが不完全な場合は、一度ログアウトしてから再ログインしてください。")
                 
                 with st.expander("自己評価の分布", expanded=True):
                     st.markdown(f"**合計評価数：{total_evaluated}問**")
@@ -4839,7 +4800,7 @@ else:
             # 学士権限のキャッシュをクリア
             check_gakushi_permission.clear()
             
-            for k in ["user_logged_in", "id_token", "refresh_token", "name", "username", "email", "uid", "user_data_loaded", "token_timestamp", "force_reload_attempted"]:
+            for k in ["user_logged_in", "id_token", "refresh_token", "name", "username", "email", "uid", "user_data_loaded", "token_timestamp"]:
                 if k in st.session_state:
                     del st.session_state[k]
 
