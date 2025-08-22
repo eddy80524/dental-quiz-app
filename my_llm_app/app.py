@@ -15,6 +15,9 @@ import glob
 from streamlit_cookies_manager import EncryptedCookieManager
 import pytz  # 日本時間対応
 
+# アプリバージョン（キャッシュ対策用）
+APP_VERSION = "2024-08-22-v2"
+
 # plotlyインポート（未インストール時の案内付き）
 try:
     import plotly.express as px
@@ -4017,6 +4020,15 @@ else:
         user_data_time = time.time() - user_data_start
         
         session_update_start = time.time()
+        
+        # アプリバージョンチェックとキャッシュクリア
+        if st.session_state.get("app_version") != APP_VERSION:
+            print(f"[DEBUG] アプリバージョン更新検出: {st.session_state.get('app_version')} -> {APP_VERSION}")
+            # 古いバージョンのキャッシュをクリア
+            st.cache_data.clear()
+            st.session_state["app_version"] = APP_VERSION
+            print("[DEBUG] キャッシュクリア完了")
+        
         # 最小限のデータでセッション初期化
         # ▼ 修正：戻り値を反映（空で潰さない）
         st.session_state.cards = user_data.get("cards", {})  # ← 修正
@@ -4555,6 +4567,14 @@ else:
                     if k.startswith(("checked_", "user_selection_", "shuffled_", "free_input_", "order_input_")):
                         del st.session_state[k]
                 st.info("セッションを初期化しました")
+                st.rerun()
+            
+            # キャッシュクリア（デバッグ用・一時的）
+            if st.button("🧹 キャッシュクリア", key="clear_cache"):
+                # Streamlitのキャッシュをクリア
+                st.cache_data.clear()
+                st.cache_resource.clear()
+                st.info("キャッシュをクリアしました。ページを再読み込みしてください。")
                 st.rerun()
 
             # 学習記録セクション（演習ページでも表示）
