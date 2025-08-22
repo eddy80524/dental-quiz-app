@@ -4667,35 +4667,11 @@ else:
                         for info in debug_info:
                             st.text(info)
                 
+                # 【緊急停止】強制再読み込みを一時的に無効化（無限ループ防止）
                 # カードデータが不完全な場合の警告と強制再読み込みボタン（セッション中1回のみ）
                 reload_attempted = st.session_state.get("force_reload_attempted", False)
-                if len(st.session_state.cards) < 5000 and not reload_attempted:  # 期待値より大幅に少ない かつ 未実行
-                    st.warning(f"⚠️ カードデータが不完全です（現在: {len(st.session_state.cards)}枚、期待: 5205枚）。")
-                    if st.button("🔄 全カードデータを強制再読み込み", key="force_reload_all_cards_top"):
-                        with st.spinner("全カードデータを読み込み中..."):
-                            try:
-                                print(f"[DEBUG] 強制再読み込み開始: 現在のカード数={len(st.session_state.cards)}")
-                                
-                                # 再読み込み実行フラグを設定（Firebase課金対策）
-                                st.session_state["force_reload_attempted"] = True
-                                
-                                # セッション状態をクリア
-                                if "cards" in st.session_state:
-                                    del st.session_state["cards"]
-                                
-                                # 強制的に新しいcache_busterで再読み込み
-                                cache_buster = int(time.time() * 1000)  # ミリ秒レベルで確実に異なる値
-                                print(f"[DEBUG] cache_buster={cache_buster} で load_user_data_full を呼び出し")
-                                full_data = load_user_data_full(uid, cache_buster)
-                                st.session_state["cards"] = full_data.get("cards", {})
-                                
-                                print(f"[DEBUG] 強制再読み込み完了: 新しいカード数={len(st.session_state.cards)}")
-                                st.success(f"✅ カードデータを更新しました！新しいカード数: {len(st.session_state.cards)}")
-                                st.rerun()
-                                
-                            except Exception as e:
-                                print(f"[ERROR] 強制再読み込みエラー: {e}")
-                                st.error(f"再読み込みエラー: {e}")
+                if False:  # 一時的に無効化
+                    pass  # 処理を完全にスキップ
                 elif len(st.session_state.cards) < 5000 and reload_attempted:
                     st.info("💡 今回のセッション中に既に再読み込みを実行しました。データが不完全な場合は、一度ログアウトしてから再ログインしてください。")
                 
