@@ -3678,7 +3678,7 @@ def render_practice_page():
                     st.markdown(f"<span style='color:blue;'>正解: {q.get('answer', '')}</span>", unsafe_allow_html=True)
         with st.form(key=f"eval_form_{group_id}"):
             st.markdown("#### この問題グループの自己評価")
-            eval_map = {"もう一度": 1, "難しい": 2, "やや難": 3, "普通": 4, "簡単": 5}
+            eval_map = {"もう一度": 1, "難しい": 2, "普通": 4, "簡単": 5}
             
             # グループ内の正解状況を判定してデフォルト選択を決定
             group_all_correct = all(st.session_state.result_log.get(q_num, False) for q_num in current_q_group)
@@ -4616,8 +4616,8 @@ else:
                             st.error(f"学習記録の更新エラー: {e}")
             
             if st.session_state.cards and len(st.session_state.cards) > 0:
-                quality_to_mark = {1: "×", 2: "△", 3: "▲", 4: "◯", 5: "◎"}
-                mark_to_label = {"◎": "簡単", "◯": "普通", "▲": "やや難", "△": "難しい", "×": "もう一度"}
+                quality_to_mark = {1: "×", 2: "△", 4: "◯", 5: "◎"}
+                mark_to_label = {"◎": "簡単", "◯": "普通", "△": "難しい", "×": "もう一度"}
                 
                 # 統合されたhistoryから最新のqualityを取得（詳細デバッグ付き）
                 evaluated_marks = []
@@ -4782,8 +4782,8 @@ else:
                 st.session_state.cards = integrate_learning_logs_into_cards(st.session_state.cards, uid)
             
             if st.session_state.cards and len(st.session_state.cards) > 0:
-                quality_to_mark = {1: "×", 2: "△", 3: "▲", 4: "◯", 5: "◎"}
-                mark_to_label = {"◎": "簡単", "◯": "普通", "▲": "やや難", "△": "難しい", "×": "もう一度"}
+                quality_to_mark = {1: "×", 2: "△", 4: "◯", 5: "◎"}
+                mark_to_label = {"◎": "簡単", "◯": "普通", "△": "難しい", "×": "もう一度"}
                 
                 # 統合されたhistoryから最新のqualityを取得
                 evaluated_marks = []
