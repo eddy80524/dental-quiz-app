@@ -2625,45 +2625,6 @@ def render_search_page():
     # 学習進捗の可視化セクションを追加
     st.subheader("📈 学習ダッシュボード")
     
-    # 🚨 緊急データチェック
-    if uid:
-        with st.expander("🎉 データ確認完了（データは安全に保存されています）", expanded=False):
-            st.success("✅ 250枚の演習記録が正常に保存されていることを確認しました！")
-            st.info("UIの表示問題が原因でした。統合プロセスは正常に動作しています。")
-            
-            # UID抽出問題の調査
-            st.warning("🔍 UID抽出の問題を調査中...")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                col1_1, col1_2 = st.columns(2)
-                with col1_1:
-                    if st.button("データ状態を詳細確認", key="check_data"):
-                        check_result = emergency_data_check(uid)
-                        st.text(check_result)
-                with col1_2:
-                    if st.button("残存データ詳細分析", key="analyze_data"):
-                        analysis_result = detailed_remaining_data_analysis(uid)
-                        st.text(analysis_result)
-            
-            with col2:
-                col2_1, col2_2 = st.columns(2)
-                with col2_1:
-                    if st.button("包括的UID調査", key="investigate_uid"):
-                        current_email = st.session_state.get("email", "")
-                        investigation_result = comprehensive_uid_investigation(uid, current_email)
-                        st.text(investigation_result)
-                with col2_2:
-                    if st.button("統合プロセス分析", key="analyze_integration"):
-                        integration_result = analyze_integration_process(uid)
-                        st.text(integration_result)
-            
-            # バックアップ復旧機能
-            st.divider()
-            if st.button("🔄 バックアップから復旧可能性を確認", key="check_backup"):
-                backup_result = restore_from_backup(uid)
-                st.text(backup_result)
-    
     # 学習データの準備 - 新しいFirestore構造に対応
     cards = st.session_state.get("cards", {})
     
