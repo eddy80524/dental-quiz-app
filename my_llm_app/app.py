@@ -3266,7 +3266,7 @@ def render_practice_page():
                 full_data = load_user_data_full(uid, cache_buster)
                 st.session_state["cards"] = full_data.get("cards", {})
                 st.success("✅ カードデータを更新しました")
-                st.rerun()
+                # st.rerun()  # 【緊急停止】一時的に無効化
             except Exception as e:
                 st.error(f"カードデータの読み込みエラー: {e}")
     
@@ -4607,7 +4607,7 @@ else:
                             full_data = load_user_data_full(uid, cache_buster)
                             st.session_state["cards"] = full_data.get("cards", {})
                             st.success("✅ 学習記録を更新しました")
-                            st.rerun()
+                            # st.rerun()  # 【緊急停止】一時的に無効化
                         except Exception as e:
                             st.error(f"学習記録の更新エラー: {e}")
             
