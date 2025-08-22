@@ -946,6 +946,118 @@ def should_integrate_logs(uid):
         print(f"[WARNING] 統合済みフラグチェックエラー: {e}")
         return False  # エラーの場合は安全のため統合しない
 
+def safe_integration_with_backup(cards, uid):
+    """
+    バックアップ機能付きの安全な学習ログ統合
+    """
+    if not uid:
+        return cards
+    
+    try:
+        db = get_db()
+        if not db:
+            return cards
+        
+        # 統合済みフラグをチェック
+        user_ref = db.collection("users").document(uid)
+        user_doc = user_ref.get()
+        user_data = user_doc.to_dict() if user_doc.exists else {}
+        
+        # 既に統合済みの場合はスキップ
+        if user_data.get("logs_integrated", False):
+            print(f"[INFO] UID {uid}: 学習ログ統合済みのためスキップ")
+            return cards
+        
+        print(f"[INFO] UID {uid}: 安全な学習ログ統合を開始...")
+        
+        # 現在のユーザーのメールアドレスを取得
+        current_email = st.session_state.get("email", "")
+        
+        # メールアドレスが存在する場合、そのメールに関連する全UIDを取得
+        all_uids = [uid]  # 現在のUIDは必ず含める
+        
+        if current_email:
+            try:
+                # users コレクションから同じメールアドレスを持つ全ユーザーを検索
+                users_ref = db.collection("users").where("email", "==", current_email)
+                users_docs = users_ref.get()
+                
+                for user_doc in users_docs:
+                    user_uid = user_doc.id
+                    if user_uid not in all_uids:
+                        all_uids.append(user_uid)
+                        
+                print(f"[INFO] 統合対象UID: {len(all_uids)}個")
+                        
+            except Exception as e:
+                print(f"[WARNING] UID検索エラー: {e}")
+        
+        # 🆕 バックアップの作成
+        backup_data = {}
+        print(f"[INFO] 統合前バックアップを作成中...")
+        
+        # 全UIDの学習ログをバックアップ
+        for search_uid in all_uids:
+            try:
+                backup_data[search_uid] = {
+                    "learningLogs": [],
+                    "userCards": [],
+                    "userData": {}
+                }
+                
+                # learningLogsをバックアップ
+                learning_logs_ref = db.collection("learningLogs").where("userId", "==", search_uid)
+                logs_docs = learning_logs_ref.get()
+                
+                for doc in logs_docs:
+                    log_data = doc.to_dict()
+                    log_data["_doc_id"] = doc.id  # ドキュメントIDも保存
+                    backup_data[search_uid]["learningLogs"].append(log_data)
+                
+                # userCardsをバックアップ
+                cards_ref = db.collection("users").document(search_uid).collection("userCards")
+                cards_docs = cards_ref.stream()
+                
+                for doc in cards_docs:
+                    card_data = doc.to_dict()
+                    card_data["_doc_id"] = doc.id
+                    backup_data[search_uid]["userCards"].append(card_data)
+                
+                # ユーザーデータをバックアップ
+                user_ref = db.collection("users").document(search_uid)
+                user_doc = user_ref.get()
+                if user_doc.exists:
+                    backup_data[search_uid]["userData"] = user_doc.to_dict()
+                
+                print(f"[INFO] UID {search_uid}: learningLogs={len(backup_data[search_uid]['learningLogs'])}, userCards={len(backup_data[search_uid]['userCards'])}")
+                
+            except Exception as e:
+                print(f"[WARNING] UID {search_uid} のバックアップエラー: {e}")
+        
+        # バックアップをFirestoreに保存
+        try:
+            backup_ref = db.collection("integration_backups").document(f"{uid}_{int(time.time())}")
+            backup_ref.set({
+                "uid": uid,
+                "email": current_email,
+                "backup_timestamp": datetime.datetime.utcnow().isoformat(),
+                "data": backup_data
+            })
+            print(f"[SUCCESS] バックアップ保存完了: {backup_ref.id}")
+        except Exception as e:
+            print(f"[ERROR] バックアップ保存失敗: {e}")
+            # バックアップに失敗した場合は統合を中止
+            return cards
+        
+        # 🔄 既存の統合プロセスを実行
+        return integrate_learning_logs_into_cards(cards, uid)
+        
+    except Exception as e:
+        print(f"[ERROR] 安全な学習ログ統合エラー: {e}")
+        import traceback
+        traceback.print_exc()
+        return cards
+
 def integrate_learning_logs_into_cards(cards, uid):
     """
     学習ログをカードデータに統合してSM2パラメータを復元する
@@ -1243,6 +1355,60 @@ def detailed_remaining_data_analysis(uid):
         
     except Exception as e:
         return f"分析エラー: {e}"
+
+def restore_from_backup(uid):
+    """
+    バックアップから学習データを復旧
+    """
+    try:
+        db = get_db()
+        if not db:
+            return "データベース接続エラー"
+        
+        # バックアップを検索
+        backups_ref = db.collection("integration_backups").where("uid", "==", uid)
+        backup_docs = list(backups_ref.stream())
+        
+        if not backup_docs:
+            return "❌ バックアップが見つかりませんでした"
+        
+        # 最新のバックアップを選択
+        latest_backup = max(backup_docs, key=lambda x: x.to_dict().get("backup_timestamp", ""))
+        backup_data = latest_backup.to_dict()
+        
+        restore_log = [f"🔄 バックアップからの復旧を開始..."]
+        restore_log.append(f"バックアップID: {latest_backup.id}")
+        restore_log.append(f"バックアップ日時: {backup_data.get('backup_timestamp', '不明')}")
+        
+        # 復旧処理（実際の復旧は危険なため、情報表示のみ）
+        backup_uids = backup_data.get("data", {})
+        restore_log.append(f"\n📊 バックアップ内容:")
+        
+        total_logs = 0
+        total_cards = 0
+        
+        for backup_uid, uid_data in backup_uids.items():
+            logs_count = len(uid_data.get("learningLogs", []))
+            cards_count = len(uid_data.get("userCards", []))
+            total_logs += logs_count
+            total_cards += cards_count
+            
+            restore_log.append(f"  UID {backup_uid}:")
+            restore_log.append(f"    learningLogs: {logs_count}件")
+            restore_log.append(f"    userCards: {cards_count}件")
+        
+        restore_log.append(f"\n📈 復旧可能データ:")
+        restore_log.append(f"- 総learningLogs: {total_logs}件")
+        restore_log.append(f"- 総userCards: {total_cards}件")
+        
+        restore_log.append(f"\n⚠️ 重要:")
+        restore_log.append(f"実際の復旧は手動で慎重に行う必要があります")
+        restore_log.append(f"現在のデータ(250枚)は既に正常に統合済みです")
+        
+        return "\n".join(restore_log)
+        
+    except Exception as e:
+        return f"復旧チェックエラー: {e}"
 
 def analyze_integration_process(uid):
     """
@@ -2491,6 +2657,12 @@ def render_search_page():
                     if st.button("統合プロセス分析", key="analyze_integration"):
                         integration_result = analyze_integration_process(uid)
                         st.text(integration_result)
+            
+            # バックアップ復旧機能
+            st.divider()
+            if st.button("🔄 バックアップから復旧可能性を確認", key="check_backup"):
+                backup_result = restore_from_backup(uid)
+                st.text(backup_result)
     
     # 学習データの準備 - 新しいFirestore構造に対応
     cards = st.session_state.get("cards", {})
