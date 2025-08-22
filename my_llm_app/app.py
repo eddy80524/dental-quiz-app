@@ -3248,21 +3248,17 @@ def render_practice_page():
     # カードデータの確実な読み込み
     uid = st.session_state.get("uid")
     if uid:
-        # カードデータが空、または統合済みなのに一部のカードにhistoryがない場合、再読み込み
+        # 【緊急停止】カードデータ自動再読み込みを一時的に無効化
         cards = st.session_state.get("cards", {})
         need_reload = False
         
         if not cards:
+            # 初回読み込みのみ許可
             need_reload = True
             st.info("🔄 カードデータを読み込み中...")
         else:
-            # 統合済みなのにhistoryがないカードが多い場合、データが古い可能性
-            cards_with_history = sum(1 for card in cards.values() if card.get('history'))
-            total_cards = len(cards)
-            
-            if total_cards > 0 and cards_with_history < total_cards * 0.1:  # 10%未満の場合
-                need_reload = True
-                st.warning(f"⚠️ カードデータが古い可能性があります。再読み込み中... (history有り: {cards_with_history}/{total_cards})")
+            # 【無限ループ防止】古いデータのチェックを一時的に無効化
+            need_reload = False  # 強制的にFalse
         
         if need_reload:
             try:
