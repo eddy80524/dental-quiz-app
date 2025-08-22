@@ -789,7 +789,8 @@ def load_user_data_minimal(user_id):
                         for card_doc in cards_docs:
                             cards[card_doc.id] = card_doc.to_dict()
                         
-                        # 学習ログとの統合処理は削除済み（カードデータに統合済み）
+                        # 学習ログを統合してSM2パラメータを復元
+                        cards = integrate_learning_logs_into_cards(cards, uid)
                         data["cards"] = cards
                     except Exception as e:
                         data["cards"] = {}
@@ -852,7 +853,8 @@ def load_user_data_full(user_id, cache_buster: int = 0):
                 for doc in cards_docs:
                     cards[doc.id] = doc.to_dict()
                 
-                # 学習ログとの統合処理は削除済み（カードデータに統合済み）
+                # 学習ログを統合してSM2パラメータを復元
+                cards = integrate_learning_logs_into_cards(cards, uid)
                 
                 cards_time = time.time() - cards_start
                 
@@ -897,6 +899,226 @@ def load_user_data_full(user_id, cache_buster: int = 0):
 def load_user_data(user_id):
     """後方互換性のため - 軽量版を呼び出す"""
     return load_user_data_minimal(user_id)
+
+def integrate_learning_logs_into_cards(cards, uid):
+    """
+    学習ログをカードデータに統合してSM2パラメータを復元する
+    一度統合したら古いlearningLogsは削除して重複を防ぐ
+    """
+    if not uid:
+        return cards
+    
+    try:
+        db = get_db()
+        if not db:
+            return cards
+        
+        # 統合済みフラグをチェック
+        user_ref = db.collection("users").document(uid)
+        user_doc = user_ref.get()
+        user_data = user_doc.to_dict() if user_doc.exists else {}
+        
+        # 既に統合済みの場合はスキップ
+        if user_data.get("logs_integrated", False):
+            print(f"[INFO] UID {uid}: 学習ログ統合済みのためスキップ")
+            return cards
+        
+        print(f"[INFO] UID {uid}: 学習ログ統合を開始...")
+        
+        # 現在のユーザーのメールアドレスを取得
+        current_email = st.session_state.get("email", "")
+        
+        # メールアドレスが存在する場合、そのメールに関連する全UIDを取得
+        all_uids = [uid]  # 現在のUIDは必ず含める
+        
+        if current_email:
+            try:
+                # users コレクションから同じメールアドレスを持つ全ユーザーを検索
+                users_ref = db.collection("users").where("email", "==", current_email)
+                users_docs = users_ref.get()
+                
+                for user_doc in users_docs:
+                    user_uid = user_doc.id
+                    if user_uid not in all_uids:
+                        all_uids.append(user_uid)
+                        
+                print(f"[INFO] 統合対象UID: {len(all_uids)}個")
+                        
+            except Exception as e:
+                print(f"[WARNING] UID検索エラー: {e}")
+        
+        # 全UIDの学習ログを取得
+        all_learning_logs = {}
+        total_logs = 0
+        logs_to_delete = []  # 削除対象のログドキュメント
+        
+        for search_uid in all_uids:
+            try:
+                learning_logs_ref = db.collection("learningLogs").where("userId", "==", search_uid)
+                logs_docs = learning_logs_ref.get()
+                
+                uid_log_count = 0
+                for doc in logs_docs:
+                    log_data = doc.to_dict()
+                    question_id = log_data.get("questionId", "")
+                    if question_id:
+                        if question_id not in all_learning_logs:
+                            all_learning_logs[question_id] = []
+                        all_learning_logs[question_id].append(log_data)
+                        logs_to_delete.append(doc.reference)  # 削除対象に追加
+                        uid_log_count += 1
+                        total_logs += 1
+                    
+            except Exception as e:
+                print(f"[WARNING] UID {search_uid} のログ取得エラー: {e}")
+        
+        print(f"統合対象学習ログ: {total_logs}件, 問題数: {len(all_learning_logs)}問")
+        
+        # 各問題IDの学習ログを時系列でソート
+        for question_id in all_learning_logs:
+            all_learning_logs[question_id].sort(key=lambda x: x.get("timestamp", ""))
+        
+        # カードデータに学習ログを統合
+        updated_cards = 0
+        cards_to_save = {}
+        
+        for q_num in all_learning_logs:
+            # カードが存在しない場合は新規作成
+            if q_num not in cards:
+                cards[q_num] = {
+                    "n": 0,
+                    "EF": 2.5,
+                    "interval": 0,
+                    "due": None,
+                    "history": []
+                }
+            
+            card = cards[q_num]
+            logs = all_learning_logs[q_num]
+            
+            # 学習ログから最新のSM2パラメータを復元
+            if logs:
+                latest_log = logs[-1]  # 最新のログ
+                
+                # SM2パラメータを復元
+                card["n"] = len(logs)  # 学習回数
+                
+                # 最新ログからSM2パラメータを取得、なければ再計算
+                latest_ef = latest_log.get("EF")
+                latest_interval = latest_log.get("interval")
+                
+                if latest_ef is None or latest_interval is None:
+                    # SM2パラメータが記録されていない場合、履歴から再計算
+                    ef = 2.5
+                    interval = 0
+                    n = 0
+                    
+                    for log in logs:
+                        quality = log.get("quality", 0)
+                        # SM2アルゴリズムで再計算
+                        if n == 0:
+                            interval = 1
+                        elif n == 1:
+                            interval = 6
+                        else:
+                            interval = max(1, round(interval * ef))
+                        
+                        ef = ef + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02))
+                        ef = max(1.3, ef)
+                        
+                        n += 1
+                    
+                    card["EF"] = ef
+                    card["interval"] = interval
+                else:
+                    card["EF"] = latest_ef
+                    card["interval"] = latest_interval
+                
+                # dueの計算（最新の学習タイムスタンプ + interval）
+                last_timestamp = latest_log.get("timestamp")
+                if last_timestamp and card["interval"] > 0:
+                    try:
+                        if isinstance(last_timestamp, str):
+                            # ISO形式の文字列をパース
+                            last_dt = datetime.datetime.fromisoformat(last_timestamp.replace('Z', '+00:00'))
+                        else:
+                            last_dt = last_timestamp
+                        
+                        due_dt = last_dt + datetime.timedelta(days=card["interval"])
+                        due_iso = due_dt.isoformat()
+                        card["due"] = due_iso
+                        card["next_review"] = due_iso  # 復習カード計算との互換性のため追加
+                    except Exception:
+                        card["due"] = None
+                        card["next_review"] = None
+                else:
+                    card["due"] = None
+                    card["next_review"] = None
+                
+                # historyの構築
+                card["history"] = []
+                for log in logs:
+                    if "quality" in log and "timestamp" in log:
+                        card["history"].append({
+                            "quality": log["quality"],
+                            "timestamp": log["timestamp"]
+                        })
+                
+                # 統合後のカードを保存対象に追加
+                cards_to_save[q_num] = card
+                updated_cards += 1
+        
+        if updated_cards > 0:
+            print(f"学習ログ統合完了: {len(all_learning_logs)}問題の履歴を統合")
+            print(f"  - 更新されたカード数: {updated_cards}")
+            
+            try:
+                # バッチでカードデータを保存
+                batch = db.batch()
+                user_cards_ref = db.collection("users").document(uid).collection("userCards")
+                
+                for question_id, card_data in cards_to_save.items():
+                    card_ref = user_cards_ref.document(question_id)
+                    batch.set(card_ref, card_data, merge=True)
+                
+                # 統合済みフラグを設定
+                batch.update(user_ref, {
+                    "logs_integrated": True,
+                    "logs_integrated_at": datetime.datetime.utcnow().isoformat()
+                })
+                
+                batch.commit()
+                print(f"[SUCCESS] カードデータの保存完了")
+                
+                # 古いlearningLogsを削除（正規化）
+                delete_count = 0
+                batch_delete = db.batch()
+                for i, log_ref in enumerate(logs_to_delete):
+                    batch_delete.delete(log_ref)
+                    delete_count += 1
+                    
+                    # バッチサイズ制限（500件）に対応
+                    if (i + 1) % 500 == 0:
+                        batch_delete.commit()
+                        batch_delete = db.batch()
+                
+                # 残りのログを削除
+                if delete_count % 500 != 0:
+                    batch_delete.commit()
+                
+                print(f"[SUCCESS] 古いlearningLogsを削除: {delete_count}件")
+                print(f"[INFO] UID {uid}: 学習ログ統合・正規化完了")
+                
+            except Exception as e:
+                print(f"[ERROR] データ保存・削除エラー: {e}")
+        
+        return cards
+        
+    except Exception as e:
+        print(f"[ERROR] 学習ログ統合エラー: {e}")
+        import traceback
+        traceback.print_exc()
+        return cards
 
 # --- Google Analytics連携 ---
 def log_to_ga(event_name: str, user_id: str, params: dict):
@@ -1746,8 +1968,9 @@ def render_search_page():
         except Exception as e:
             st.error(f"学習データの読み込みエラー: {e}")
     
-    # 学習ログとの統合処理は削除済み（カードデータに統合済み）
+    # 学習ログを統合してSM2パラメータを最新化
     if uid and cards:
+        cards = integrate_learning_logs_into_cards(cards, uid)
         st.session_state["cards"] = cards
     
     # 分析対象に応じたフィルタリング
@@ -2338,8 +2561,10 @@ def enqueue_short_review(group, minutes: int):
 
 # --- 演習ページ ---
 def render_practice_page():
-    # 学習ログとの統合処理は削除済み（カードデータに統合済み）
+    # 学習ログを統合してカードデータを最新化
     uid = st.session_state.get("uid")
+    if uid and st.session_state.get("cards"):
+        st.session_state.cards = integrate_learning_logs_into_cards(st.session_state.cards, uid)
     
     # 前回セッション復帰処理
     if st.session_state.get("continue_previous") and st.session_state.get("session_choice_made"):
@@ -3118,7 +3343,9 @@ else:
         if "new_cards_per_day" not in st.session_state:
             st.session_state["new_cards_per_day"] = user_data.get("new_cards_per_day", 10)
         
-        # 学習ログとの統合処理は削除済み（カードデータに統合済み）
+        # 既存のカードデータに学習ログを統合
+        if st.session_state.cards:
+            st.session_state.cards = integrate_learning_logs_into_cards(st.session_state.cards, uid)
         
         st.session_state.user_data_loaded = True
         session_update_time = time.time() - session_update_start
@@ -3650,8 +3877,10 @@ else:
             st.divider()
             st.markdown("#### 📈 学習記録")
             
-            # 学習ログとの統合処理は削除済み（カードデータに統合済み）
+            # 学習ログを統合してカードデータを最新化
             uid = st.session_state.get("uid")
+            if uid and st.session_state.cards:
+                st.session_state.cards = integrate_learning_logs_into_cards(st.session_state.cards, uid)
             
             if st.session_state.cards and len(st.session_state.cards) > 0:
                 quality_to_mark = {1: "×", 2: "△", 4: "◯", 5: "◎"}
@@ -3759,8 +3988,10 @@ else:
             st.divider()
             st.markdown("#### 📈 学習記録")
             
-            # 学習ログとの統合処理は削除済み（カードデータに統合済み）
+            # 学習ログを統合してカードデータを最新化
             uid = st.session_state.get("uid")
+            if uid and st.session_state.cards:
+                st.session_state.cards = integrate_learning_logs_into_cards(st.session_state.cards, uid)
             
             if st.session_state.cards and len(st.session_state.cards) > 0:
                 quality_to_mark = {1: "×", 2: "△", 4: "◯", 5: "◎"}
