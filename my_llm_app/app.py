@@ -4667,13 +4667,17 @@ else:
                         for info in debug_info:
                             st.text(info)
                 
-                # カードデータが不完全な場合の警告と強制再読み込みボタン（自己評価の分布の上に配置）
-                if len(st.session_state.cards) < 5000:  # 期待値より大幅に少ない
+                # カードデータが不完全な場合の警告と強制再読み込みボタン（セッション中1回のみ）
+                reload_attempted = st.session_state.get("force_reload_attempted", False)
+                if len(st.session_state.cards) < 5000 and not reload_attempted:  # 期待値より大幅に少ない かつ 未実行
                     st.warning(f"⚠️ カードデータが不完全です（現在: {len(st.session_state.cards)}枚、期待: 5205枚）。")
                     if st.button("🔄 全カードデータを強制再読み込み", key="force_reload_all_cards_top"):
                         with st.spinner("全カードデータを読み込み中..."):
                             try:
                                 print(f"[DEBUG] 強制再読み込み開始: 現在のカード数={len(st.session_state.cards)}")
+                                
+                                # 再読み込み実行フラグを設定（Firebase課金対策）
+                                st.session_state["force_reload_attempted"] = True
                                 
                                 # セッション状態をクリア
                                 if "cards" in st.session_state:
@@ -4692,6 +4696,8 @@ else:
                             except Exception as e:
                                 print(f"[ERROR] 強制再読み込みエラー: {e}")
                                 st.error(f"再読み込みエラー: {e}")
+                elif len(st.session_state.cards) < 5000 and reload_attempted:
+                    st.info("💡 今回のセッション中に既に再読み込みを実行しました。データが不完全な場合は、一度ログアウトしてから再ログインしてください。")
                 
                 with st.expander("自己評価の分布", expanded=True):
                     st.markdown(f"**合計評価数：{total_evaluated}問**")
@@ -4861,7 +4867,7 @@ else:
             # 学士権限のキャッシュをクリア
             check_gakushi_permission.clear()
             
-            for k in ["user_logged_in", "id_token", "refresh_token", "name", "username", "email", "uid", "user_data_loaded", "token_timestamp"]:
+            for k in ["user_logged_in", "id_token", "refresh_token", "name", "username", "email", "uid", "user_data_loaded", "token_timestamp", "force_reload_attempted"]:
                 if k in st.session_state:
                     del st.session_state[k]
 
