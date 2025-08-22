@@ -276,7 +276,7 @@ def firebase_signup(email, password):
         return {"error": {"message": f"Network error: {str(e)}"}}
 
 def firebase_signin(email, password):
-    """Firebase認証（超高速版 + UID統一機能）"""
+    """Firebase認証（Firestore読み取り最小化版）"""
     import time
     start = time.time()
     
@@ -302,57 +302,9 @@ def firebase_signin(email, password):
         total_time = time.time() - start
         
         if r.status_code == 200:
-            # ログイン成功 - UID統一処理
-            uid = result["localId"]
-            
-            # 既存のメールアドレスでの他のUIDがないかチェック
-            try:
-                db = get_db()
-                if db:
-                    # 同じメールアドレスを持つ既存ユーザーを検索
-                    users_ref = db.collection("users").where("email", "==", email)
-                    existing_users = users_ref.get()
-                    
-                    # 複数のUIDが存在する場合の統合処理
-                    if len(existing_users) > 1:
-                        # 内部処理ログ（ユーザーには表示しない）
-                        # print(f"メールアドレス {email} に複数のUID ({len(existing_users)}個) が検出されました")
-                        
-                        # 最もデータが多いUIDを統一UIDとして使用
-                        primary_uid = None
-                        max_data_score = 0
-                        
-                        for user_doc in existing_users:
-                            user_uid = user_doc.id
-                            try:
-                                # カードデータの数をカウント
-                                cards_ref = db.collection("users").document(user_uid).collection("userCards")
-                                cards_count = len(list(cards_ref.limit(100).stream()))
-                                
-                                # 学習ログの数をカウント
-                                logs_ref = db.collection("learningLogs").where("userId", "==", user_uid)
-                                logs_count = len(list(logs_ref.limit(100).stream()))
-                                
-                                # データスコア = カード数 + ログ数
-                                data_score = cards_count + logs_count
-                                
-                                if data_score > max_data_score or primary_uid is None:
-                                    primary_uid = user_uid
-                                    max_data_score = data_score
-                                    
-                                print(f"UID {user_uid}: カード{cards_count}件, ログ{logs_count}件, スコア{data_score}")
-                                
-                            except:
-                                continue
-                        
-                        # 統一UIDが現在のUIDと異なる場合
-                        if primary_uid and primary_uid != uid:
-                            print(f"UID統一: {uid} -> {primary_uid} (最多データUIDを使用)")
-                            # セッション状態で統一UIDを使用
-                            result["localId"] = primary_uid
-                            
-            except Exception as e:
-                print(f"[WARNING] UID統一処理エラー: {e}")
+            # TODO: UID統合処理は、本来は一度限りのデータ移行スクリプトとして実行し、
+            # 毎回のログイン処理からは削除することで読み取り回数を削減する
+            pass
         
         return result
     except requests.exceptions.Timeout:
@@ -837,8 +789,7 @@ def load_user_data_minimal(user_id):
                         for card_doc in cards_docs:
                             cards[card_doc.id] = card_doc.to_dict()
                         
-                        # 学習ログを統合してSM2パラメータを復元
-                        cards = integrate_learning_logs_into_cards(cards, uid)
+                        # 学習ログとの統合処理は削除済み（カードデータに統合済み）
                         data["cards"] = cards
                     except Exception as e:
                         data["cards"] = {}
@@ -864,207 +815,6 @@ def load_user_data_minimal(user_id):
 
 
 
-
-def integrate_learning_logs_into_cards(cards, uid):
-    """学習ログをカードデータに統合してSM2パラメータを復元する"""
-    if not uid:
-        return cards
-    
-    try:
-        db = get_db()
-        if not db:
-            return cards
-        
-        # 現在のユーザーのメールアドレスを取得
-        current_email = st.session_state.get("email", "")
-        
-        # メールアドレスが存在する場合、そのメールに関連する全UIDを取得
-        all_uids = [uid]  # 現在のUIDは必ず含める
-        
-        if current_email:
-            try:
-                # users コレクションから同じメールアドレスを持つ全ユーザーを検索
-                users_ref = db.collection("users").where("email", "==", current_email)
-                users_docs = users_ref.get()
-                
-                for user_doc in users_docs:
-                    user_uid = user_doc.id
-                    if user_uid not in all_uids:
-                        all_uids.append(user_uid)
-                        
-                # 内部処理ログ（デバッグ時のみ）
-                # print(f"メールアドレス {current_email} に関連するUID: {len(all_uids)}個")
-                
-            except Exception as e:
-                print(f"[WARNING] UID検索エラー: {e}")
-        
-        # 全UIDの学習ログを取得
-        all_learning_logs = {}
-        total_logs = 0
-        
-        for search_uid in all_uids:
-            try:
-                learning_logs_ref = db.collection("learningLogs").where("userId", "==", search_uid)
-                logs_docs = learning_logs_ref.get()
-                
-                uid_log_count = 0
-                for doc in logs_docs:
-                    log_data = doc.to_dict()
-                    question_id = log_data.get("questionId", "")
-                    if question_id:
-                        if question_id not in all_learning_logs:
-                            all_learning_logs[question_id] = []
-                        all_learning_logs[question_id].append(log_data)
-                        uid_log_count += 1
-                        total_logs += 1
-                
-                if uid_log_count > 0:
-                    # 内部処理ログ（デバッグ時のみ）
-                    pass  # print(f"UID {search_uid}: {uid_log_count}件のログを取得")
-                    
-            except Exception as e:
-                print(f"[WARNING] UID {search_uid} のログ取得エラー: {e}")
-        
-        print(f"総学習ログ数: {total_logs}件, 問題数: {len(all_learning_logs)}問")
-        
-        # 統合前の状態を記録
-        initial_cards_with_history = len([card for card in cards.values() if card.get('history')])
-        initial_total_history = sum(len(card.get('history', [])) for card in cards.values())
-        
-        # 各問題IDの学習ログを時系列でソート
-        for question_id in all_learning_logs:
-            all_learning_logs[question_id].sort(key=lambda x: x.get("timestamp", ""))
-        
-        # カードデータに学習ログを統合
-        updated_cards = 0
-        for q_num in all_learning_logs:
-            # カードが存在しない場合は新規作成
-            if q_num not in cards:
-                cards[q_num] = {
-                    "n": 0,
-                    "EF": 2.5,
-                    "interval": 0,
-                    "due": None,
-                    "history": []
-                }
-            
-            card = cards[q_num]
-            logs = all_learning_logs[q_num]
-            
-            # 学習ログから最新のSM2パラメータを復元
-            if logs:
-                latest_log = logs[-1]  # 最新のログ
-                
-                # SM2パラメータを復元
-                card["n"] = len(logs)  # 学習回数
-                
-                # 最新ログからSM2パラメータを取得、なければ再計算
-                latest_ef = latest_log.get("EF")
-                latest_interval = latest_log.get("interval")
-                
-                if latest_ef is None or latest_interval is None:
-                    # SM2パラメータが記録されていない場合、履歴から再計算
-                    ef = 2.5
-                    interval = 0
-                    n = 0
-                    
-                    for log in logs:
-                        quality = log.get("quality", 0)
-                        # SM2アルゴリズムで再計算
-                        if n == 0:
-                            interval = 1
-                        elif n == 1:
-                            interval = 6
-                        else:
-                            interval = max(1, round(interval * ef))
-                        
-                        ef = ef + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02))
-                        ef = max(1.3, ef)
-                        
-                        n += 1
-                    
-                    card["EF"] = ef
-                    card["interval"] = interval
-                else:
-                    card["EF"] = latest_ef
-                    card["interval"] = latest_interval
-                
-                # dueの計算（最新の学習タイムスタンプ + interval）
-                last_timestamp = latest_log.get("timestamp")
-                if last_timestamp and card["interval"] > 0:
-                    try:
-                        if isinstance(last_timestamp, str):
-                            # ISO形式の文字列をパース
-                            last_dt = datetime.datetime.fromisoformat(last_timestamp.replace('Z', '+00:00'))
-                        else:
-                            last_dt = last_timestamp
-                        
-                        due_dt = last_dt + datetime.timedelta(days=card["interval"])
-                        due_iso = due_dt.isoformat()
-                        card["due"] = due_iso
-                        card["next_review"] = due_iso  # 復習カード計算との互換性のため追加
-                    except Exception:
-                        card["due"] = None
-                        card["next_review"] = None
-                else:
-                    card["due"] = None
-                    card["next_review"] = None
-                
-                # historyの構築
-                card["history"] = []
-                for log in logs:
-                    if "quality" in log and "timestamp" in log:
-                        card["history"].append({
-                            "quality": log["quality"],
-                            "timestamp": log["timestamp"]
-                        })
-                
-                updated_cards += 1
-        
-        # 統合後の状態を記録
-        final_cards_with_history = len([card for card in cards.values() if card.get('history')])
-        final_total_history = sum(len(card.get('history', [])) for card in cards.values())
-        
-        if updated_cards > 0:
-            history_increase = final_total_history - initial_total_history
-            cards_increase = final_cards_with_history - initial_cards_with_history
-            print(f"学習ログ統合完了: {len(all_learning_logs)}問題の履歴を統合")
-            print(f"  - 更新されたカード数: {updated_cards}")
-            print(f"  - 履歴のあるカード数: {initial_cards_with_history} → {final_cards_with_history} (+{cards_increase})")
-            print(f"  - 総履歴数: {initial_total_history} → {final_total_history} (+{history_increase})")
-            
-            # 復習対象カードをチェック
-            now = datetime.datetime.now(datetime.timezone.utc).date()
-            review_cards = 0
-            sample_review_cards = []
-            
-            for q_num, card in cards.items():
-                review_date_field = card.get('next_review') or card.get('due')
-                if review_date_field:
-                    try:
-                        if isinstance(review_date_field, str):
-                            review_date = datetime.datetime.fromisoformat(review_date_field.replace('Z', '+00:00')).date()
-                        else:
-                            review_date = review_date_field.date() if isinstance(review_date_field, datetime.datetime) else review_date_field
-                        
-                        if review_date <= now:
-                            review_cards += 1
-                            if len(sample_review_cards) < 5:
-                                sample_review_cards.append((q_num, review_date, card.get('interval', 0)))
-                    except:
-                        pass
-            
-            print(f"  - 本日の復習対象カード数: {review_cards}")
-            if sample_review_cards:
-                print(f"  - 復習対象例: {sample_review_cards}")
-        
-        return cards
-        
-    except Exception as e:
-        print(f"[ERROR] 学習ログ統合エラー: {e}")
-        import traceback
-        traceback.print_exc()
-        return cards
 
 def load_user_data_full(user_id, cache_buster: int = 0):
     """演習開始時にユーザーの全カードデータを読み込む2段階読み込み版"""
@@ -1102,8 +852,7 @@ def load_user_data_full(user_id, cache_buster: int = 0):
                 for doc in cards_docs:
                     cards[doc.id] = doc.to_dict()
                 
-                # 学習ログを統合
-                cards = integrate_learning_logs_into_cards(cards, uid)
+                # 学習ログとの統合処理は削除済み（カードデータに統合済み）
                 
                 cards_time = time.time() - cards_start
                 
@@ -1149,8 +898,12 @@ def load_user_data(user_id):
     """後方互換性のため - 軽量版を呼び出す"""
     return load_user_data_minimal(user_id)
 
-def save_user_data(user_id, session_state):
-    """新しいFirestore構造での分散データ保存"""
+def save_user_data(user_id, question_id=None, updated_card_data=None, session_state=None):
+    """
+    リファクタリング済み：Firestoreの読み取り/書き込み回数を最小化した保存関数
+    - 単一カードの更新のみサポート（一括更新廃止）
+    - learningLogsコレクションへの書き込み廃止
+    """
     try:
         if not ensure_valid_session():
             return
@@ -1158,76 +911,46 @@ def save_user_data(user_id, session_state):
         db = get_db()
         if not db or not user_id:
             return
-            
-        # 1. SM-2進捗の更新: 変更されたカードのみ更新
-        cards = session_state.get("cards", {})
-        if cards:
-            batch = db.batch()
+        
+        # 1. 単一カードデータの更新（解答時のみ）
+        if question_id and updated_card_data:
             user_cards_ref = db.collection("users").document(user_id).collection("userCards")
-            
-            for question_id, card_data in cards.items():
-                card_ref = user_cards_ref.document(question_id)
-                batch.set(card_ref, card_data, merge=True)
-            
-            batch.commit()
-            print(f"[DEBUG] save_user_data - カードデータ更新: {len(cards)}件")
+            card_ref = user_cards_ref.document(question_id)
+            card_ref.set(updated_card_data, merge=True)
+            print(f"[DEBUG] save_user_data - カード更新: {question_id}")
         
-        # 3. セッション状態保存（演習途中の状態保持）
-        session_data = {
-            "current_q_group": session_state.get("current_q_group", []),
-            "main_queue": session_state.get("main_queue", []),
-            "short_term_review_queue": session_state.get("short_term_review_queue", []),
-            "result_log": session_state.get("result_log", {}),
-            "last_updated": datetime.datetime.utcnow().isoformat()
-        }
-        
-        # 演習セッション状態の保存
-        if session_data["current_q_group"] or session_data["main_queue"]:
-            try:
-                session_ref = db.collection("users").document(user_id).collection("sessionState").document("current")
-                session_ref.set(session_data, merge=True)
-                print(f"[DEBUG] save_user_data - セッション状態保存: current_q_group={len(session_data['current_q_group'])}, main_queue={len(session_data['main_queue'])}")
-            except Exception as e:
-                print(f"[ERROR] セッション状態保存失敗: {e}")
-        
-        # 4. 学習ログの新規作成（解答時のみ）
-        # 単一ログ（後方互換性）
-        if session_state.get("latest_answer_log"):
-            log_data = session_state["latest_answer_log"]
-            log_data.update({
-                "userId": user_id,
-                "timestamp": datetime.datetime.utcnow().isoformat()
-            })
-            db.collection("learningLogs").add(log_data)
-            # ログ送信後はクリア
-            del session_state["latest_answer_log"]
-            print(f"[DEBUG] save_user_data - 学習ログ作成: {log_data.get('questionId')}")
-        
-        # 複数ログ（新規）
-        if session_state.get("latest_answer_logs"):
-            for log_data in session_state["latest_answer_logs"]:
-                if "userId" not in log_data:
-                    log_data["userId"] = user_id
-                if "timestamp" not in log_data:
-                    log_data["timestamp"] = datetime.datetime.utcnow().isoformat()
-                db.collection("learningLogs").add(log_data)
-                print(f"[DEBUG] save_user_data - 学習ログ作成: {log_data.get('questionId')}")
-            # ログ送信後はクリア
-            del session_state["latest_answer_logs"]
-        
-        # 3. 設定の更新（設定変更時のみ）
-        settings_changed = session_state.get("settings_changed", False)
-        if settings_changed:
-            user_ref = db.collection("users").document(user_id)
-            settings_update = {
-                "settings": {
-                    "new_cards_per_day": session_state.get("new_cards_per_day", 10)
-                },
-                "lastUpdated": datetime.datetime.utcnow().isoformat()
+        # 2. セッション状態保存（学習キューの保存）
+        if session_state:
+            session_data = {
+                "current_q_group": session_state.get("current_q_group", []),
+                "main_queue": session_state.get("main_queue", []),
+                "short_term_review_queue": session_state.get("short_term_review_queue", []),
+                "result_log": session_state.get("result_log", {}),
+                "last_updated": datetime.datetime.utcnow().isoformat()
             }
-            user_ref.update(settings_update)
-            session_state["settings_changed"] = False
-            print(f"[DEBUG] save_user_data - 設定更新完了")
+            
+            # 演習セッション状態の保存
+            if session_data["current_q_group"] or session_data["main_queue"]:
+                try:
+                    session_ref = db.collection("users").document(user_id).collection("sessionState").document("current")
+                    session_ref.set(session_data, merge=True)
+                    print(f"[DEBUG] save_user_data - セッション状態保存: current_q_group={len(session_data['current_q_group'])}, main_queue={len(session_data['main_queue'])}")
+                except Exception as e:
+                    print(f"[ERROR] セッション状態保存失敗: {e}")
+            
+            # 3. 設定の更新（設定変更時のみ）
+            settings_changed = session_state.get("settings_changed", False)
+            if settings_changed:
+                user_ref = db.collection("users").document(user_id)
+                settings_update = {
+                    "settings": {
+                        "new_cards_per_day": session_state.get("new_cards_per_day", 10)
+                    },
+                    "lastUpdated": datetime.datetime.utcnow().isoformat()
+                }
+                user_ref.update(settings_update)
+                session_state["settings_changed"] = False
+                print(f"[DEBUG] save_user_data - 設定更新完了")
             
     except Exception as e:
         print(f"[ERROR] save_user_data エラー: {e}")
@@ -1987,9 +1710,8 @@ def render_search_page():
         except Exception as e:
             st.error(f"学習データの読み込みエラー: {e}")
     
-    # 学習ログを統合してSM2パラメータを最新化
+    # 学習ログとの統合処理は削除済み（カードデータに統合済み）
     if uid and cards:
-        cards = integrate_learning_logs_into_cards(cards, uid)
         st.session_state["cards"] = cards
     
     # 分析対象に応じたフィルタリング
@@ -2580,10 +2302,8 @@ def enqueue_short_review(group, minutes: int):
 
 # --- 演習ページ ---
 def render_practice_page():
-    # 学習ログを統合してカードデータを最新化
+    # 学習ログとの統合処理は削除済み（カードデータに統合済み）
     uid = st.session_state.get("uid")
-    if uid and st.session_state.get("cards"):
-        st.session_state.cards = integrate_learning_logs_into_cards(st.session_state.cards, uid)
     
     # 前回セッション復帰処理
     if st.session_state.get("continue_previous") and st.session_state.get("session_choice_made"):
@@ -2893,13 +2613,8 @@ def render_practice_page():
                 # フォーム全体の後処理：解答結果を保存し、自己評価段階へ移行
                 st.session_state[f"checked_{group_id}"] = True
                 
-                # セッション状態を自動保存（途中状態の保持）
-                if st.session_state.get("user_logged_in") and st.session_state.get("uid"):
-                    try:
-                        save_user_data(st.session_state.get("uid"), st.session_state)
-                        print(f"[DEBUG] 解答後のセッション状態自動保存完了")
-                    except Exception as e:
-                        print(f"[ERROR] セッション状態自動保存失敗: {e}")
+                # セッション状態の自動保存は廃止（書き込み頻度削減のため）
+                # 保存は自己評価フォーム送信時のみ実行
                 
                 # 画面を再描画して自己評価フォームを表示
                 st.rerun()
@@ -3019,20 +2734,7 @@ def render_practice_page():
                         card = st.session_state.cards.get(q_num_str, {})
                         st.session_state.cards[q_num_str] = sm2_update_with_policy(card, quality, q_num_str, now=now_utc)
                         
-                        # 学習ログを作成してセッション状態に保存
-                        is_correct = st.session_state.result_log.get(q_num_str, False)
-                        log_data = {
-                            "questionId": q_num_str,
-                            "quality": quality,
-                            "isCorrect": is_correct,
-                            "timestamp": now_utc.isoformat(),
-                            "userId": uid
-                        }
-                        
-                        # latest_answer_logとして保存（save_user_dataで処理される）
-                        if not st.session_state.get("latest_answer_logs"):
-                            st.session_state["latest_answer_logs"] = []
-                        st.session_state["latest_answer_logs"].append(log_data)
+                        # learningLogsの作成は廃止（データはuserCardsのhistoryフィールドに統合済み）
 
                     # ★ 短期復習キュー積み直し
                     if quality == 1:
@@ -3048,15 +2750,16 @@ def render_practice_page():
                             enqueue_short_review([q_num_str], minutes)
 
                     uid = st.session_state.get("uid")  # UIDベース管理
-                    save_user_data(uid, st.session_state)  # UIDを使用
-                    st.session_state.current_q_group = next_group
                     
-                    # 次の問題セットに移る際も状態保存
-                    try:
-                        save_user_data(uid, st.session_state)
-                        print(f"[DEBUG] 次問題移行時のセッション状態保存完了")
-                    except Exception as e:
-                        print(f"[ERROR] 次問題移行時のセッション状態保存失敗: {e}")
+                    # 更新されたカードを個別に保存（新しいリファクタリング済み関数を使用）
+                    for q_num_str in current_q_group:
+                        updated_card = st.session_state.cards[q_num_str]
+                        save_user_data(uid, question_id=q_num_str, updated_card_data=updated_card)
+                    
+                    # セッション状態も保存
+                    save_user_data(uid, session_state=st.session_state)
+                    
+                    st.session_state.current_q_group = next_group
                         
                 for key in list(st.session_state.keys()):
                     if key.startswith(("checked_", "user_selection_", "shuffled_", "free_input_", "order_input_")):
@@ -3365,9 +3068,7 @@ else:
         if "new_cards_per_day" not in st.session_state:
             st.session_state["new_cards_per_day"] = user_data.get("new_cards_per_day", 10)
         
-        # 既存のカードデータに学習ログを統合
-        if st.session_state.cards:
-            st.session_state.cards = integrate_learning_logs_into_cards(st.session_state.cards, uid)
+        # 学習ログとの統合処理は削除済み（カードデータに統合済み）
         
         st.session_state.user_data_loaded = True
         session_update_time = time.time() - session_update_start
@@ -3679,7 +3380,8 @@ else:
                                         if k.startswith(("checked_", "user_selection_", "shuffled_", "free_input_", "order_input_")):
                                             del st.session_state[k]
                                     
-                                    save_user_data(st.session_state.get("uid"), st.session_state)
+                                    # セッション状態のみ保存（学習開始時）
+                                    save_user_data(st.session_state.get("uid"), session_state=st.session_state)
                                     st.session_state["initializing_study"] = False
                                     st.success(f"今日の学習を開始します！（{len(grouped_queue)}問）")
                                     st.rerun()
@@ -3825,7 +3527,7 @@ else:
                             # セッション状態を保存（演習開始時）
                             if st.session_state.get("user_logged_in") and st.session_state.get("uid"):
                                 try:
-                                    save_user_data(st.session_state.get("uid"), st.session_state)
+                                    save_user_data(st.session_state.get("uid"), session_state=st.session_state)
                                     print(f"[DEBUG] 演習開始時のセッション状態保存完了")
                                 except Exception as e:
                                     print(f"[ERROR] 演習開始時のセッション状態保存失敗: {e}")
@@ -3842,7 +3544,7 @@ else:
                                 if key.startswith(("checked_", "user_selection_", "shuffled_", "free_input_", "order_input_")):
                                     del st.session_state[key]
                             
-                            save_user_data(st.session_state.get("uid"), st.session_state)
+                            save_user_data(st.session_state.get("uid"), session_state=st.session_state)
                             st.success(f"演習を開始します！（{len(grouped_queue)}グループ）")
                             st.rerun()
 
@@ -3898,10 +3600,8 @@ else:
             st.divider()
             st.markdown("#### 📈 学習記録")
             
-            # 学習ログを統合してカードデータを最新化
+            # 学習ログとの統合処理は削除済み（カードデータに統合済み）
             uid = st.session_state.get("uid")
-            if uid and st.session_state.cards:
-                st.session_state.cards = integrate_learning_logs_into_cards(st.session_state.cards, uid)
             
             if st.session_state.cards and len(st.session_state.cards) > 0:
                 quality_to_mark = {1: "×", 2: "△", 4: "◯", 5: "◎"}
@@ -4009,10 +3709,8 @@ else:
             st.divider()
             st.markdown("#### 📈 学習記録")
             
-            # 学習ログを統合してカードデータを最新化
+            # 学習ログとの統合処理は削除済み（カードデータに統合済み）
             uid = st.session_state.get("uid")
-            if uid and st.session_state.cards:
-                st.session_state.cards = integrate_learning_logs_into_cards(st.session_state.cards, uid)
             
             if st.session_state.cards and len(st.session_state.cards) > 0:
                 quality_to_mark = {1: "×", 2: "△", 4: "◯", 5: "◎"}
@@ -4088,7 +3786,8 @@ else:
         st.divider()
         if st.button("ログアウト", key="logout_btn"):
             uid = st.session_state.get("uid")
-            save_user_data(uid, st.session_state)
+            # ログアウト時にセッション状態を保存
+            save_user_data(uid, session_state=st.session_state)
             
             # 学士権限のキャッシュをクリア
             check_gakushi_permission.clear()
@@ -4129,23 +3828,5 @@ else:
     else:
         render_search_page()
 
-    # UI状態の変更を検知してデータを自動保存
-    uid = st.session_state.get("uid")
-    if uid and st.session_state.get("authenticated"):
-        # 前回のUI状態と比較
-        current_ui_state = {
-            "page_select": st.session_state.get("page_select", "演習"),
-            "learning_mode": st.session_state.get("learning_mode", "新しい問題を学習"),
-            "current_filter": st.session_state.get("current_filter", "すべて"),
-            "search_text": st.session_state.get("search_text", "")
-        }
-        
-        # 前回のUI状態と比較して変更があれば保存
-        prev_ui_state = st.session_state.get("_prev_ui_state", {})
-        if current_ui_state != prev_ui_state:
-            save_user_data(uid, st.session_state)
-            st.session_state["_prev_ui_state"] = current_ui_state
-            print(f"[DEBUG] UI状態変更により自動保存: {current_ui_state}")
-        elif "_prev_ui_state" not in st.session_state:
-            # 初回設定
-            st.session_state["_prev_ui_state"] = current_ui_state
+    # UI状態の変更監視による自動保存は廃止（書き込み頻度削減のため）
+    # 保存は自己評価フォーム送信時のみ実行
