@@ -4566,17 +4566,7 @@ else:
             if uid and st.session_state.cards and should_integrate_logs(uid):
                 st.session_state.cards = integrate_learning_logs_into_cards(st.session_state.cards, uid)
             
-            # カードデータの状態確認と情報表示
-            if uid and st.session_state.cards:
-                cards_with_history = sum(1 for card in st.session_state.cards.values() if card.get('history'))
-                total_cards = len(st.session_state.cards)
-                
-                # 正常な状態を表示（250枚の演習済みカード）
-                if cards_with_history > 0:
-                    st.success(f"✅ 演習記録: {cards_with_history}枚のカードに学習履歴があります（総カード数: {total_cards}枚）")
-                else:
-                    # 学習記録がない場合も情報として表示（再読み込み機能は削除）
-                    st.info(f"📝 新規ユーザー: これから演習を始めて学習記録を蓄積していきましょう！")
+            # カードデータの状態確認（デバッグ情報表示は削除）
             
             if st.session_state.cards and len(st.session_state.cards) > 0:
                 quality_to_mark = {1: "×", 2: "△", 4: "◯", 5: "◎"}
