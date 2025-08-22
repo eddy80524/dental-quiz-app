@@ -1244,6 +1244,235 @@ def detailed_remaining_data_analysis(uid):
     except Exception as e:
         return f"分析エラー: {e}"
 
+def analyze_integration_process(uid):
+    """
+    統合プロセスの詳細分析
+    """
+    try:
+        db = get_db()
+        if not db:
+            return "データベース接続エラー"
+        
+        analysis_log = ["🔄 統合プロセス分析..."]
+        
+        # 1. 現在のユーザーデータ確認
+        user_ref = db.collection("users").document(uid)
+        user_doc = user_ref.get()
+        user_data = user_doc.to_dict() if user_doc.exists else {}
+        
+        analysis_log.append(f"現在のUID: {uid}")
+        analysis_log.append(f"統合済みフラグ: {user_data.get('logs_integrated', False)}")
+        analysis_log.append(f"統合日時: {user_data.get('logs_integrated_at', '未設定')}")
+        analysis_log.append(f"Email: {user_data.get('email', '未設定')}")
+        analysis_log.append(f"作成日時: {user_data.get('created_at', '未設定')}")
+        
+        # 2. 統合されたカードの詳細分析
+        cards_ref = db.collection("users").document(uid).collection("userCards")
+        cards_docs = list(cards_ref.stream())
+        
+        history_by_date = {}
+        earliest_record = None
+        latest_record = None
+        
+        for card_doc in cards_docs:
+            card_data = card_doc.to_dict()
+            history = card_data.get("history", [])
+            
+            for record in history:
+                timestamp = record.get("timestamp", "")
+                if timestamp:
+                    date = timestamp[:10]  # YYYY-MM-DD
+                    if date not in history_by_date:
+                        history_by_date[date] = 0
+                    history_by_date[date] += 1
+                    
+                    # 最古・最新記録の追跡
+                    if not earliest_record or timestamp < earliest_record:
+                        earliest_record = timestamp
+                    if not latest_record or timestamp > latest_record:
+                        latest_record = timestamp
+        
+        analysis_log.append(f"\n📅 演習記録の時系列分析:")
+        analysis_log.append(f"- 最古の記録: {earliest_record}")
+        analysis_log.append(f"- 最新の記録: {latest_record}")
+        analysis_log.append(f"- 記録のある日数: {len(history_by_date)}日")
+        
+        # 日別の記録数（上位10日）
+        sorted_dates = sorted(history_by_date.items(), key=lambda x: x[1], reverse=True)
+        analysis_log.append(f"\n📊 日別演習回数（上位10日）:")
+        for date, count in sorted_dates[:10]:
+            analysis_log.append(f"  {date}: {count}回")
+        
+        # 3. 統合前の推定UID数
+        # historyのタイムスタンプパターンから元のUID数を推定
+        timestamp_patterns = set()
+        for card_doc in cards_docs[:50]:  # サンプルとして50件
+            card_data = card_doc.to_dict()
+            history = card_data.get("history", [])
+            for record in history:
+                timestamp = record.get("timestamp", "")
+                if timestamp:
+                    # タイムスタンプの秒・ミリ秒部分でパターン分析
+                    pattern = timestamp[-10:]  # 秒以下の部分
+                    timestamp_patterns.add(pattern)
+        
+        analysis_log.append(f"\n🔢 推定情報:")
+        analysis_log.append(f"- タイムスタンプパターン数: {len(timestamp_patterns)}")
+        analysis_log.append(f"- 推定元UID数: 不明（要詳細調査）")
+        
+        # 4. 異常な記録の確認
+        suspicious_records = []
+        for card_doc in cards_docs[:20]:
+            card_data = card_doc.to_dict()
+            history = card_data.get("history", [])
+            
+            if len(history) > 5:  # 5回以上の記録
+                suspicious_records.append({
+                    "card": card_doc.id,
+                    "count": len(history),
+                    "dates": [h.get("timestamp", "")[:10] for h in history]
+                })
+        
+        if suspicious_records:
+            analysis_log.append(f"\n🕵️ 多回数演習カード:")
+            for record in suspicious_records[:5]:
+                analysis_log.append(f"  {record['card']}: {record['count']}回")
+        
+        return "\n".join(analysis_log)
+        
+    except Exception as e:
+        return f"統合プロセス分析エラー: {e}"
+
+def comprehensive_uid_investigation(current_uid, current_email):
+    """
+    包括的UID調査：関連するすべてのデータを徹底的に調査
+    """
+    try:
+        db = get_db()
+        if not db:
+            return "データベース接続エラー"
+        
+        investigation_log = ["🔍 包括的UID調査を開始..."]
+        investigation_log.append(f"現在のUID: {current_uid}")
+        investigation_log.append(f"現在のEmail: {current_email}")
+        
+        # 1. users コレクション全体の調査
+        investigation_log.append(f"\n📁 usersコレクション調査:")
+        users_ref = db.collection("users")
+        all_users = list(users_ref.stream())
+        
+        email_matches = []
+        for user_doc in all_users:
+            user_data = user_doc.to_dict()
+            user_email = user_data.get("email", "")
+            if user_email == current_email:
+                email_matches.append({
+                    "uid": user_doc.id,
+                    "email": user_email,
+                    "created": user_data.get("created_at", "不明"),
+                    "logs_integrated": user_data.get("logs_integrated", False),
+                    "logs_integrated_at": user_data.get("logs_integrated_at", "未設定")
+                })
+        
+        investigation_log.append(f"- 総ユーザー数: {len(all_users)}")
+        investigation_log.append(f"- {current_email}のUID数: {len(email_matches)}")
+        
+        for match in email_matches:
+            investigation_log.append(f"  UID: {match['uid']}")
+            investigation_log.append(f"    作成日: {match['created']}")
+            investigation_log.append(f"    統合済み: {match['logs_integrated']}")
+            investigation_log.append(f"    統合日時: {match['logs_integrated_at']}")
+        
+        # 2. learningLogs コレクション全体の調査
+        investigation_log.append(f"\n📊 learningLogsコレクション調査:")
+        logs_ref = db.collection("learningLogs")
+        
+        # 現在のUIDのログ
+        current_logs = list(logs_ref.where("userId", "==", current_uid).stream())
+        investigation_log.append(f"- 現在のUID({current_uid})のログ: {len(current_logs)}件")
+        
+        # 全体のログ数確認（大きすぎる場合はサンプルのみ）
+        try:
+            # まず最初の100件を取得してサンプル調査
+            sample_logs = list(logs_ref.limit(100).stream())
+            investigation_log.append(f"- learningLogsサンプル: {len(sample_logs)}件")
+            
+            # サンプルからuserIdの種類を確認
+            sample_uids = set()
+            for log_doc in sample_logs:
+                log_data = log_doc.to_dict()
+                user_id = log_data.get("userId", "")
+                if user_id:
+                    sample_uids.add(user_id)
+            
+            investigation_log.append(f"- サンプル中のUID種類: {len(sample_uids)}個")
+            
+            # 各UIDでemail検索
+            email_related_logs = {}
+            for uid in sample_uids:
+                try:
+                    user_ref = db.collection("users").document(uid)
+                    user_doc = user_ref.get()
+                    if user_doc.exists:
+                        user_data = user_doc.to_dict()
+                        if user_data.get("email") == current_email:
+                            uid_logs = list(logs_ref.where("userId", "==", uid).stream())
+                            email_related_logs[uid] = len(uid_logs)
+                except:
+                    continue
+            
+            if email_related_logs:
+                investigation_log.append(f"\n🎯 {current_email}関連のlearningLogs:")
+                for uid, count in email_related_logs.items():
+                    investigation_log.append(f"  UID {uid}: {count}件")
+            else:
+                investigation_log.append(f"\n❌ {current_email}関連のlearningLogsなし")
+                
+        except Exception as e:
+            investigation_log.append(f"learningLogs調査エラー: {e}")
+        
+        # 3. 統合前の痕跡を探す
+        investigation_log.append(f"\n🕵️ 統合前の痕跡調査:")
+        
+        # 統合されたUIDのuserCardsを詳細調査
+        for match in email_matches:
+            uid = match["uid"]
+            cards_ref = db.collection("users").document(uid).collection("userCards")
+            cards_with_history = 0
+            total_cards = 0
+            
+            try:
+                cards_docs = list(cards_ref.stream())
+                total_cards = len(cards_docs)
+                
+                for card_doc in cards_docs:
+                    card_data = card_doc.to_dict()
+                    if card_data.get("history"):
+                        cards_with_history += 1
+                
+                investigation_log.append(f"  UID {uid}: {cards_with_history}/{total_cards} カードにhistory")
+                
+            except Exception as e:
+                investigation_log.append(f"  UID {uid}: userCards調査エラー - {e}")
+        
+        # 4. 推定される状況
+        investigation_log.append(f"\n💭 推定される状況:")
+        if len(email_matches) == 1:
+            investigation_log.append("- 他のUIDが削除されている可能性")
+            investigation_log.append("- 統合プロセスでUIDが統合された可能性")
+        else:
+            investigation_log.append("- 複数UIDが存在するがデータが分散")
+        
+        investigation_log.append(f"\n🔄 次のアクション提案:")
+        investigation_log.append("1. Firestore管理コンソールでの手動確認")
+        investigation_log.append("2. deleted_usersコレクション等の確認")
+        investigation_log.append("3. 統合ログの詳細確認")
+        
+        return "\n".join(investigation_log)
+        
+    except Exception as e:
+        return f"包括的調査エラー: {e}"
+
 def attempt_data_recovery(uid):
     """
     データ復旧を試行する
@@ -2236,19 +2465,32 @@ def render_search_page():
             st.success("✅ 250枚の演習記録が正常に保存されていることを確認しました！")
             st.info("UIの表示問題が原因でした。統合プロセスは正常に動作しています。")
             
-            col1, col2, col3 = st.columns(3)
+            # UID抽出問題の調査
+            st.warning("🔍 UID抽出の問題を調査中...")
+            
+            col1, col2 = st.columns(2)
             with col1:
-                if st.button("データ状態を詳細確認"):
-                    check_result = emergency_data_check(uid)
-                    st.text(check_result)
+                col1_1, col1_2 = st.columns(2)
+                with col1_1:
+                    if st.button("データ状態を詳細確認", key="check_data"):
+                        check_result = emergency_data_check(uid)
+                        st.text(check_result)
+                with col1_2:
+                    if st.button("残存データ詳細分析", key="analyze_data"):
+                        analysis_result = detailed_remaining_data_analysis(uid)
+                        st.text(analysis_result)
+            
             with col2:
-                if st.button("残存データ詳細分析"):
-                    analysis_result = detailed_remaining_data_analysis(uid)
-                    st.text(analysis_result)
-            with col3:
-                if st.button("データ復旧を試行"):
-                    recovery_result = attempt_data_recovery(uid)
-                    st.text(recovery_result)
+                col2_1, col2_2 = st.columns(2)
+                with col2_1:
+                    if st.button("包括的UID調査", key="investigate_uid"):
+                        current_email = st.session_state.get("email", "")
+                        investigation_result = comprehensive_uid_investigation(uid, current_email)
+                        st.text(investigation_result)
+                with col2_2:
+                    if st.button("統合プロセス分析", key="analyze_integration"):
+                        integration_result = analyze_integration_process(uid)
+                        st.text(integration_result)
     
     # 学習データの準備 - 新しいFirestore構造に対応
     cards = st.session_state.get("cards", {})
