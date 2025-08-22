@@ -898,6 +898,38 @@ def load_user_data(user_id):
     """後方互換性のため - 軽量版を呼び出す"""
     return load_user_data_minimal(user_id)
 
+# --- Google Analytics連携 ---
+def log_to_ga(event_name: str, user_id: str, params: dict):
+    """
+    Measurement Protocolを使ってサーバーからGA4にイベントを送信する関数
+    """
+    # st.secretsを使って安全にIDとシークレットを取得
+    api_secret = st.secrets.get("ga_api_secret")
+    measurement_id = st.secrets.get("ga_measurement_id")
+
+    # Secretsが設定されていない場合は何もしない
+    if not api_secret or not measurement_id:
+        print("[Analytics] Secrets not found. Skipping event log.")
+        return
+
+    payload = {
+        "client_id": user_id, # ユーザーを一意に識別するID（uidが最適）
+        "events": [{
+            "name": event_name,
+            "params": params
+        }]
+    }
+    
+    try:
+        requests.post(
+            f"https://www.google-analytics.com/mp/collect?measurement_id={measurement_id}&api_secret={api_secret}",
+            data=json.dumps(payload),
+            headers={"Content-Type": "application/json"}
+        )
+        print(f"[Analytics] Logged event '{event_name}' for user {user_id}")
+    except Exception as e:
+        print(f"[ERROR] Failed to log GA event: {e}")
+
 def save_user_data(user_id, question_id=None, updated_card_data=None, session_state=None):
     """
     リファクタリング済み：Firestoreの読み取り/書き込み回数を最小化した保存関数
@@ -2750,6 +2782,20 @@ def render_practice_page():
                             enqueue_short_review([q_num_str], minutes)
 
                     uid = st.session_state.get("uid")  # UIDベース管理
+                    
+                    # --- Google Analytics イベント送信 ---
+                    if uid:
+                        # 問題グループの代表的なIDを取得（複数問題の場合は最初の問題ID）
+                        group_id = current_q_group[0] if current_q_group else "unknown"
+                        log_to_ga(
+                            event_name="submit_evaluation",
+                            user_id=uid,
+                            params={
+                                "quality": quality, # 1, 2, 4, 5など
+                                "question_id": group_id,
+                                "question_count": len(current_q_group)
+                            }
+                        )
                     
                     # 更新されたカードを個別に保存（新しいリファクタリング済み関数を使用）
                     for q_num_str in current_q_group:
