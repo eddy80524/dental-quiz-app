@@ -1166,6 +1166,54 @@ def integrate_learning_logs_into_cards(cards, uid):
         traceback.print_exc()
         return cards
 
+def debug_card_data(uid):
+    """
+    デバッグ用: カードデータの状態を確認する
+    """
+    try:
+        db = get_db()
+        if not db:
+            return "データベース接続エラー"
+        
+        # ユーザーの統合済みフラグをチェック
+        user_ref = db.collection("users").document(uid)
+        user_doc = user_ref.get()
+        user_data = user_doc.to_dict() if user_doc.exists else {}
+        logs_integrated = user_data.get("logs_integrated", False)
+        logs_integrated_at = user_data.get("logs_integrated_at", "未設定")
+        
+        # カードデータを取得
+        cards_ref = db.collection("users").document(uid).collection("userCards")
+        cards_docs = list(cards_ref.stream())
+        
+        # historyがあるカード数をカウント
+        cards_with_history = 0
+        total_history_entries = 0
+        
+        for doc in cards_docs:
+            card_data = doc.to_dict()
+            history = card_data.get("history", [])
+            if history:
+                cards_with_history += 1
+                total_history_entries += len(history)
+        
+        # 元のlearningLogsをチェック（削除済みかどうか確認）
+        learning_logs_ref = db.collection("learningLogs").where("userId", "==", uid)
+        learning_logs_docs = list(learning_logs_ref.stream())
+        
+        result = f"""
+📊 カードデータの状態:
+- 統合済みフラグ: {logs_integrated}
+- 統合日時: {logs_integrated_at}
+- 総カード数: {len(cards_docs)}
+- 演習記録があるカード数: {cards_with_history}
+- 総演習記録数: {total_history_entries}
+- 元のlearningLogs残数: {len(learning_logs_docs)}
+"""
+        return result
+    except Exception as e:
+        return f"エラー: {e}"
+
 # --- Google Analytics連携 ---
 def log_to_ga(event_name: str, user_id: str, params: dict):
     """
@@ -2005,6 +2053,24 @@ def render_search_page():
     
     # 学習進捗の可視化セクションを追加
     st.subheader("📈 学習ダッシュボード")
+    
+    # デバッグ情報表示（一時的）
+    if uid:
+        with st.expander("🔍 演習記録の状態確認", expanded=False):
+            debug_info = debug_card_data(uid)
+            st.text(debug_info)
+            
+            # 詳細なカード情報も表示
+            if st.button("詳細確認"):
+                cards_sample = st.session_state.get("cards", {})
+                if cards_sample:
+                    # historyがあるカードのサンプルを表示
+                    cards_with_history = {k: v for k, v in cards_sample.items() if v.get("history")}
+                    st.write(f"演習記録があるカード数: {len(cards_with_history)}")
+                    if cards_with_history:
+                        sample_card = list(cards_with_history.items())[0]
+                        st.write(f"サンプルカード {sample_card[0]}:")
+                        st.json(sample_card[1])
     
     # 学習データの準備 - 新しいFirestore構造に対応
     cards = st.session_state.get("cards", {})
