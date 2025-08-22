@@ -57,7 +57,56 @@ st.markdown("""
     color: white !important;
     box-shadow: 0 0 0 0.2rem rgba(0, 102, 204, 0.25) !important;
 }
-</style>""", unsafe_allow_html=True)
+
+/* 【緊急措置】古いキャッシュされたメッセージを強制的に隠す */
+.stAlert[data-testid="alert"]:has([class*="warning"]) {
+    display: none !important;
+}
+
+/* 特定の問題メッセージを直接隠す */
+div:contains("カードデータが古い可能性があります") {
+    display: none !important;
+}
+
+div:contains("再読み込み中") {
+    display: none !important;
+}
+
+/* 警告メッセージ全体を一時的に無効化 */
+.stAlert .stMarkdown:contains("古い可能性") {
+    display: none !important;
+}
+</style>
+
+<script>
+// 【緊急措置】古いメッセージを強制削除するJavaScript
+setTimeout(function() {
+    const alerts = document.querySelectorAll('.stAlert');
+    alerts.forEach(alert => {
+        const text = alert.textContent || alert.innerText;
+        if (text.includes('カードデータが古い可能性があります') || 
+            text.includes('再読み込み中') || 
+            text.includes('カードデータを更新しました')) {
+            alert.style.display = 'none';
+            alert.remove();
+        }
+    });
+}, 100);
+
+// 継続的に監視して削除
+setInterval(function() {
+    const alerts = document.querySelectorAll('.stAlert');
+    alerts.forEach(alert => {
+        const text = alert.textContent || alert.innerText;
+        if (text.includes('カードデータが古い可能性があります') || 
+            text.includes('再読み込み中') || 
+            text.includes('history有り')) {
+            alert.style.display = 'none';
+            alert.remove();
+        }
+    });
+}, 500);
+</script>""", unsafe_allow_html=True)
 
 # Secrets存在チェック（早期エラー検出）
 if "firebase_credentials" not in st.secrets or "firebase_api_key" not in st.secrets:
