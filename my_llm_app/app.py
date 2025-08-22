@@ -57,56 +57,7 @@ st.markdown("""
     color: white !important;
     box-shadow: 0 0 0 0.2rem rgba(0, 102, 204, 0.25) !important;
 }
-
-/* 【緊急措置】古いキャッシュされたメッセージを強制的に隠す */
-.stAlert[data-testid="alert"]:has([class*="warning"]) {
-    display: none !important;
-}
-
-/* 特定の問題メッセージを直接隠す */
-div:contains("カードデータが古い可能性があります") {
-    display: none !important;
-}
-
-div:contains("再読み込み中") {
-    display: none !important;
-}
-
-/* 警告メッセージ全体を一時的に無効化 */
-.stAlert .stMarkdown:contains("古い可能性") {
-    display: none !important;
-}
-</style>
-
-<script>
-// 【緊急措置】古いメッセージを強制削除するJavaScript
-setTimeout(function() {
-    const alerts = document.querySelectorAll('.stAlert');
-    alerts.forEach(alert => {
-        const text = alert.textContent || alert.innerText;
-        if (text.includes('カードデータが古い可能性があります') || 
-            text.includes('再読み込み中') || 
-            text.includes('カードデータを更新しました')) {
-            alert.style.display = 'none';
-            alert.remove();
-        }
-    });
-}, 100);
-
-// 継続的に監視して削除
-setInterval(function() {
-    const alerts = document.querySelectorAll('.stAlert');
-    alerts.forEach(alert => {
-        const text = alert.textContent || alert.innerText;
-        if (text.includes('カードデータが古い可能性があります') || 
-            text.includes('再読み込み中') || 
-            text.includes('history有り')) {
-            alert.style.display = 'none';
-            alert.remove();
-        }
-    });
-}, 500);
-</script>""", unsafe_allow_html=True)
+</style>""", unsafe_allow_html=True)
 
 # Secrets存在チェック（早期エラー検出）
 if "firebase_credentials" not in st.secrets or "firebase_api_key" not in st.secrets:
@@ -3294,13 +3245,6 @@ def enqueue_short_review(group, minutes: int):
 
 # --- 演習ページ ---
 def render_practice_page():
-    # 【緊急停止】古いキャッシュを無効化 - タイムスタンプでキャッシュバスト
-    import time
-    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    st.success(f"✅ アプリ更新済み: {current_time} - データ読み込み完了、再読み込み機能は削除済み")
-    
-    # カードデータの確実な読み込み
-    uid = st.session_state.get("uid")
     # 学習ログを統合してカードデータを最新化（必要な場合のみ）
     uid = st.session_state.get("uid")
     if uid and st.session_state.get("cards") and should_integrate_logs(uid):
