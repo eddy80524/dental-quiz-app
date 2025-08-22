@@ -3678,7 +3678,7 @@ def render_practice_page():
                     st.markdown(f"<span style='color:blue;'>正解: {q.get('answer', '')}</span>", unsafe_allow_html=True)
         with st.form(key=f"eval_form_{group_id}"):
             st.markdown("#### この問題グループの自己評価")
-            eval_map = {"もう一度": 1, "難しい": 2, "普通": 4, "簡単": 5}
+            eval_map = {"もう一度": 1, "難しい": 2, "やや難": 3, "普通": 4, "簡単": 5}
             
             # グループ内の正解状況を判定してデフォルト選択を決定
             group_all_correct = all(st.session_state.result_log.get(q_num, False) for q_num in current_q_group)
@@ -4616,8 +4616,8 @@ else:
                             st.error(f"学習記録の更新エラー: {e}")
             
             if st.session_state.cards and len(st.session_state.cards) > 0:
-                quality_to_mark = {1: "×", 2: "△", 4: "◯", 5: "◎"}
-                mark_to_label = {"◎": "簡単", "◯": "普通", "△": "難しい", "×": "もう一度"}
+                quality_to_mark = {1: "×", 2: "△", 3: "▲", 4: "◯", 5: "◎"}
+                mark_to_label = {"◎": "簡単", "◯": "普通", "▲": "やや難", "△": "難しい", "×": "もう一度"}
                 
                 # 統合されたhistoryから最新のqualityを取得（詳細デバッグ付き）
                 evaluated_marks = []
@@ -4662,11 +4662,15 @@ else:
                 # デバッグ情報を表示
                 st.info(f"📊 デバッグ情報: 総カード数={len(st.session_state.cards)}, history有り={cards_with_history}, history無し={cards_without_history}, 評価済み={total_evaluated}")
                 
-                # カード数が期待値より少ない場合の警告と再読み込み
-                # カードデータが不完全な場合の警告と強制再読み込みボタン
+                if debug_info:
+                    with st.expander("🔍 デバッグ詳細", expanded=False):
+                        for info in debug_info:
+                            st.text(info)
+                
+                # カードデータが不完全な場合の警告と強制再読み込みボタン（自己評価の分布の上に配置）
                 if len(st.session_state.cards) < 5000:  # 期待値より大幅に少ない
-                    st.warning(f"⚠️ カードデータが不完全です（現在: {len(st.session_state.cards)}枚、期待: 5205枚）。Firestoreから全データを再読み込みしてください。")
-                    if st.button("🔄 全カードデータを強制再読み込み", key="force_reload_all_cards"):
+                    st.warning(f"⚠️ カードデータが不完全です（現在: {len(st.session_state.cards)}枚、期待: 5205枚）。")
+                    if st.button("🔄 全カードデータを強制再読み込み", key="force_reload_all_cards_top"):
                         with st.spinner("全カードデータを読み込み中..."):
                             try:
                                 print(f"[DEBUG] 強制再読み込み開始: 現在のカード数={len(st.session_state.cards)}")
@@ -4688,11 +4692,6 @@ else:
                             except Exception as e:
                                 print(f"[ERROR] 強制再読み込みエラー: {e}")
                                 st.error(f"再読み込みエラー: {e}")
-                
-                if debug_info:
-                    with st.expander("🔍 デバッグ詳細", expanded=False):
-                        for info in debug_info:
-                            st.text(info)
                 
                 with st.expander("自己評価の分布", expanded=True):
                     st.markdown(f"**合計評価数：{total_evaluated}問**")
@@ -4783,8 +4782,8 @@ else:
                 st.session_state.cards = integrate_learning_logs_into_cards(st.session_state.cards, uid)
             
             if st.session_state.cards and len(st.session_state.cards) > 0:
-                quality_to_mark = {1: "×", 2: "△", 4: "◯", 5: "◎"}
-                mark_to_label = {"◎": "簡単", "◯": "普通", "△": "難しい", "×": "もう一度"}
+                quality_to_mark = {1: "×", 2: "△", 3: "▲", 4: "◯", 5: "◎"}
+                mark_to_label = {"◎": "簡単", "◯": "普通", "▲": "やや難", "△": "難しい", "×": "もう一度"}
                 
                 # 統合されたhistoryから最新のqualityを取得
                 evaluated_marks = []
