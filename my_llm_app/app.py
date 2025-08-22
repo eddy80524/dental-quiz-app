@@ -781,19 +781,25 @@ def load_user_data_minimal(user_id):
                 if doc.exists:
                     data = doc.to_dict()
                     
-                    # 少数のカードデータも読み込む（最新100件）
+                    # カードデータも読み込む（演習記録を正しく表示するため全データ取得）
                     try:
-                        cards_ref = db.collection("users").document(uid).collection("userCards").limit(100)
+                        print(f"[DEBUG] カードデータ読み込み開始...")
+                        cards_start = time.time()
+                        cards_ref = db.collection("users").document(uid).collection("userCards")
                         cards_docs = cards_ref.stream()
                         cards = {}
                         for card_doc in cards_docs:
                             cards[card_doc.id] = card_doc.to_dict()
+                        
+                        cards_time = time.time() - cards_start
+                        print(f"[DEBUG] カードデータ読み込み完了: {len(cards)}枚, 時間: {cards_time:.3f}s")
                         
                         # 学習ログを統合してSM2パラメータを復元（必要な場合のみ）
                         if should_integrate_logs(uid):
                             cards = integrate_learning_logs_into_cards(cards, uid)
                         data["cards"] = cards
                     except Exception as e:
+                        print(f"[ERROR] カードデータ読み込みエラー: {e}")
                         data["cards"] = {}
                     
                     total_time = time.time() - start
@@ -860,6 +866,13 @@ def load_user_data_full(user_id, cache_buster: int = 0):
                 
                 cards_time = time.time() - cards_start
                 
+                # 初期化: セッション状態の結果を格納する辞書
+                session_queues = {
+                    "main_queue": user_data.get("main_queue", []),
+                    "short_term_review_queue": user_data.get("short_term_review_queue", []),
+                    "current_q_group": user_data.get("current_q_group", [])
+                }
+                
                 # 段階3: /users/{uid}/sessionState から演習セッション状態を取得
                 session_start = time.time()
                 session_ref = db.collection("users").document(uid).collection("sessionState").document("current")
@@ -887,11 +900,11 @@ def load_user_data_full(user_id, cache_buster: int = 0):
                     
                     # セッション状態があれば優先して使用
                     if session_data.get("current_q_group") or session_data.get("main_queue"):
-                        result["current_q_group"] = deserialize_queue(session_data.get("current_q_group", []))
-                        result["main_queue"] = deserialize_queue(session_data.get("main_queue", []))
+                        session_queues["current_q_group"] = deserialize_queue(session_data.get("current_q_group", []))
+                        session_queues["main_queue"] = deserialize_queue(session_data.get("main_queue", []))
                         # short_term_review_queueは構造が異なるので、そのまま
-                        result["short_term_review_queue"] = session_data.get("short_term_review_queue", [])
-                        print(f"[DEBUG] セッション状態復元成功: current_q_group={len(result['current_q_group'])}, main_queue={len(result['main_queue'])}")
+                        session_queues["short_term_review_queue"] = session_data.get("short_term_review_queue", [])
+                        print(f"[DEBUG] セッション状態復元成功: current_q_group={len(session_queues['current_q_group'])}, main_queue={len(session_queues['main_queue'])}")
                     else:
                         print(f"[DEBUG] セッション状態は空のため復元スキップ")
                 else:
@@ -901,9 +914,9 @@ def load_user_data_full(user_id, cache_buster: int = 0):
                 
                 result = {
                     "cards": cards,
-                    "main_queue": result.get("main_queue", user_data.get("main_queue", [])),
-                    "short_term_review_queue": result.get("short_term_review_queue", user_data.get("short_term_review_queue", [])),
-                    "current_q_group": result.get("current_q_group", user_data.get("current_q_group", [])),
+                    "main_queue": session_queues["main_queue"],
+                    "short_term_review_queue": session_queues["short_term_review_queue"],
+                    "current_q_group": session_queues["current_q_group"],
                     "new_cards_per_day": user_data.get("settings", {}).get("new_cards_per_day", 10),
                 }
                 
@@ -4648,6 +4661,33 @@ else:
                 
                 # デバッグ情報を表示
                 st.info(f"📊 デバッグ情報: 総カード数={len(st.session_state.cards)}, history有り={cards_with_history}, history無し={cards_without_history}, 評価済み={total_evaluated}")
+                
+                # カード数が期待値より少ない場合の警告と再読み込み
+                # カードデータが不完全な場合の警告と強制再読み込みボタン
+                if len(st.session_state.cards) < 5000:  # 期待値より大幅に少ない
+                    st.warning(f"⚠️ カードデータが不完全です（現在: {len(st.session_state.cards)}枚、期待: 5205枚）。Firestoreから全データを再読み込みしてください。")
+                    if st.button("🔄 全カードデータを強制再読み込み", key="force_reload_all_cards"):
+                        with st.spinner("全カードデータを読み込み中..."):
+                            try:
+                                print(f"[DEBUG] 強制再読み込み開始: 現在のカード数={len(st.session_state.cards)}")
+                                
+                                # セッション状態をクリア
+                                if "cards" in st.session_state:
+                                    del st.session_state["cards"]
+                                
+                                # 強制的に新しいcache_busterで再読み込み
+                                cache_buster = int(time.time() * 1000)  # ミリ秒レベルで確実に異なる値
+                                print(f"[DEBUG] cache_buster={cache_buster} で load_user_data_full を呼び出し")
+                                full_data = load_user_data_full(uid, cache_buster)
+                                st.session_state["cards"] = full_data.get("cards", {})
+                                
+                                print(f"[DEBUG] 強制再読み込み完了: 新しいカード数={len(st.session_state.cards)}")
+                                st.success(f"✅ カードデータを更新しました！新しいカード数: {len(st.session_state.cards)}")
+                                st.rerun()
+                                
+                            except Exception as e:
+                                print(f"[ERROR] 強制再読み込みエラー: {e}")
+                                st.error(f"再読み込みエラー: {e}")
                 
                 if debug_info:
                     with st.expander("🔍 デバッグ詳細", expanded=False):
