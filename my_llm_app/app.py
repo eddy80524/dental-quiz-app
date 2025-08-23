@@ -44,9 +44,20 @@ APP_VERSION = "2024-08-22-v2"
 # plotlyインポート（未インストール時の案内付き）
 try:
     import plotly.express as px
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    import numpy as np
     PLOTLY_AVAILABLE = True
 except ImportError:
     PLOTLY_AVAILABLE = False
+
+# scipyインポート（統計分析用）
+try:
+    from scipy import stats
+    import numpy as np
+    SCIPY_AVAILABLE = True
+except ImportError:
+    SCIPY_AVAILABLE = False
 
 # 日本時間のタイムゾーン設定
 JST = pytz.timezone('Asia/Tokyo')
@@ -3363,13 +3374,12 @@ def render_search_page():
 def fetch_ranking_data():
     """
     Firestoreのuser_profilesコレクションからランキングデータを取得
-    インデックス作成前の暫定版：全データを取得してアプリ側でフィルタリング
+    ランキング参加の選択制をサポート
     """
     try:
         db = firestore.client()
         
-        # 暫定版：全user_profilesを取得してアプリ側でフィルタリング・ソート
-        # 本格運用時は複合インデックスを作成してクエリを最適化
+        # 全user_profilesを取得してフィルタリング
         collection_ref = db.collection("user_profiles")
         docs = collection_ref.stream()
         all_profiles = []
@@ -3379,36 +3389,62 @@ def fetch_ranking_data():
         
         for doc in docs:
             doc_count += 1
-            # doc.to_dict()を使用してデータを取得
             data = doc.to_dict()
             print(f"[DEBUG] ドキュメント {doc.id}: {data}")
             
-            if data:  # 週間活動があるユーザーのみランキングに参加
+            if data:
                 has_weekly_activity = data.get("hasWeeklyActivity", False)
                 weekly_points = data.get("weeklyPoints", 0)
+                show_on_leaderboard = data.get("showOnLeaderboard")
                 
-                # 週間活動があるか、週間ポイントが0より大きいユーザーのみ
-                if has_weekly_activity or weekly_points > 0:
+                # ランキング参加のロジック
+                # showOnLeaderboard が None の場合は既存ユーザーとして参加扱い
+                # False の場合は明示的に非参加
+                # True の場合は明示的に参加
+                should_show = show_on_leaderboard is not False
+                
+                # 週間活動があり、ランキング表示がOKのユーザーのみ
+                if (has_weekly_activity or weekly_points > 0) and should_show:
                     profile = {
+                        "docId": doc.id,  # ドキュメントIDを追加
                         "nickname": data.get("nickname", "匿名ユーザー"),
                         "weeklyPoints": weekly_points,
                         "totalPoints": data.get("totalPoints", 0),
                         "studyDays": data.get("studyDays", 0),
                         "currentMasteryScore": data.get("currentMasteryScore", 0),
-                        "hasWeeklyActivity": has_weekly_activity
+                        "hasWeeklyActivity": has_weekly_activity,
+                        "showOnLeaderboard": show_on_leaderboard
                     }
                     all_profiles.append(profile)
-                    print(f"[DEBUG] アクティブユーザー追加: {profile}")
+                    print(f"[DEBUG] ランキング参加ユーザー追加: {profile}")
                 else:
-                    print(f"[DEBUG] 非アクティブユーザーをスキップ: {data.get('nickname', doc.id)}")
+                    print(f"[DEBUG] ランキング非参加ユーザーをスキップ: {data.get('nickname', doc.id)}")
         
         print(f"[DEBUG] 検索完了: {doc_count}件のドキュメント, {len(all_profiles)}件のプロフィール")
         
+        # 重複ユーザーの除去（ニックネームが同じ場合、週間ポイントが高い方を採用）
+        unique_profiles = {}
+        for profile in all_profiles:
+            nickname = profile["nickname"]
+            if nickname in unique_profiles:
+                # 既存のプロフィールと比較して、週間ポイントが高い方を採用
+                if profile["weeklyPoints"] > unique_profiles[nickname]["weeklyPoints"]:
+                    print(f"[DEBUG] 重複ユーザー更新: {nickname} ({unique_profiles[nickname]['weeklyPoints']} -> {profile['weeklyPoints']})")
+                    unique_profiles[nickname] = profile
+                else:
+                    print(f"[DEBUG] 重複ユーザーをスキップ: {nickname} (既存: {unique_profiles[nickname]['weeklyPoints']}, 新規: {profile['weeklyPoints']})")
+            else:
+                unique_profiles[nickname] = profile
+        
+        # 辞書から値のリストに変換
+        deduplicated_profiles = list(unique_profiles.values())
+        print(f"[DEBUG] 重複除去後: {len(deduplicated_profiles)}件のプロフィール")
+        
         # weeklyPointsで降順ソート
-        all_profiles.sort(key=lambda x: x["weeklyPoints"], reverse=True)
+        deduplicated_profiles.sort(key=lambda x: x["weeklyPoints"], reverse=True)
         
         # 上位50件に制限
-        top_profiles = all_profiles[:50]
+        top_profiles = deduplicated_profiles[:50]
         
         # 順位付きでランキングデータを作成
         ranking_data = []
@@ -3422,12 +3458,11 @@ def fetch_ranking_data():
                 "習熟度": f"{profile['currentMasteryScore']:.1f}%"
             })
         
-        return ranking_data
+        return ranking_data, deduplicated_profiles  # 統計用に重複除去後の全プロフィールも返す
     
     except Exception as e:
         print(f"[ERROR] ランキングデータ取得エラー: {e}")
-        # エラーが発生した場合は空のリストを返す
-        return []
+        return [], []
 
 def get_user_profile_for_ranking():
     """現在のユーザーのプロフィール情報を取得（ランキング用）"""
@@ -3482,9 +3517,10 @@ def create_test_profile_for_current_user():
         st.error(f"プロフィール作成エラー: {e}")
 
 def save_user_profile(nickname, show_on_leaderboard):
-    """ユーザープロフィールを保存"""
+    """ユーザープロフィールを保存（UIDとEmailの両方のプロフィールを同期）"""
     try:
         uid = st.session_state.get("uid")
+        email = st.session_state.get("email")
         if not uid:
             st.error("ユーザーIDが見つかりません")
             return
@@ -3494,7 +3530,6 @@ def save_user_profile(nickname, show_on_leaderboard):
             return
         
         db = firestore.client()
-        profile_ref = db.collection("user_profiles").document(uid)
         
         # プロフィールデータ
         profile_data = {
@@ -3503,10 +3538,13 @@ def save_user_profile(nickname, show_on_leaderboard):
             "lastUpdated": firestore.SERVER_TIMESTAMP
         }
         
-        # 初回作成時のデフォルト値も追加
-        existing_profile = profile_ref.get()
-        if not existing_profile.exists:
-            profile_data.update({
+        # UIDプロフィールを更新
+        uid_profile_ref = db.collection("user_profiles").document(uid)
+        existing_uid_profile = uid_profile_ref.get()
+        
+        uid_profile_data = profile_data.copy()
+        if not existing_uid_profile.exists:
+            uid_profile_data.update({
                 "weeklyPoints": 0,
                 "totalPoints": 0,
                 "studyDays": 0,
@@ -3514,7 +3552,27 @@ def save_user_profile(nickname, show_on_leaderboard):
                 "weeklyResetDate": firestore.SERVER_TIMESTAMP
             })
         
-        profile_ref.set(profile_data, merge=True)
+        uid_profile_ref.set(uid_profile_data, merge=True)
+        
+        # Emailプロフィールも存在する場合は同期
+        if email:
+            email_profile_ref = db.collection("user_profiles").document(email)
+            existing_email_profile = email_profile_ref.get()
+            
+            if existing_email_profile.exists:
+                # Emailプロフィールにもニックネームとランキング設定を同期
+                email_sync_data = {
+                    "nickname": nickname.strip(),
+                    "showOnLeaderboard": show_on_leaderboard,
+                    "lastUpdated": firestore.SERVER_TIMESTAMP
+                }
+                email_profile_ref.set(email_sync_data, merge=True)
+                st.info("UIDとEmailの両方のプロフィールを更新しました")
+            else:
+                st.info("UIDプロフィールを更新しました")
+        else:
+            st.info("UIDプロフィールを更新しました")
+        
         st.success("プロフィールを保存しました！")
         
         # キャッシュをクリアして最新データを取得
@@ -3525,131 +3583,569 @@ def save_user_profile(nickname, show_on_leaderboard):
     except Exception as e:
         st.error(f"プロフィール保存エラー: {e}")
 
+def integrate_user_data(target_uid, email):
+    """ユーザーデータをemailベースで統合する"""
+    try:
+        db = firestore.client()
+        
+        # emailでプロフィールを検索
+        email_profile_ref = db.collection("user_profiles").document(email)
+        email_profile_doc = email_profile_ref.get()
+        
+        # uidでプロフィールを検索
+        uid_profile_ref = db.collection("user_profiles").document(target_uid)
+        uid_profile_doc = uid_profile_ref.get()
+        
+        if email_profile_doc.exists:
+            email_data = email_profile_doc.to_dict()
+            
+            if uid_profile_doc.exists:
+                # 両方存在する場合：より高いスコアのデータを保持
+                uid_data = uid_profile_doc.to_dict()
+                
+                # より高いスコアを保持
+                merged_data = email_data.copy()
+                for key in ["weeklyPoints", "totalPoints", "studyDays", "currentMasteryScore"]:
+                    if uid_data.get(key, 0) > email_data.get(key, 0):
+                        merged_data[key] = uid_data[key]
+                
+                # uidのプロフィールを更新
+                uid_profile_ref.set(merged_data)
+                st.success(f"データを統合しました: {email} → {target_uid}")
+                
+            else:
+                # emailのデータをuidにコピー
+                uid_profile_ref.set(email_data)
+                st.success(f"データをコピーしました: {email} → {target_uid}")
+                
+        else:
+            st.warning(f"Email {email} のプロフィールが見つかりません")
+            
+    except Exception as e:
+        st.error(f"データ統合エラー: {e}")
+        print(f"[ERROR] データ統合エラー: {e}")
+
 def render_ranking_page():
-    """ランキングページを表示"""
-    st.title("🏆 週間ランキング")
-    
-    st.markdown("---")
-    st.markdown("""
-    **週間ランキング**では、今週獲得したポイントに基づいてユーザーの順位を表示しています。
-    
-    - **週間ポイント**: 今週獲得したポイント（毎週月曜日にリセット）
-    - **総ポイント**: 累計獲得ポイント
-    - **学習日数**: 学習した総日数
-    - **習熟度**: 現在の正答率
-    
-     プロフィール設定でニックネームを変更できます。
-    """)
-    
-    st.divider()
+    """ランキングページを表示（簡素化版）"""
     
     # リアルタイム更新ボタン
     col1, col2 = st.columns([3, 1])
     with col2:
         if st.button("🔄 データ更新", use_container_width=True):
-            st.cache_data.clear()  # キャッシュクリア
-            st.rerun()  # ページ再読み込み
+            st.cache_data.clear()
+            st.rerun()
     
     # ランキングデータを取得
-    with st.spinner("ランキングデータを読み込み中..."):
-        ranking_data = fetch_ranking_data()
+    with st.spinner("データを読み込み中..."):
+        try:
+            ranking_data, all_profiles = fetch_ranking_data()
+        except ValueError:
+            # 古い形式の戻り値に対応
+            ranking_data = fetch_ranking_data()
+            all_profiles = []
     
+    # 週間ランキング表示
     if ranking_data:
-        # データフレームとして表示
-        import pandas as pd
-        df = pd.DataFrame(ranking_data)
+        # 現在のユーザーの順位を計算
+        current_user_rank = None
+        current_user_data = None
         
-        # スタイリング（上位3位にメダル絵文字を追加）
-        def add_medal_emoji(row):
-            if row["順位"] == 1:
-                return f"🥇 {row['順位']}"
-            elif row["順位"] == 2:
-                return f"🥈 {row['順位']}"
-            elif row["順位"] == 3:
-                return f"🥉 {row['順位']}"
+        uid = st.session_state.get("uid")
+        email = st.session_state.get("email")
+        
+        if uid:
+            try:
+                db = firestore.client()
+                
+                # まずuidでuser_profilesを検索
+                profile_ref = db.collection("user_profiles").document(uid)
+                profile_doc = profile_ref.get()
+                
+                # uidで見つからない場合はemailで検索
+                if not profile_doc.exists and email:
+                    profile_ref = db.collection("user_profiles").document(email)
+                    profile_doc = profile_ref.get()
+                    st.warning(f"UID {uid} で見つからないため、Email {email} で検索しました")
+                
+                if profile_doc.exists:
+                    current_user_data = profile_doc.to_dict()
+                    current_user_points = current_user_data.get("weeklyPoints", 0)
+                    
+                    # 順位計算（修正）
+                    for i, user in enumerate(ranking_data):
+                        if user["週間ポイント"] < current_user_points:
+                            current_user_rank = i + 1
+                            break
+                    if current_user_rank is None:
+                        # 同じポイントまたはより低いポイントの場合
+                        for i, user in enumerate(ranking_data):
+                            if user["週間ポイント"] == current_user_points:
+                                current_user_rank = i + 1
+                                break
+                        if current_user_rank is None:
+                            current_user_rank = len(ranking_data) + 1
+                            
+                else:
+                    st.error(f"ユーザープロフィールが見つかりません。UID: {uid}, Email: {email}")
+                    
+                    # データ統合の提案
+                    if email and st.button("🔄 データ統合を実行", help="emailベースでユーザーデータを統合します"):
+                        integrate_user_data(uid, email)
+                        st.rerun()
+            
+            except Exception as e:
+                print(f"[ERROR] 現在ユーザー順位計算エラー: {e}")
+                st.error(f"データ取得エラー: {e}")
+        
+# ========== スマートカード生成関数 ==========
+    
+    # 3つのタブを作成
+    tab1, tab2, tab3 = st.tabs(["🏅 週間ランキング", "📊 習熟度分布", "📈 進捗統計"])
+    
+    with tab1:
+        # 週間ランキングタブ
+        st.subheader("🏆 週間ランキング")
+
+        if ranking_data:
+            # 現在のユーザーの順位を計算
+            current_user_rank = None
+            current_user_data = None
+            
+            uid = st.session_state.get("uid")
+            email = st.session_state.get("email")
+            
+            if uid:
+                try:
+                    db = firestore.client()
+                    
+                    # UIDとEmailの両方でプロフィールを検索して、より良いデータを取得
+                    uid_profile_data = None
+                    email_profile_data = None
+                    
+                    # まずuidでuser_profilesを検索
+                    profile_ref = db.collection("user_profiles").document(uid)
+                    profile_doc = profile_ref.get()
+                    if profile_doc.exists:
+                        uid_profile_data = profile_doc.to_dict()
+                    
+                    # emailでも検索
+                    if email:
+                        email_profile_ref = db.collection("user_profiles").document(email)
+                        email_profile_doc = email_profile_ref.get()
+                        if email_profile_doc.exists:
+                            email_profile_data = email_profile_doc.to_dict()
+                    
+                    # より良いプロフィールデータを選択（ニックネーム設定済み > 週間ポイント > 最新更新）
+                    if uid_profile_data and email_profile_data:
+                        uid_nickname = uid_profile_data.get("nickname", "")
+                        email_nickname = email_profile_data.get("nickname", "")
+                        uid_weekly_points = uid_profile_data.get("weeklyPoints", 0)
+                        email_weekly_points = email_profile_data.get("weeklyPoints", 0)
+                        uid_updated = uid_profile_data.get("lastUpdated")
+                        email_updated = email_profile_data.get("lastUpdated")
+                        
+                        # ニックネームが設定されている方を優先
+                        if uid_nickname and uid_nickname != "匿名ユーザー" and (not email_nickname or email_nickname == "匿名ユーザー"):
+                            current_user_data = uid_profile_data
+                        elif email_nickname and email_nickname != "匿名ユーザー" and (not uid_nickname or uid_nickname == "匿名ユーザー"):
+                            current_user_data = email_profile_data
+                        # 両方にニックネームがある場合は週間ポイントで判断
+                        elif uid_weekly_points >= email_weekly_points:
+                            current_user_data = uid_profile_data
+                        else:
+                            current_user_data = email_profile_data
+                    elif uid_profile_data:
+                        current_user_data = uid_profile_data
+                    elif email_profile_data:
+                        current_user_data = email_profile_data
+                    
+                    if current_user_data:
+                        current_user_points = current_user_data.get("weeklyPoints", 0)
+                        
+                        # 順位計算（現在のユーザーのポイントより高いユーザー数+1）
+                        higher_users = 0
+                        for user in ranking_data:
+                            if user["週間ポイント"] > current_user_points:
+                                higher_users += 1
+                        current_user_rank = higher_users + 1
+                                
+                    else:
+                        st.error(f"ユーザープロフィールが見つかりません。UID: {uid}, Email: {email}")
+                        
+                        # データ統合の提案
+                        if email and st.button("🔄 データ統合を実行", help="emailベースでユーザーデータを統合します"):
+                            integrate_user_data(uid, email)
+                            st.rerun()
+                
+                except Exception as e:
+                    print(f"[ERROR] 現在ユーザー順位計算エラー: {e}")
+                    st.error(f"データ取得エラー: {e}")
+            
+            # 簡潔なランキング表示
+            import pandas as pd
+            df = pd.DataFrame(ranking_data)
+            
+            # 現在のユーザーの順位表示
+            if current_user_rank and current_user_data:
+                st.info(f"🎯 あなたの現在の順位: {current_user_rank}位 (週間ポイント: {current_user_data.get('weeklyPoints', 0):,}pt)")
+            
+            # テーブル表示
+            st.dataframe(
+                df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "順位": st.column_config.NumberColumn("順位", width="small"),
+                    "ニックネーム": st.column_config.TextColumn("ニックネーム", width="medium"),
+                    "週間ポイント": st.column_config.NumberColumn("週間ポイント", width="small"),
+                    "総ポイント": st.column_config.NumberColumn("総ポイント", width="small"),
+                    "学習日数": st.column_config.NumberColumn("学習日数", width="small"),
+                    "習熟度": st.column_config.TextColumn("習熟度", width="small")
+                }
+            )
+            
+            # 基本統計情報
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.metric("参加者数", len(ranking_data))
+            
+            with col2:
+                if ranking_data:
+                    total_weekly_points = sum(user["週間ポイント"] for user in ranking_data)
+                    avg_weekly_points = total_weekly_points / len(ranking_data)
+                    st.metric("平均週間ポイント", f"{avg_weekly_points:.1f}")
+            
+        else:
+            st.info("現在ランキングに参加しているユーザーがいません。")
+
+    with tab2:
+        # 習熟度分布タブ
+        st.subheader("📊 習熟度分布と正規分布分析")
+        
+        if all_profiles:
+            # 習熟度データの抽出
+            mastery_scores = [profile.get("currentMasteryScore", 0) for profile in all_profiles if profile.get("currentMasteryScore", 0) > 0]
+            
+            if len(mastery_scores) >= 3:
+                # 基本統計量
+                if SCIPY_AVAILABLE:
+                    import numpy as np
+                    mean_mastery = np.mean(mastery_scores)
+                    std_mastery = np.std(mastery_scores)
+                    median_mastery = np.median(mastery_scores)
+                else:
+                    mean_mastery = sum(mastery_scores) / len(mastery_scores)
+                    median_mastery = sorted(mastery_scores)[len(mastery_scores)//2]
+                    std_mastery = (sum([(x - mean_mastery)**2 for x in mastery_scores]) / len(mastery_scores))**0.5
+                
+                # 統計量表示
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("平均値", f"{mean_mastery:.1f}%")
+                with col2:
+                    st.metric("標準偏差", f"{std_mastery:.1f}%")
+                with col3:
+                    st.metric("中央値", f"{median_mastery:.1f}%")
+                with col4:
+                    st.metric("データ数", len(mastery_scores))
+                
+                # 正規分布との比較プロット
+                if PLOTLY_AVAILABLE:
+                    if SCIPY_AVAILABLE:
+                        x = np.linspace(0, 100, 1000)
+                        normal_dist = stats.norm.pdf(x, mean_mastery, std_mastery)
+                        
+                        fig = go.Figure()
+                        
+                        # ヒストグラム（実際のデータ）
+                        fig.add_trace(go.Histogram(
+                            x=mastery_scores,
+                            name="実際の分布",
+                            nbinsx=20,
+                            opacity=0.7,
+                            histnorm='probability density',
+                            marker_color='lightblue'
+                        ))
+                        
+                        # 正規分布曲線
+                        fig.add_trace(go.Scatter(
+                            x=x, y=normal_dist,
+                            mode='lines',
+                            name=f'正規分布 (μ={mean_mastery:.1f}, σ={std_mastery:.1f})',
+                            line=dict(color='red', width=2)
+                        ))
+                        
+                        fig.update_layout(
+                            title="習熟度分布と正規分布の比較",
+                            xaxis_title="習熟度 (%)",
+                            yaxis_title="確率密度",
+                            showlegend=True,
+                            height=500
+                        )
+                        
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        # scipyが利用できない場合は基本的なヒストグラムのみ表示
+                        fig = go.Figure()
+                        fig.add_trace(go.Histogram(
+                            x=mastery_scores,
+                            name="習熟度分布",
+                            nbinsx=20,
+                            opacity=0.7,
+                            marker_color='lightblue'
+                        ))
+                        
+                        fig.update_layout(
+                            title="習熟度分布",
+                            xaxis_title="習熟度 (%)",
+                            yaxis_title="人数",
+                            height=500
+                        )
+                        
+                        st.plotly_chart(fig, use_container_width=True)
+                        st.info("📊 正規分布との比較には scipy が必要です。より詳細な統計分析を行うには `pip install scipy` でインストールしてください。")
+                else:
+                    st.info("📊 グラフ表示には plotly が必要です。")
+                
+                # 現在のユーザーの位置
+                uid = st.session_state.get("uid")
+                if uid:
+                    try:
+                        db = firestore.client()
+                        profile_ref = db.collection("user_profiles").document(uid)
+                        profile_doc = profile_ref.get()
+                        if profile_doc.exists:
+                            user_data = profile_doc.to_dict()
+                            user_mastery = user_data.get("currentMasteryScore", 0)
+                            
+                            if user_mastery > 0:
+                                # ユーザーの偏差値計算
+                                if SCIPY_AVAILABLE and std_mastery > 0:
+                                    z_score = (user_mastery - mean_mastery) / std_mastery
+                                    percentile = stats.norm.cdf(z_score) * 100
+                                    deviation_score = 50 + 10 * z_score
+                                    
+                                    st.markdown("#### 🎯 あなたの位置")
+                                    col1, col2, col3 = st.columns(3)
+                                    with col1:
+                                        st.metric("あなたの習熟度", f"{user_mastery:.1f}%")
+                                    with col2:
+                                        st.metric("偏差値", f"{deviation_score:.1f}")
+                                    with col3:
+                                        st.metric("上位パーセンタイル", f"{100-percentile:.1f}%")
+                                    
+                                    # 位置の説明
+                                    if percentile >= 80:
+                                        st.success("🌟 優秀！上位20%に入っています")
+                                    elif percentile >= 60:
+                                        st.info("📈 平均以上の習熟度です")
+                                    elif percentile >= 40:
+                                        st.info("📊 平均的な習熟度です")
+                                    else:
+                                        st.warning("💪 まだまだ伸びしろがあります！")
+                                else:
+                                    # scipyが利用できない場合は簡易的な位置計算
+                                    above_user = sum(1 for score in mastery_scores if score > user_mastery)
+                                    rank_percent = (above_user / len(mastery_scores)) * 100 if len(mastery_scores) > 0 else 0
+                                    
+                                    st.markdown("#### 🎯 あなたの位置")
+                                    col1, col2 = st.columns(2)
+                                    with col1:
+                                        st.metric("あなたの習熟度", f"{user_mastery:.1f}%")
+                                    with col2:
+                                        st.metric("上位パーセンタイル", f"{rank_percent:.1f}%")
+                                    
+                                    # 位置の説明
+                                    if rank_percent <= 20:
+                                        st.success("🌟 優秀！上位20%に入っています")
+                                    elif rank_percent <= 40:
+                                        st.info("📈 平均以上の習熟度です")
+                                    elif rank_percent <= 60:
+                                        st.info("📊 平均的な習熟度です")
+                                    else:
+                                        st.warning("💪 まだまだ伸びしろがあります！")
+                    except Exception as e:
+                        print(f"[ERROR] ユーザー位置計算エラー: {e}")
+                
+                # 習熟度レンジ別分布
+                st.markdown("#### 📈 習熟度レンジ別分布")
+                bins = [0, 20, 40, 60, 80, 100]
+                bin_labels = ["0-20%", "20-40%", "40-60%", "60-80%", "80-100%"]
+                
+                bin_counts = []
+                for i in range(len(bins)-1):
+                    count = sum(1 for score in mastery_scores if bins[i] <= score < bins[i+1])
+                    bin_counts.append(count)
+                
+                # 最高レンジの調整（100%を含める）
+                if mastery_scores:
+                    max_score = max(mastery_scores)
+                    if max_score == 100:
+                        bin_counts[-1] += 1
+                
+                col1, col2, col3, col4, col5 = st.columns(5)
+                for i, (label, count) in enumerate(zip(bin_labels, bin_counts)):
+                    with [col1, col2, col3, col4, col5][i]:
+                        st.metric(label, count)
+                
             else:
-                return str(row["順位"])
+                st.info("習熟度分析には最低3人のデータが必要です。")
+        else:
+            st.info("分析用のデータがありません。")
+    
+    with tab3:
+        # 進捗統計タブ
+        st.subheader("📈 全体進捗統計")
         
-        df["順位"] = df.apply(add_medal_emoji, axis=1)
-        
-        # テーブル表示
-        st.dataframe(
-            df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "順位": st.column_config.TextColumn("順位", width="small"),
-                "ニックネーム": st.column_config.TextColumn("ニックネーム", width="medium"),
-                "週間ポイント": st.column_config.NumberColumn("週間ポイント", width="small"),
-                "総ポイント": st.column_config.NumberColumn("総ポイント", width="small"),
-                "学習日数": st.column_config.NumberColumn("学習日数", width="small"),
-                "習熟度": st.column_config.TextColumn("習熟度", width="small")
-            }
-        )
-        
-        # 統計情報
-        st.subheader("📊 ランキング統計")
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("参加者数", len(ranking_data))
-        
-        with col2:
-            total_weekly_points = sum(user["週間ポイント"] for user in ranking_data)
-            st.metric("週間総ポイント", f"{total_weekly_points:,}")
-        
-        with col3:
-            if ranking_data:
-                avg_weekly_points = total_weekly_points / len(ranking_data)
-                st.metric("平均週間ポイント", f"{avg_weekly_points:.1f}")
-        
-        with col4:
-            if ranking_data:
-                top_weekly_points = ranking_data[0]["週間ポイント"]
-                st.metric("1位のポイント", f"{top_weekly_points:,}")
-        
-        # 更新情報
-        st.caption("⏰ ランキングは5分ごとに更新されます")
-        
-    else:
-        # ランキングデータがない場合、テスト用のダミーデータを表示
-        st.info("現在ランキングに参加しているユーザーがいません。")
-        
-        st.markdown("**テスト用ランキング（ダミーデータ）:**")
-        test_data = [
-            {"順位": "🥇 1", "ニックネーム": "学習王", "週間ポイント": 1250, "総ポイント": 15800, "学習日数": 42, "習熟度": "94.2%"},
-            {"順位": "🥈 2", "ニックネーム": "頑張り屋", "週間ポイント": 980, "総ポイント": 12600, "学習日数": 38, "習熟度": "91.5%"},
-            {"順位": "🥉 3", "ニックネーム": "努力家", "週間ポイント": 750, "総ポイント": 9500, "学習日数": 35, "習熟度": "88.7%"},
-            {"順位": "4", "ニックネーム": "継続者", "週間ポイント": 620, "総ポイント": 7800, "学習日数": 28, "習熟度": "85.3%"},
-            {"順位": "5", "ニックネーム": "初心者", "週間ポイント": 450, "総ポイント": 4500, "学習日数": 15, "習熟度": "78.9%"}
-        ]
-        
-        import pandas as pd
-        test_df = pd.DataFrame(test_data)
-        
-        st.dataframe(
-            test_df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "順位": st.column_config.TextColumn("順位", width="small"),
-                "ニックネーム": st.column_config.TextColumn("ニックネーム", width="medium"),
-                "週間ポイント": st.column_config.NumberColumn("週間ポイント", width="small"),
-                "総ポイント": st.column_config.NumberColumn("総ポイント", width="small"),
-                "学習日数": st.column_config.NumberColumn("学習日数", width="small"),
-                "習熟度": st.column_config.TextColumn("習熟度", width="small")
-            }
-        )
-        
-        st.divider()
-        
-        st.markdown("""
-        **ランキングについて:**
-        - 全ユーザーが自動的にランキングに参加
-        - ニックネームは設定ページで変更可能
-        - 学習を開始すると自動でポイントが獲得され、ランキングに反映
-        - 毎日午前3時に集計、週間ポイントは月曜日にリセット
-        """)
+        try:
+            if all_profiles:
+                # 各指標のデータを抽出
+                weekly_points = [profile.get("weeklyPoints", 0) for profile in all_profiles]
+                total_points = [profile.get("totalPoints", 0) for profile in all_profiles]
+                study_days = [profile.get("studyDays", 0) for profile in all_profiles]
+                mastery_scores = [profile.get("currentMasteryScore", 0) for profile in all_profiles if profile.get("currentMasteryScore", 0) > 0]
+                
+                # 基本統計
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric("アクティブユーザー数", len(set().union(
+                        {i for i, _ in enumerate(weekly_points)},
+                        {i for i, _ in enumerate(total_points)},
+                        {i for i, _ in enumerate(study_days)}
+                    )))
+                
+                with col2:
+                    if total_points:
+                        if SCIPY_AVAILABLE:
+                            avg_total = np.mean(total_points)
+                        else:
+                            avg_total = sum(total_points) / len(total_points)
+                        st.metric("平均総ポイント", f"{avg_total:,.0f}")
+                    else:
+                        st.metric("平均総ポイント", "N/A")
+                
+                with col3:
+                    if study_days:
+                        if SCIPY_AVAILABLE:
+                            avg_days = np.mean(study_days)
+                        else:
+                            avg_days = sum(study_days) / len(study_days)
+                        st.metric("平均学習日数", f"{avg_days:.1f}日")
+                    else:
+                        st.metric("平均学習日数", "N/A")
+                
+                with col4:
+                    if mastery_scores:
+                        if SCIPY_AVAILABLE:
+                            avg_mastery = np.mean(mastery_scores)
+                        else:
+                            avg_mastery = sum(mastery_scores) / len(mastery_scores)
+                        st.metric("平均習熟度", f"{avg_mastery:.1f}%")
+                    else:
+                        st.metric("平均習熟度", "N/A")
+                
+                # 各指標の分布グラフ
+                if PLOTLY_AVAILABLE:
+                    # 2x2のサブプロット
+                    fig = make_subplots(
+                        rows=2, cols=2,
+                        subplot_titles=('週間ポイント分布', '総ポイント分布', '学習日数分布', '習熟度分布'),
+                        specs=[[{"secondary_y": False}, {"secondary_y": False}],
+                               [{"secondary_y": False}, {"secondary_y": False}]]
+                    )
+                    
+                    # 週間ポイント分布
+                    if weekly_points:
+                        fig.add_trace(
+                            go.Histogram(x=weekly_points, name="週間ポイント", nbinsx=20),
+                            row=1, col=1
+                        )
+                    
+                    # 総ポイント分布
+                    if total_points:
+                        fig.add_trace(
+                            go.Histogram(x=total_points, name="総ポイント", nbinsx=20),
+                            row=1, col=2
+                        )
+                    
+                    # 学習日数分布
+                    if study_days:
+                        fig.add_trace(
+                            go.Histogram(x=study_days, name="学習日数", nbinsx=20),
+                            row=2, col=1
+                        )
+                    
+                    # 習熟度分布
+                    if mastery_scores:
+                        fig.add_trace(
+                            go.Histogram(x=mastery_scores, name="習熟度", nbinsx=20),
+                            row=2, col=2
+                        )
+                    
+                    fig.update_layout(
+                        showlegend=False,
+                        title_text="全体進捗分布",
+                        height=600
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                # 相関分析
+                if len(total_points) > 5 and len(mastery_scores) > 5:
+                    st.markdown("#### 🔗 相関分析")
+                    
+                    # 総ポイントと習熟度の相関
+                    import pandas as pd
+                    
+                    # データを合わせる（長さを統一）
+                    min_len = min(len(total_points), len(mastery_scores))
+                    if min_len > 0:
+                        correlation_df = pd.DataFrame({
+                            '総ポイント': total_points[:min_len],
+                            '習熟度': mastery_scores[:min_len]
+                        })
+                        
+                        # 散布図
+                        if PLOTLY_AVAILABLE:
+                            fig_corr = px.scatter(
+                                correlation_df, 
+                                x='総ポイント', 
+                                y='習熟度',
+                                title='総ポイント vs 習熟度の相関',
+                                trendline="ols" if SCIPY_AVAILABLE else None
+                            )
+                            
+                            st.plotly_chart(fig_corr, use_container_width=True)
+                        else:
+                            st.info("📊 散布図の表示には plotly が必要です。")
+                        
+                        # 相関係数
+                        correlation = correlation_df.corr().iloc[0, 1]
+                        st.metric("相関係数", f"{correlation:.3f}")
+                        
+                        if correlation > 0.7:
+                            st.success("🔗 強い正の相関があります")
+                        elif correlation > 0.4:
+                            st.info("📈 中程度の正の相関があります")
+                        elif correlation > 0.1:
+                            st.info("📊 弱い正の相関があります")
+                        else:
+                            st.warning("📋 相関は見られません")
+                        
+                        if not SCIPY_AVAILABLE:
+                            st.info("📈 トレンドライン表示には scipy が必要です。`pip install scipy` でインストールしてください。")
+                    
+            else:
+                st.info("統計分析用のデータがありません。")
+                
+        except Exception as e:
+            st.error(f"進捗統計の取得に失敗しました: {str(e)}")
+            st.info("データベースからの進捗情報の取得に失敗しました。")
+    
+    # 更新情報
+    st.caption("⏰ データは5分ごとに更新されます | ランキング参加設定はサイドバーで変更できます")
 
 # --- 短期復習キュー管理関数 ---
 SHORT_REVIEW_COOLDOWN_MIN_Q1 = 5        # もう一度
@@ -5142,14 +5638,22 @@ else:
                 current_user_profile = get_user_profile_for_ranking()
                 
                 if current_user_profile:
-                    show_on_leaderboard = current_user_profile.get("showOnLeaderboard", False)
+                    show_on_leaderboard = current_user_profile.get("showOnLeaderboard")
                     nickname = current_user_profile.get("nickname", "")
                     weekly_points = current_user_profile.get("weeklyPoints", 0)
                     
                     st.success(f"✅ プロフィール設定済み")
                     st.caption(f"ニックネーム: {nickname}")
-                    st.caption(f"ランキング参加: 自動参加中")
-                    st.caption(f"週間ポイント: {weekly_points}")
+                    
+                    # ランキング参加状況の表示
+                    if show_on_leaderboard is None:
+                        st.caption("ランキング参加: 自動参加中（既存ユーザー）")
+                    elif show_on_leaderboard:
+                        st.caption("ランキング参加: 参加中")
+                    else:
+                        st.caption("ランキング参加: 非参加")
+                    
+                    st.caption(f"週間ポイント: {weekly_points:,}")
                 else:
                     st.info("💡 プロフィール未設定")
                 
@@ -5161,9 +5665,20 @@ else:
                             value=current_user_profile.get("nickname", "") if current_user_profile else "",
                             placeholder="表示名を入力してください"
                         )
-                        # ランキング参加は強制なのでチェックボックスは削除
-                        st.info("📊 全ユーザーが自動的にランキングに参加します")
-                        show_on_leaderboard = True  # 強制的にTrue
+                        
+                        # ランキング参加設定
+                        current_setting = current_user_profile.get("showOnLeaderboard") if current_user_profile else True
+                        if current_setting is None:
+                            # 既存ユーザーの場合、デフォルトで参加とする
+                            current_setting = True
+                        
+                        show_on_leaderboard = st.checkbox(
+                            "ランキングに参加する",
+                            value=current_setting,
+                            help="チェックを外すとランキングに表示されません。既存ユーザーはデフォルトで参加状態です。"
+                        )
+                        
+                        st.info("💡 設定変更は即座にランキングに反映されます")
                         
                         submitted = st.form_submit_button("保存", use_container_width=True)
                         
