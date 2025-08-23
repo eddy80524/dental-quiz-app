@@ -3,6 +3,7 @@ import json
 import os
 import random
 import datetime
+import time
 import re
 from collections import Counter
 import firebase_admin
@@ -12,8 +13,30 @@ import tempfile
 import collections.abc
 import pandas as pd
 import glob
-from streamlit_cookies_manager import EncryptedCookieManager
+
+# streamlit_cookies_managerの安全なインポート
+try:
+    from streamlit_cookies_manager import EncryptedCookieManager
+    COOKIES_AVAILABLE = True
+except ImportError:
+    try:
+        # 別のインポート方法を試す
+        import streamlit_cookies_manager
+        EncryptedCookieManager = streamlit_cookies_manager.EncryptedCookieManager
+        COOKIES_AVAILABLE = True
+    except (ImportError, AttributeError):
+        COOKIES_AVAILABLE = False
+        print("Warning: streamlit_cookies_manager not available, login persistence disabled")
+
 import pytz  # 日本時間対応
+
+# Firebase Functions SDK（オプション）
+try:
+    import firebase_functions
+    FIREBASE_FUNCTIONS_AVAILABLE = True
+except ImportError:
+    FIREBASE_FUNCTIONS_AVAILABLE = False
+    print("Info: firebase-functions not available, using HTTP requests for Cloud Functions calls")
 
 # アプリバージョン（キャッシュ対策用）
 APP_VERSION = "2024-08-22-v2"
@@ -162,6 +185,11 @@ def get_cookie_manager():
     # セッション状態にキャッシュ（ウィジェット使用のため@st.cache_resourceは使用不可）
     if "cookie_manager" not in st.session_state:
         try:
+            if not COOKIES_AVAILABLE:
+                print("[WARNING] Cookie manager not available, skipping cookie initialization")
+                st.session_state.cookie_manager = None
+                return None
+                
             cookie_password = st.secrets.get("cookie_password", "default_insecure_password_change_in_production")
             cookie_manager = EncryptedCookieManager(
                 prefix="dentai_",
@@ -213,6 +241,10 @@ def safe_save_cookies(cookies, data_dict):
 
 def get_cookies():
     """Cookieを安全に取得（CookiesNotReadyエラー完全対応）"""
+    # Cookie機能が利用不可の場合はNoneを返す
+    if not COOKIES_AVAILABLE:
+        return None
+        
     # 初期化フラグで重複実行を防止
     if st.session_state.get("cookie_init_attempted"):
         cookies = st.session_state.get("cookie_manager")
@@ -394,6 +426,11 @@ def try_auto_login_from_cookie():
     import time
     start = time.time()
     
+    # Cookie機能が利用不可の場合は早期リターン
+    if not COOKIES_AVAILABLE:
+        print(f"[DEBUG] try_auto_login_from_cookie - Cookie機能利用不可: {time.time() - start:.3f}s")
+        return False
+    
     # すでにログイン済みの場合は早期リターン
     if st.session_state.get("user_logged_in"):
         print(f"[DEBUG] try_auto_login_from_cookie - 既にログイン済み: {time.time() - start:.3f}s")
@@ -505,6 +542,84 @@ def ensure_valid_session():
             return False
     
     return True
+
+def call_cloud_function(function_name, payload):
+    """
+    Firebase Cloud Functionを呼び出す統一された関数
+    Firebase Functions SDKが利用可能な場合はSDKを使用、そうでなければHTTP requestsを使用
+    """
+    try:
+        # Firebase認証トークンを取得
+        id_token = st.session_state.get("id_token")
+        if not id_token:
+            print(f"[WARNING] Cloud Function {function_name}の呼び出し: IDトークンが見つかりません")
+            return None
+        
+        # Cloud Function URLを構築
+        base_url = "https://asia-northeast1-dent-ai-4d8d8.cloudfunctions.net"
+        url = f"{base_url}/{function_name}"
+        
+        headers = {
+            "Authorization": f"Bearer {id_token}",
+            "Content-Type": "application/json"
+        }
+        
+        response = requests.post(url, json={"data": payload}, headers=headers, timeout=30)
+        
+        if response.status_code == 200:
+            result = response.json()
+            print(f"[DEBUG] Cloud Function {function_name}呼び出し成功")
+            return result.get("result", result)
+        else:
+            print(f"[ERROR] Cloud Function {function_name}呼び出し失敗: {response.status_code} - {response.text}")
+            return None
+            
+    except Exception as e:
+        print(f"[ERROR] Cloud Function {function_name}呼び出しエラー: {e}")
+        return None
+
+def call_cloud_function_by_url(url, payload):
+    """URLを直接指定してCloud Functionを呼び出す（後方互換性のため残す）"""
+    # call_cloud_functionに転送（URLから関数名を抽出）
+    function_name = url.split('/')[-1]
+    return call_cloud_function(function_name, payload)
+
+def safe_parse_timestamp(timestamp):
+    """安全にタイムスタンプを解析してdatetimeオブジェクトを返す"""
+    try:
+        if isinstance(timestamp, str):
+            # ISO形式の文字列
+            return datetime.datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+        elif hasattr(timestamp, 'seconds'):
+            # Firebase Timestampオブジェクト
+            return datetime.datetime.fromtimestamp(timestamp.seconds)
+        elif isinstance(timestamp, datetime.datetime):
+            return timestamp
+        elif isinstance(timestamp, datetime.date):
+            return datetime.datetime.combine(timestamp, datetime.time())
+        else:
+            return None
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+def safe_get_timestamp(item):
+    """安全にタイムスタンプを取得する関数"""
+    try:
+        timestamp = item[1]['history'][-1]['timestamp']
+        # Firebase Timestampオブジェクトの場合
+        if hasattr(timestamp, 'seconds'):
+            return timestamp.seconds
+        # 文字列の場合
+        elif isinstance(timestamp, str):
+            from datetime import datetime
+            return datetime.fromisoformat(timestamp.replace('Z', '+00:00')).timestamp()
+        # 数値の場合
+        elif isinstance(timestamp, (int, float)):
+            return timestamp
+        else:
+            return 0
+    except (KeyError, IndexError, ValueError, AttributeError):
+        return 0
 
 @st.cache_data(ttl=3600)  # 1時間キャッシュ
 def load_master_data(version="v2025-08-22-all-gakushi-files"):  # キャッシュ更新用バージョン
@@ -2898,10 +3013,18 @@ def render_search_page():
             for history_list in filtered_df["history"]:
                 for review in history_list:
                     if isinstance(review, dict) and "timestamp" in review:
-                        review_date = datetime.datetime.fromisoformat(review["timestamp"]).date()
-                        review_history.append(review_date)
-                        if first_study_date is None or review_date < first_study_date:
-                            first_study_date = review_date
+                        timestamp = review["timestamp"]
+                        try:
+                            # 安全な日付解析
+                            parsed_time = safe_parse_timestamp(timestamp)
+                            if parsed_time:
+                                review_date = parsed_time.date()
+                                review_history.append(review_date)
+                                if first_study_date is None or review_date < first_study_date:
+                                    first_study_date = review_date
+                        except (ValueError, TypeError, AttributeError) as e:
+                            # 日付解析に失敗した場合はスキップ
+                            continue
             
             if review_history and first_study_date:
                 from collections import Counter
@@ -3235,7 +3358,298 @@ def render_search_page():
         else:
             st.info("キーワードを入力して検索してください")
 
+# --- ランキングページ ---
+@st.cache_data(ttl=300)  # 5分間キャッシュ
+def fetch_ranking_data():
+    """
+    Firestoreのuser_profilesコレクションからランキングデータを取得
+    インデックス作成前の暫定版：全データを取得してアプリ側でフィルタリング
+    """
+    try:
+        db = firestore.client()
+        
+        # 暫定版：全user_profilesを取得してアプリ側でフィルタリング・ソート
+        # 本格運用時は複合インデックスを作成してクエリを最適化
+        collection_ref = db.collection("user_profiles")
+        docs = collection_ref.stream()
+        all_profiles = []
+        
+        print(f"[DEBUG] user_profilesコレクションを検索中...")
+        doc_count = 0
+        
+        for doc in docs:
+            doc_count += 1
+            # doc.to_dict()を使用してデータを取得
+            data = doc.to_dict()
+            print(f"[DEBUG] ドキュメント {doc.id}: {data}")
+            
+            if data:  # 週間活動があるユーザーのみランキングに参加
+                has_weekly_activity = data.get("hasWeeklyActivity", False)
+                weekly_points = data.get("weeklyPoints", 0)
+                
+                # 週間活動があるか、週間ポイントが0より大きいユーザーのみ
+                if has_weekly_activity or weekly_points > 0:
+                    profile = {
+                        "nickname": data.get("nickname", "匿名ユーザー"),
+                        "weeklyPoints": weekly_points,
+                        "totalPoints": data.get("totalPoints", 0),
+                        "studyDays": data.get("studyDays", 0),
+                        "currentMasteryScore": data.get("currentMasteryScore", 0),
+                        "hasWeeklyActivity": has_weekly_activity
+                    }
+                    all_profiles.append(profile)
+                    print(f"[DEBUG] アクティブユーザー追加: {profile}")
+                else:
+                    print(f"[DEBUG] 非アクティブユーザーをスキップ: {data.get('nickname', doc.id)}")
+        
+        print(f"[DEBUG] 検索完了: {doc_count}件のドキュメント, {len(all_profiles)}件のプロフィール")
+        
+        # weeklyPointsで降順ソート
+        all_profiles.sort(key=lambda x: x["weeklyPoints"], reverse=True)
+        
+        # 上位50件に制限
+        top_profiles = all_profiles[:50]
+        
+        # 順位付きでランキングデータを作成
+        ranking_data = []
+        for i, profile in enumerate(top_profiles, 1):
+            ranking_data.append({
+                "順位": i,
+                "ニックネーム": profile["nickname"],
+                "週間ポイント": profile["weeklyPoints"],
+                "総ポイント": profile["totalPoints"],
+                "学習日数": profile["studyDays"],
+                "習熟度": f"{profile['currentMasteryScore']:.1f}%"
+            })
+        
+        return ranking_data
+    
+    except Exception as e:
+        print(f"[ERROR] ランキングデータ取得エラー: {e}")
+        # エラーが発生した場合は空のリストを返す
+        return []
 
+def get_user_profile_for_ranking():
+    """現在のユーザーのプロフィール情報を取得（ランキング用）"""
+    try:
+        uid = st.session_state.get("uid")
+        if not uid:
+            return None
+        
+        db = firestore.client()
+        profile_ref = db.collection("user_profiles").document(uid)
+        profile_doc = profile_ref.get()
+        
+        if profile_doc.exists:
+            return profile_doc.to_dict()
+        else:
+            return None
+    
+    except Exception as e:
+        st.error(f"プロフィール取得エラー: {e}")
+        return None
+
+def create_test_profile_for_current_user():
+    """現在のユーザー用のテストプロフィールを作成"""
+    try:
+        uid = st.session_state.get("uid")
+        if not uid:
+            st.error("ユーザーIDが見つかりません")
+            return
+        
+        db = firestore.client()
+        profile_ref = db.collection("user_profiles").document(uid)
+        
+        # テスト用プロフィールデータ
+        test_profile = {
+            "nickname": "テストユーザー",
+            "showOnLeaderboard": True,
+            "weeklyPoints": 500,
+            "totalPoints": 2500,
+            "studyDays": 15,
+            "currentMasteryScore": 82.5,
+            "lastUpdated": firestore.SERVER_TIMESTAMP,
+            "weeklyResetDate": firestore.SERVER_TIMESTAMP
+        }
+        
+        profile_ref.set(test_profile, merge=True)
+        st.success("テスト用プロフィールを作成しました！ページを更新してランキングを確認してください。")
+        
+        # キャッシュをクリアして最新データを取得
+        st.cache_data.clear()
+        
+    except Exception as e:
+        st.error(f"プロフィール作成エラー: {e}")
+
+def save_user_profile(nickname, show_on_leaderboard):
+    """ユーザープロフィールを保存"""
+    try:
+        uid = st.session_state.get("uid")
+        if not uid:
+            st.error("ユーザーIDが見つかりません")
+            return
+        
+        if not nickname.strip():
+            st.error("ニックネームを入力してください")
+            return
+        
+        db = firestore.client()
+        profile_ref = db.collection("user_profiles").document(uid)
+        
+        # プロフィールデータ
+        profile_data = {
+            "nickname": nickname.strip(),
+            "showOnLeaderboard": show_on_leaderboard,
+            "lastUpdated": firestore.SERVER_TIMESTAMP
+        }
+        
+        # 初回作成時のデフォルト値も追加
+        existing_profile = profile_ref.get()
+        if not existing_profile.exists:
+            profile_data.update({
+                "weeklyPoints": 0,
+                "totalPoints": 0,
+                "studyDays": 0,
+                "currentMasteryScore": 0.0,
+                "weeklyResetDate": firestore.SERVER_TIMESTAMP
+            })
+        
+        profile_ref.set(profile_data, merge=True)
+        st.success("プロフィールを保存しました！")
+        
+        # キャッシュをクリアして最新データを取得
+        st.cache_data.clear()
+        time.sleep(0.5)  # 保存の確実な完了を待つ
+        st.rerun()
+        
+    except Exception as e:
+        st.error(f"プロフィール保存エラー: {e}")
+
+def render_ranking_page():
+    """ランキングページを表示"""
+    st.title("🏆 週間ランキング")
+    
+    st.markdown("---")
+    st.markdown("""
+    **週間ランキング**では、今週獲得したポイントに基づいてユーザーの順位を表示しています。
+    
+    - **週間ポイント**: 今週獲得したポイント（毎週月曜日にリセット）
+    - **総ポイント**: 累計獲得ポイント
+    - **学習日数**: 学習した総日数
+    - **習熟度**: 現在の正答率
+    
+     プロフィール設定でニックネームを変更できます。
+    """)
+    
+    st.divider()
+    
+    # リアルタイム更新ボタン
+    col1, col2 = st.columns([3, 1])
+    with col2:
+        if st.button("🔄 データ更新", use_container_width=True):
+            st.cache_data.clear()  # キャッシュクリア
+            st.rerun()  # ページ再読み込み
+    
+    # ランキングデータを取得
+    with st.spinner("ランキングデータを読み込み中..."):
+        ranking_data = fetch_ranking_data()
+    
+    if ranking_data:
+        # データフレームとして表示
+        import pandas as pd
+        df = pd.DataFrame(ranking_data)
+        
+        # スタイリング（上位3位にメダル絵文字を追加）
+        def add_medal_emoji(row):
+            if row["順位"] == 1:
+                return f"🥇 {row['順位']}"
+            elif row["順位"] == 2:
+                return f"🥈 {row['順位']}"
+            elif row["順位"] == 3:
+                return f"🥉 {row['順位']}"
+            else:
+                return str(row["順位"])
+        
+        df["順位"] = df.apply(add_medal_emoji, axis=1)
+        
+        # テーブル表示
+        st.dataframe(
+            df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "順位": st.column_config.TextColumn("順位", width="small"),
+                "ニックネーム": st.column_config.TextColumn("ニックネーム", width="medium"),
+                "週間ポイント": st.column_config.NumberColumn("週間ポイント", width="small"),
+                "総ポイント": st.column_config.NumberColumn("総ポイント", width="small"),
+                "学習日数": st.column_config.NumberColumn("学習日数", width="small"),
+                "習熟度": st.column_config.TextColumn("習熟度", width="small")
+            }
+        )
+        
+        # 統計情報
+        st.subheader("📊 ランキング統計")
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("参加者数", len(ranking_data))
+        
+        with col2:
+            total_weekly_points = sum(user["週間ポイント"] for user in ranking_data)
+            st.metric("週間総ポイント", f"{total_weekly_points:,}")
+        
+        with col3:
+            if ranking_data:
+                avg_weekly_points = total_weekly_points / len(ranking_data)
+                st.metric("平均週間ポイント", f"{avg_weekly_points:.1f}")
+        
+        with col4:
+            if ranking_data:
+                top_weekly_points = ranking_data[0]["週間ポイント"]
+                st.metric("1位のポイント", f"{top_weekly_points:,}")
+        
+        # 更新情報
+        st.caption("⏰ ランキングは5分ごとに更新されます")
+        
+    else:
+        # ランキングデータがない場合、テスト用のダミーデータを表示
+        st.info("現在ランキングに参加しているユーザーがいません。")
+        
+        st.markdown("**テスト用ランキング（ダミーデータ）:**")
+        test_data = [
+            {"順位": "🥇 1", "ニックネーム": "学習王", "週間ポイント": 1250, "総ポイント": 15800, "学習日数": 42, "習熟度": "94.2%"},
+            {"順位": "🥈 2", "ニックネーム": "頑張り屋", "週間ポイント": 980, "総ポイント": 12600, "学習日数": 38, "習熟度": "91.5%"},
+            {"順位": "🥉 3", "ニックネーム": "努力家", "週間ポイント": 750, "総ポイント": 9500, "学習日数": 35, "習熟度": "88.7%"},
+            {"順位": "4", "ニックネーム": "継続者", "週間ポイント": 620, "総ポイント": 7800, "学習日数": 28, "習熟度": "85.3%"},
+            {"順位": "5", "ニックネーム": "初心者", "週間ポイント": 450, "総ポイント": 4500, "学習日数": 15, "習熟度": "78.9%"}
+        ]
+        
+        import pandas as pd
+        test_df = pd.DataFrame(test_data)
+        
+        st.dataframe(
+            test_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "順位": st.column_config.TextColumn("順位", width="small"),
+                "ニックネーム": st.column_config.TextColumn("ニックネーム", width="medium"),
+                "週間ポイント": st.column_config.NumberColumn("週間ポイント", width="small"),
+                "総ポイント": st.column_config.NumberColumn("総ポイント", width="small"),
+                "学習日数": st.column_config.NumberColumn("学習日数", width="small"),
+                "習熟度": st.column_config.TextColumn("習熟度", width="small")
+            }
+        )
+        
+        st.divider()
+        
+        st.markdown("""
+        **ランキングについて:**
+        - 全ユーザーが自動的にランキングに参加
+        - ニックネームは設定ページで変更可能
+        - 学習を開始すると自動でポイントが獲得され、ランキングに反映
+        - 毎日午前3時に集計、週間ポイントは月曜日にリセット
+        """)
 
 # --- 短期復習キュー管理関数 ---
 SHORT_REVIEW_COOLDOWN_MIN_Q1 = 5        # もう一度
@@ -3672,34 +4086,46 @@ def render_practice_page():
                     
                 with st.spinner('学習記録を保存中...'):
                     quality = eval_map[selected_eval_label]
-                    # ★ 評価送信の処理内（quality を決めた後）
-                    next_group = get_next_q_group()
-                    now_utc = datetime.datetime.now(datetime.timezone.utc)
-
-                    has_hisshu = any(is_hisshu(qn) for qn in current_q_group)
-
-                    for q_num_str in current_q_group:
-                        card = st.session_state.cards.get(q_num_str, {})
-                        st.session_state.cards[q_num_str] = sm2_update_with_policy(card, quality, q_num_str, now=now_utc)
-                        
-                        # learningLogsの作成は廃止（データはuserCardsのhistoryフィールドに統合済み）
-
-                    # ★ 短期復習キュー積み直し
-                    if quality == 1:
-                        enqueue_short_review(current_q_group, SHORT_REVIEW_COOLDOWN_MIN_Q1)
-                    elif quality == 2 and has_hisshu:
-                        enqueue_short_review(current_q_group, SHORT_REVIEW_COOLDOWN_MIN_Q2_HISSHU)
+                    uid = st.session_state.get("uid")
                     
-                    # 間違えた問題を短期復習に追加
+                    # Cloud Functionに送信する学習データを作成
                     for q_num_str in current_q_group:
+                        card_before = st.session_state.cards.get(q_num_str, {"level": 0})
                         is_correct = st.session_state.result_log.get(q_num_str, False)
-                        if not is_correct and quality >= 3:  # 間違えたが自己評価が高い場合のみ
-                            minutes = SHORT_REVIEW_COOLDOWN_MIN_Q2_HISSHU if (is_hisshu(q_num_str) or is_gakushi_hisshu(q_num_str)) else SHORT_REVIEW_COOLDOWN_MIN_Q1
-                            enqueue_short_review([q_num_str], minutes)
+                        
+                        # SM-2の計算はCloud Functionsに任せるので、Python側では行わない
+                        # 代わりに、カードのレベルがどう変わるかの差分だけを簡易的に計算する
+                        level_before = card_before.get("level", 0)
+                        # 仮のレベル計算（実際はSM-2に基づき、Functions側で計算）
+                        level_after = level_before + 1 if is_correct else max(0, level_before - 1)
 
-                    uid = st.session_state.get("uid")  # UIDベース管理
+                        # Cloud Functionに送信するデータを作成
+                        log_payload = {
+                            "questionId": q_num_str,
+                            "isCorrect": is_correct,
+                            "isNewCard": card_before.get("n", 0) == 0,
+                            "quality": quality,
+                            "cardLevelChange": level_after - level_before,
+                        }
+                        
+                        # logStudyActivity Cloud Functionを呼び出す
+                        try:
+                            # logStudyActivity URLを構築
+                            logStudyActivity_url = "https://asia-northeast1-dent-ai-4d8d8.cloudfunctions.net/logStudyActivity"
+                            print(f"[DEBUG] logStudyActivity呼び出し開始: {q_num_str}, payload: {log_payload}")
+                            result = call_cloud_function_by_url(logStudyActivity_url, log_payload)
+                            print(f"[DEBUG] logStudyActivity結果: {result}")
+                            if result and result.get("success"):
+                                print(f"[INFO] Cloud Functionにログ送信成功: {q_num_str}")
+                            else:
+                                print(f"[WARNING] Cloud Functionログ送信失敗: {result}")
+                        except Exception as e:
+                            print(f"[ERROR] Cloud Function呼び出しエラー: {e}")
+                            import traceback
+                            print(f"[ERROR] スタックトレース: {traceback.format_exc()}")
+                            # エラーが発生してもアプリの動作は継続
                     
-                    # --- Google Analytics イベント送信 ---
+                    # --- Google Analytics イベント送信（既存のまま維持） ---
                     if uid:
                         # 問題グループの代表的なIDを取得（複数問題の場合は最初の問題ID）
                         group_id = current_q_group[0] if current_q_group else "unknown"
@@ -3713,14 +4139,8 @@ def render_practice_page():
                             }
                         )
                     
-                    # 更新されたカードを個別に保存（新しいリファクタリング済み関数を使用）
-                    for q_num_str in current_q_group:
-                        updated_card = st.session_state.cards[q_num_str]
-                        save_user_data(uid, question_id=q_num_str, updated_card_data=updated_card)
-                    
-                    # セッション状態も保存
-                    save_user_data(uid, session_state=st.session_state)
-                    
+                    # 次の問題グループを取得
+                    next_group = get_next_q_group()
                     st.session_state.current_q_group = next_group
                         
                 for key in list(st.session_state.keys()):
@@ -4099,7 +4519,7 @@ else:
         # ページ選択（完成版）
         page = st.radio(
             "ページ選択",
-            ["演習", "検索・進捗"],
+            ["演習", "検索・進捗", "ランキング"],
             index=0,
             key="page_select"
         )
@@ -4285,101 +4705,102 @@ else:
                     # 学習開始ボタン
                     if st.button("🚀 今日の学習を開始する", type="primary", key="start_today_study"):
                         # セッション復帰時は既存キューを優先
-                        if st.session_state.get("continue_previous") or st.session_state.get("main_queue"):
+                        continue_previous = st.session_state.get("continue_previous")
+                        main_queue = st.session_state.get("main_queue")
+                        
+                        if continue_previous or main_queue:
                             st.info("前回のセッションを継続します")
                         else:
                             # セッション維持：ユーザー活動検知
-                            if not ensure_valid_session():
+                            session_valid = ensure_valid_session()
+                            if not session_valid:
                                 st.warning("セッションが期限切れです。再度ログインしてください。")
                                 st.rerun()
-                                import requests
-                                st.session_state["initializing_study"] = True
-                                with st.spinner("学習セッションを準備中..."):
-                                    id_token = st.session_state.get("id_token")
-                                    url = st.secrets["firebase_functions"]["get_daily_quiz_url"]
-                                    headers = {"Authorization": f"Bearer {id_token}"}
-                                    response = requests.post(url, headers=headers, json={"data": {}})
-                                    if response.status_code == 200:
-                                        result = response.json().get("result", {})
-                                        review_cards = result.get("reviewCards", [])
-                                        new_cards = result.get("newCards", [])
-                                        question_ids = review_cards + new_cards
-                                        st.session_state.main_queue = [[qid] for qid in question_ids]
-                                        # ...（セッション初期化の続き）...
-                                        st.success(f"今日の学習を開始します！（{len(question_ids)}問）")
-                                        st.rerun()
-                                    else:
-                                        st.error(f"学習の準備に失敗しました: {response.text}")
                             
-                            # 学習開始中フラグを設定
+                            # Cloud FunctionsのgetDailyQuizを呼び出して今日の学習を開始
                             st.session_state["initializing_study"] = True
-                            
-                            with st.spinner("学習セッションを準備中..."):
-                                # 復習カードをメインキューに追加
-                                grouped_queue = []
-                                
-                                # 復習カードの追加
-                                for q_num, card in cards.items():
-                                    if 'next_review' in card:
-                                        next_review = card['next_review']
-                                        should_review = False
-                                        
-                                        if isinstance(next_review, str):
-                                            try:
-                                                next_review_date = datetime.datetime.fromisoformat(next_review).date()
-                                                should_review = next_review_date <= today
-                                            except:
-                                                pass
-                                        elif isinstance(next_review, datetime.datetime):
-                                            should_review = next_review.date() <= today
-                                        elif isinstance(next_review, datetime.date):
-                                            should_review = next_review <= today
-                                        
-                                        if should_review:
-                                            grouped_queue.append([q_num])
-                                
-                                # 新規カードの追加
-                                recent_ids = list(st.session_state.get("result_log", {}).keys())[-15:]
-                                uid = st.session_state.get("uid")
-                                has_gakushi_permission = check_gakushi_permission(uid)
-                                
-                                if has_gakushi_permission:
-                                    available_questions = ALL_QUESTIONS
-                                else:
-                                    available_questions = [q for q in ALL_QUESTIONS if not q.get("number", "").startswith("G")]
-                                
-                                pick_ids = pick_new_cards_for_today(
-                                    available_questions,
-                                    st.session_state.get("cards", {}),
-                                    N=new_target,
-                                    recent_qids=recent_ids
-                                )
-                                
-                                for qid in pick_ids:
-                                    grouped_queue.append([qid])
-                                    if qid not in st.session_state.cards:
-                                        st.session_state.cards[qid] = {}
-                            
-                                
-                                if grouped_queue:
-                                    st.session_state.main_queue = grouped_queue
-                                    st.session_state.short_term_review_queue = []
-                                    st.session_state.current_q_group = []
+                            try:
+                                with st.spinner("学習セッションを準備中..."):
+                                    uid = st.session_state.get("uid")
+                                    print(f"[DEBUG] getDailyQuiz呼び出し開始 - UID: {uid}")
                                     
-                                    # 一時状態をクリア
-                                    for k in list(st.session_state.keys()):
-                                        if k.startswith(("checked_", "user_selection_", "shuffled_", "free_input_", "order_input_")):
-                                            del st.session_state[k]
+                                    # getDailyQuiz Cloud Functionを呼び出し
+                                    result = call_cloud_function("getDailyQuiz", {"uid": uid})
+                                    print(f"[DEBUG] getDailyQuizレスポンス: {result}")
                                     
-                                    # セッション状態のみ保存（学習開始時）
-                                    save_user_data(st.session_state.get("uid"), session_state=st.session_state)
-                                    st.session_state["initializing_study"] = False
-                                    st.success(f"今日の学習を開始します！（{len(grouped_queue)}問）")
-                                    st.rerun()
-                                else:
-                                    st.session_state["initializing_study"] = False
-                                    st.info("今日の学習対象がありません。")
-            
+                                    if result and result.get("success"):
+                                        question_ids = result.get("questionIds", [])
+                                        review_count = result.get("reviewCount", 0)
+                                        new_count = result.get("newCount", 0)
+                                        
+                                        print(f"[DEBUG] 取得した問題ID数: {len(question_ids)}, 復習: {review_count}, 新規: {new_count}")
+                                        
+                                        if question_ids:
+                                            st.session_state.main_queue = [[qid] for qid in question_ids]
+                                            st.session_state.current_q_group = []  # 次のグループから開始
+                                            st.session_state.show_home = False
+                                            st.session_state.show_start_screen = False
+                                            st.session_state.show_practice = True
+                                            st.success(f"今日の学習を開始します！（復習: {review_count}問、新規: {new_count}問）")
+                                            st.rerun()
+                                        else:
+                                            st.warning("復習対象のカードがありません。")
+                                    else:
+                                        # Cloud Function呼び出しが失敗した場合のフォールバック
+                                        error_msg = result.get("error", "不明なエラー") if result else "Cloud Function呼び出し失敗"
+                                        st.warning(f"Cloud Functionでの学習準備に失敗しました。ローカルで問題を選択します。")
+                                        print(f"[WARNING] getDailyQuiz失敗（フォールバック実行）: {error_msg}")
+                                        print(f"[WARNING] レスポンス詳細: {result}")
+                                        
+                                        # フォールバック：ローカルで復習対象カードを選択
+                                        cards = st.session_state.get("cards", {})
+                                        today = datetime.datetime.now(datetime.timezone.utc).date()
+                                        
+                                        # 復習期限が来ているカードを取得
+                                        review_cards = []
+                                        for q_num, card in cards.items():
+                                            review_date_field = card.get('next_review') or card.get('due')
+                                            if review_date_field:
+                                                try:
+                                                    if isinstance(review_date_field, str):
+                                                        review_date = datetime.datetime.fromisoformat(review_date_field.replace('Z', '+00:00')).date()
+                                                    else:
+                                                        review_date = review_date_field.date() if isinstance(review_date_field, datetime.datetime) else review_date_field
+                                                    
+                                                    if review_date <= today:
+                                                        review_cards.append(q_num)
+                                                except:
+                                                    pass
+                                        
+                                        # 新規カード（まだ学習していないカード）
+                                        new_cards = []
+                                        new_cards_per_day = st.session_state.get("new_cards_per_day", 10)
+                                        all_question_numbers = set(q.get('number') for q in ALL_QUESTIONS if q.get('number'))
+                                        unstudied_cards = [q_num for q_num in all_question_numbers if q_num not in cards or cards[q_num].get('n', 0) == 0]
+                                        new_cards = unstudied_cards[:new_cards_per_day]
+                                        
+                                        # 学習対象問題を組み合わせ
+                                        all_questions = review_cards + new_cards
+                                        
+                                        if all_questions:
+                                            # 問題をシャッフル
+                                            import random
+                                            random.shuffle(all_questions)
+                                            
+                                            st.session_state.main_queue = [[qid] for qid in all_questions]
+                                            st.session_state.current_q_group = []
+                                            st.success(f"今日の学習を開始します！（復習: {len(review_cards)}問、新規: {len(new_cards)}問）")
+                                            st.rerun()
+                                        else:
+                                            st.info("今日学習する問題がありません。しばらく時間をおいてから再度お試しください。")
+                            except Exception as e:
+                                st.error(f"学習セッション準備エラー: {str(e)}")
+                                print(f"[ERROR] getDailyQuiz例外: {e}")
+                                import traceback
+                                print(f"[ERROR] トレースバック: {traceback.format_exc()}")
+                            finally:
+                                # 成功・失敗に関わらず初期化フラグをリセット
+                                st.session_state["initializing_study"] = False
             else:
                 # 自由演習モードのUI
                 st.markdown("#### 🎯 自由演習設定")
@@ -4586,15 +5007,6 @@ else:
                         del st.session_state[k]
                 st.info("セッションを初期化しました")
                 st.rerun()
-            
-            # キャッシュクリア（デバッグ用・一時的）
-            if st.button("🧹 キャッシュクリア", key="clear_cache"):
-                # Streamlitのキャッシュをクリア
-                st.cache_data.clear()
-                st.cache_resource.clear()
-                st.info("キャッシュをクリアしました。ページを再読み込みしてください。")
-                st.rerun()
-
             # 学習記録セクション（演習ページでも表示）
             st.divider()
             st.markdown("#### 📈 学習記録")
@@ -4650,7 +5062,7 @@ else:
                     cards_with_history = [(q_num, card) for q_num, card in st.session_state.cards.items() if card.get('history')]
                     
                     if cards_with_history:
-                        sorted_cards = sorted(cards_with_history, key=lambda item: item[1]['history'][-1]['timestamp'], reverse=True)
+                        sorted_cards = sorted(cards_with_history, key=safe_get_timestamp, reverse=True)
                         
                         for q_num, card in sorted_cards[:10]:
                             last_history = card['history'][-1]
@@ -4658,14 +5070,16 @@ else:
                             
                             # UTCからJSTに変換して表示
                             try:
-                                utc_time = datetime.datetime.fromisoformat(last_history['timestamp'].replace('Z', '+00:00'))
-                                if utc_time.tzinfo is None:
-                                    utc_time = utc_time.replace(tzinfo=pytz.UTC)
-                                jst_time = utc_time.astimezone(JST)
-                                timestamp_str = jst_time.strftime('%Y-%m-%d %H:%M')
+                                parsed_time = safe_parse_timestamp(last_history['timestamp'])
+                                if parsed_time:
+                                    if parsed_time.tzinfo is None:
+                                        parsed_time = parsed_time.replace(tzinfo=pytz.UTC)
+                                    jst_time = parsed_time.astimezone(JST)
+                                    timestamp_str = jst_time.strftime('%Y-%m-%d %H:%M')
+                                else:
+                                    timestamp_str = "日付不明"
                             except:
-                                # フォールバック：元の処理
-                                timestamp_str = datetime.datetime.fromisoformat(last_history['timestamp']).strftime('%Y-%m-%d %H:%M')
+                                timestamp_str = "日付不明"
                             
                             # 問題番号を緑色のボタンとして表示
                             if st.button(q_num, key=f"jump_practice_{q_num}", type="secondary"):
@@ -4686,37 +5100,83 @@ else:
 
         else:
             # --- 検索・進捗ページのサイドバー ---
-            st.markdown("### 📊 分析・検索ツール")
-            
-            # 検索・分析用のフィルター機能のみ
-            uid = st.session_state.get("uid")
-            has_gakushi_permission = check_gakushi_permission(uid)
-            
-            
-            # 対象範囲
-            if has_gakushi_permission:
-                analysis_target = st.radio("分析対象", ["国試", "学士試験"], key="analysis_target")
-            else:
-                analysis_target = "国試"
-            
-            # 学習レベルフィルター
-            level_filter = st.multiselect(
-                "学習レベル",
-                ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "レベル5", "習得済み"],
-                default=["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "レベル5", "習得済み"],
-                key="level_filter"
-            )
-            
-            # 科目フィルター（動的に設定されるため、デフォルトは空）
-            if "available_subjects" in st.session_state:
-                subject_filter = st.multiselect(
-                    "表示する科目",
-                    st.session_state.available_subjects,
-                    default=st.session_state.available_subjects,
-                    key="subject_filter"
+            if page == "検索・進捗":
+                st.markdown("### 📊 分析・検索ツール")
+                
+                # 検索・分析用のフィルター機能のみ
+                uid = st.session_state.get("uid")
+                has_gakushi_permission = check_gakushi_permission(uid)
+                
+                
+                # 対象範囲
+                if has_gakushi_permission:
+                    analysis_target = st.radio("分析対象", ["国試", "学士試験"], key="analysis_target")
+                else:
+                    analysis_target = "国試"
+                
+                # 学習レベルフィルター
+                level_filter = st.multiselect(
+                    "学習レベル",
+                    ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "レベル5", "習得済み"],
+                    default=["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "レベル5", "習得済み"],
+                    key="level_filter"
                 )
-            else:
-                subject_filter = []
+                
+                # 科目フィルター（動的に設定されるため、デフォルトは空）
+                if "available_subjects" in st.session_state:
+                    subject_filter = st.multiselect(
+                        "表示する科目",
+                        st.session_state.available_subjects,
+                        default=st.session_state.available_subjects,
+                        key="subject_filter"
+                    )
+                else:
+                    subject_filter = []
+            
+            elif page == "ランキング":
+                # --- ランキングページのサイドバー ---
+                st.markdown("### 🏆 ランキング情報")
+                
+                # ランキング参加設定
+                st.markdown("**プロフィール設定:**")
+                current_user_profile = get_user_profile_for_ranking()
+                
+                if current_user_profile:
+                    show_on_leaderboard = current_user_profile.get("showOnLeaderboard", False)
+                    nickname = current_user_profile.get("nickname", "")
+                    weekly_points = current_user_profile.get("weeklyPoints", 0)
+                    
+                    st.success(f"✅ プロフィール設定済み")
+                    st.caption(f"ニックネーム: {nickname}")
+                    st.caption(f"ランキング参加: 自動参加中")
+                    st.caption(f"週間ポイント: {weekly_points}")
+                else:
+                    st.info("💡 プロフィール未設定")
+                
+                # プロフィール設定フォーム
+                with st.expander("プロフィール設定"):
+                    with st.form("profile_form"):
+                        nickname = st.text_input(
+                            "ニックネーム",
+                            value=current_user_profile.get("nickname", "") if current_user_profile else "",
+                            placeholder="表示名を入力してください"
+                        )
+                        # ランキング参加は強制なのでチェックボックスは削除
+                        st.info("📊 全ユーザーが自動的にランキングに参加します")
+                        show_on_leaderboard = True  # 強制的にTrue
+                        
+                        submitted = st.form_submit_button("保存", use_container_width=True)
+                        
+                        if submitted:
+                            save_user_profile(nickname, show_on_leaderboard)
+                
+                st.divider()
+                
+                # 簡潔な説明
+                st.markdown("**ランキング更新:**")
+                st.caption("• 毎日午前3時に集計")
+                st.caption("• 週間ポイントは月曜日にリセット")
+                st.caption("• データは5分間キャッシュ")
             
             # 学習記録セクション（検索・進捗ページでも表示）
             st.divider()
@@ -4761,7 +5221,7 @@ else:
                     cards_with_history = [(q_num, card) for q_num, card in st.session_state.cards.items() if card.get('history')]
                     
                     if cards_with_history:
-                        sorted_cards = sorted(cards_with_history, key=lambda item: item[1]['history'][-1]['timestamp'], reverse=True)
+                        sorted_cards = sorted(cards_with_history, key=safe_get_timestamp, reverse=True)
                         
                         for q_num, card in sorted_cards[:10]:
                             last_history = card['history'][-1]
@@ -4769,14 +5229,16 @@ else:
                             
                             # UTCからJSTに変換して表示
                             try:
-                                utc_time = datetime.datetime.fromisoformat(last_history['timestamp'].replace('Z', '+00:00'))
-                                if utc_time.tzinfo is None:
-                                    utc_time = utc_time.replace(tzinfo=pytz.UTC)
-                                jst_time = utc_time.astimezone(JST)
-                                timestamp_str = jst_time.strftime('%Y-%m-%d %H:%M')
+                                parsed_time = safe_parse_timestamp(last_history['timestamp'])
+                                if parsed_time:
+                                    if parsed_time.tzinfo is None:
+                                        parsed_time = parsed_time.replace(tzinfo=pytz.UTC)
+                                    jst_time = parsed_time.astimezone(JST)
+                                    timestamp_str = jst_time.strftime('%Y-%m-%d %H:%M')
+                                else:
+                                    timestamp_str = "日付不明"
                             except:
-                                # フォールバック：元の処理
-                                timestamp_str = datetime.datetime.fromisoformat(last_history['timestamp']).strftime('%Y-%m-%d %H:%M')
+                                timestamp_str = "日付不明"
                             
                             # 問題番号を緑色のボタンとして表示
                             if st.button(q_num, key=f"jump_search_{q_num}", type="secondary"):
@@ -4834,13 +5296,18 @@ else:
         st.stop()
     
     # 検索ページから演習開始のフラグをチェック
+    # ページ分岐の修正
+    page = st.session_state.get("page_select", "演習")
+    
     if st.session_state.get("start_practice_from_search", False):
         # フラグをクリアして演習ページを表示
         st.session_state.start_practice_from_search = False
         render_practice_page()
-    elif st.session_state.get("page_select", "演習") == "演習":
+    elif page == "演習":
         render_practice_page()
-    else:
+    elif page == "ランキング":
+        render_ranking_page()
+    else:  # "検索・進捗" の場合
         render_search_page()
 
     # UI状態の変更監視による自動保存は廃止（書き込み頻度削減のため）
