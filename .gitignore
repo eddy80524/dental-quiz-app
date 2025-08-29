@@ -239,3 +239,9 @@ hosting.*.cache
 **/serviceAccountKey.json
 **/service-account-key.json
 serviceAccount*.json
+
+# MeCab build directory
+mecab-ipadic-neologd/build/
+
+# Test files (legacy - moved to tests/ directory)
+*_test.py
