@@ -209,3 +209,33 @@ __marimo__/
 # LLM モデル
 /llm_models/
 my_llm_app/.streamlit/secrets.toml
+
+# Firebase Functions (Node.js)
+functions/node_modules/
+functions/package-lock.json
+functions/.runtimeconfig.json
+functions/lib/
+functions/dist/
+functions/coverage/
+functions/.nyc_output/
+functions/.env
+functions/.env.local
+
+# Firebase
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
+ui-debug.log
+firestore-debug.log
+pubsub-debug.log
+
+# Firebase hosting
+.firebase
+firebase.json
+.firebaserc
+hosting.*.cache
+
+# Service Account Keys
+**/serviceAccountKey.json
+**/service-account-key.json
+serviceAccount*.json

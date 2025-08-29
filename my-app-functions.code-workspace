@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"name": "my-app-functions",
+			"path": "../../my-app-functions"
+		},
+		{
+			"name": "dental-DX-PoC",
+			"path": "."
+		}
+	],
+	"settings": {}
+}

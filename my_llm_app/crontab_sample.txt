@@ -1,0 +1,48 @@
+# 週間ランキングバッチ処理のcrontab設定例
+# 
+# インストール方法:
+# 1. このファイルの内容をコピー
+# 2. crontab -e でエディタを開く
+# 3. 以下の行を追加（パスは実際の環境に合わせて修正）
+#
+# 注意事項:
+# - パスは絶対パスで指定してください
+# - Python環境のパスも確認してください
+# - ログディレクトリの書き込み権限を確認してください
+
+# 毎日午前3時に週間ランキングバッチ処理を実行
+0 3 * * * /usr/bin/python3 /Users/utsueito/kokushi-dx-poc/dental-DX-PoC/my_llm_app/ranking_scheduler.py
+
+# 毎週月曜日午前3時30分に前週データのクリーンアップ（将来的に実装）
+# 30 3 * * 1 /usr/bin/python3 /Users/utsueito/kokushi-dx-poc/dental-DX-PoC/my_llm_app/ranking_cleanup.py
+
+# 毎時間の10分に接続テスト（開発環境でのテスト用）
+# 10 * * * * /usr/bin/python3 /Users/utsueito/kokushi-dx-poc/dental-DX-PoC/my_llm_app/ranking_scheduler.py --test
+
+# systemd timer サービス用の設定例
+# /etc/systemd/system/ranking-batch.service:
+# [Unit]
+# Description=Weekly Ranking Batch Process
+# After=network.target
+# 
+# [Service]
+# Type=oneshot
+# User=your-user
+# WorkingDirectory=/Users/utsueito/kokushi-dx-poc/dental-DX-PoC/my_llm_app
+# ExecStart=/usr/bin/python3 ranking_scheduler.py
+# Environment=PYTHONPATH=/Users/utsueito/kokushi-dx-poc/dental-DX-PoC/my_llm_app
+#
+# /etc/systemd/system/ranking-batch.timer:
+# [Unit]
+# Description=Run Weekly Ranking Batch Process daily at 3 AM
+# Requires=ranking-batch.service
+# 
+# [Timer]
+# OnCalendar=*-*-* 03:00:00
+# Persistent=true
+# 
+# [Install]
+# WantedBy=timers.target
+#
+# systemctl enable ranking-batch.timer
+# systemctl start ranking-batch.timer

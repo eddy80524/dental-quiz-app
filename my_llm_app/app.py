@@ -1,2567 +1,33 @@
+"""
+歯科国家試験対策アプリ - メインファイル（リファクタリング版）
+
+主な変更点:
+- モジュール化された構造
+- UID統一によるユーザー管理
+- パフォーマンス最適化
+- セキュリティ強化
+"""
+
 import streamlit as st
-import json
-import os
-import random
 import datetime
 import time
 import re
-from collections import Counter
-import firebase_admin
-from firebase_admin import credentials, firestore, storage
-import requests
-import tempfile
-import collections.abc
-import pandas as pd
-import glob
+import random
+from typing import Optional
+
+# モジュールのインポート
+from auth import AuthManager, CookieManager, call_cloud_function
+from firestore_db import get_firestore_manager, check_gakushi_permission
+from utils import (
+    ALL_QUESTIONS, 
+    log_to_ga, 
+    HISSHU_Q_NUMBERS_SET, 
+    GAKUSHI_HISSHU_Q_NUMBERS_SET, 
+    AnalyticsUtils
+)
+from modules.practice_page import render_practice_page, render_practice_sidebar
+from modules.ranking_page import render_ranking_page
 
-# streamlit_cookies_managerの安全なインポート
-try:
-    from streamlit_cookies_manager import EncryptedCookieManager
-    COOKIES_AVAILABLE = True
-except ImportError:
-    try:
-        # 別のインポート方法を試す
-        import streamlit_cookies_manager
-        EncryptedCookieManager = streamlit_cookies_manager.EncryptedCookieManager
-        COOKIES_AVAILABLE = True
-    except (ImportError, AttributeError):
-        COOKIES_AVAILABLE = False
-        print("Warning: streamlit_cookies_manager not available, login persistence disabled")
-
-import pytz  # 日本時間対応
-
-# Firebase Functions SDK（オプション）
-try:
-    import firebase_functions
-    FIREBASE_FUNCTIONS_AVAILABLE = True
-except ImportError:
-    FIREBASE_FUNCTIONS_AVAILABLE = False
-    print("Info: firebase-functions not available, using HTTP requests for Cloud Functions calls")
-
-# アプリバージョン（キャッシュ対策用）
-APP_VERSION = "2024-08-22-v2"
-
-# plotlyインポート（未インストール時の案内付き）
-try:
-    import plotly.express as px
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
-    import numpy as np
-    PLOTLY_AVAILABLE = True
-except ImportError:
-    PLOTLY_AVAILABLE = False
-
-# scipyインポート（統計分析用）
-try:
-    from scipy import stats
-    import numpy as np
-    SCIPY_AVAILABLE = True
-except ImportError:
-    SCIPY_AVAILABLE = False
-
-# 日本時間のタイムゾーン設定
-JST = pytz.timezone('Asia/Tokyo')
-
-st.set_page_config(layout="wide")
-
-# ライトモード固定設定
-st.markdown("""
-<style>
-/* ライトモードのみで固定 */
-.stApp {
-    background-color: #ffffff;
-    color: #000000;
-}
-
-.stSidebar {
-    background-color: #f0f2f6;
-}
-
-/* サイドバーのボタン色を統一（メイン画面と同じ青色に） */
-.stSidebar .stButton > button[kind="primary"] {
-    background-color: #0066cc !important;
-    color: white !important;
-    border: none !important;
-}
-
-.stSidebar .stButton > button[kind="primary"]:hover {
-    background-color: #0052a3 !important;
-    color: white !important;
-}
-
-.stSidebar .stButton > button[kind="primary"]:focus {
-    background-color: #0066cc !important;
-    color: white !important;
-    box-shadow: 0 0 0 0.2rem rgba(0, 102, 204, 0.25) !important;
-}
-</style>""", unsafe_allow_html=True)
-
-# Secrets存在チェック（早期エラー検出）
-if "firebase_credentials" not in st.secrets or "firebase_api_key" not in st.secrets:
-    st.error("Firebase の secrets が設定されていません。")
-    st.stop()
-
-# --- Firebase初期化 ---
-#【重要】Firebaseセキュリティルールを設定してください。
-# Firestore: ユーザーが自分のデータのみにアクセスできるように制限します。
-#   例: match /user_progress/{userId} { allow read, write: if request.auth.token.email == userId; }
-# Storage: 認証済みユーザーのみがアップロードできるようにし、必要に応じて読み取りを制限します。
-
-def to_dict(obj):
-    if isinstance(obj, collections.abc.Mapping):
-        return {k: to_dict(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [to_dict(i) for i in obj]
-    else:
-        return obj
-
-# 追加: バケット名を正規化するユーティリティ
-def _resolve_storage_bucket(firebase_creds):
-    # 優先: secrets > creds の順
-    raw = st.secrets.get("firebase_storage_bucket") \
-          or firebase_creds.get("storage_bucket") \
-          or firebase_creds.get("storageBucket")
-
-    # project_id からのフォールバック
-    if not raw:
-        pid = firebase_creds.get("project_id") or firebase_creds.get("projectId") or "dent-ai-4d8d8"
-        raw = f"{pid}.firebasestorage.app"  # 正しいFirebasestorageドメインを使用
-
-    b = str(raw).strip()
-
-    # 余計なプロトコル/gs:// を除去して純粋なバケット名に
-    b = b.replace("gs://", "").split("/")[0]
-    return b
-
-@st.cache_resource
-def initialize_firebase():
-    firebase_creds = to_dict(st.secrets["firebase_credentials"])
-    # 一時ファイルは後で必ず削除
-    temp_path = None
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
-            json.dump(firebase_creds, f)
-            temp_path = f.name
-        creds = credentials.Certificate(temp_path)
-
-        storage_bucket = _resolve_storage_bucket(firebase_creds)
-
-        try:
-            app = firebase_admin.get_app()
-        except ValueError:
-            app = firebase_admin.initialize_app(
-                creds,
-                {"storageBucket": storage_bucket}
-            )
-        print(f"Firebase initialized with bucket: {storage_bucket}")
-
-        db = firestore.client(app=app)
-        bucket = storage.bucket(app=app)  # ここで既定バケットが正しく紐づく
-        return db, bucket
-    finally:
-        # サービスアカウントの一時ファイルを確実に削除（セキュリティ&掃除）
-        if temp_path:
-            try:
-                os.unlink(temp_path)
-            except Exception:
-                pass
-
-# Firebase初期化（遅延読み込み・キャッシュ最適化）
-@st.cache_resource
-def get_firebase_clients():
-    """Firebase DB/Bucketを遅延初期化でキャッシュ"""
-    return initialize_firebase()
-
-def get_db():
-    """FirestoreDBを安全に取得"""
-    try:
-        db, _ = get_firebase_clients()
-        return db
-    except Exception as e:
-        print(f"[ERROR] Firebase DB取得エラー: {e}")
-        return None
-
-def get_bucket():
-    """Firebase Storageバケットを安全に取得"""
-    try:
-        _, bucket = get_firebase_clients()
-        return bucket
-    except Exception as e:
-        print(f"[ERROR] Firebase Storage取得エラー: {e}")
-        return None
-
-# --- Cookies（自動ログイン用・セッション状態キャッシュ） ---
-def get_cookie_manager():
-    """Cookie Managerをセッション状態でキャッシュ（ウィジェット警告回避）"""
-    # セッション状態にキャッシュ（ウィジェット使用のため@st.cache_resourceは使用不可）
-    if "cookie_manager" not in st.session_state:
-        try:
-            if not COOKIES_AVAILABLE:
-                print("[WARNING] Cookie manager not available, skipping cookie initialization")
-                st.session_state.cookie_manager = None
-                return None
-                
-            cookie_password = st.secrets.get("cookie_password", "default_insecure_password_change_in_production")
-            cookie_manager = EncryptedCookieManager(
-                prefix="dentai_",
-                password=cookie_password
-            )
-            
-            # 初期化直後は準備完了まで待機
-            if hasattr(cookie_manager, '_ready'):
-                if not cookie_manager._ready:
-                    st.session_state.cookie_manager = cookie_manager
-                    return cookie_manager
-            
-            # 簡単なテストでアクセス可能性を確認
-            try:
-                test_value = cookie_manager.get("init_test", "default")
-                st.session_state.cookie_manager = cookie_manager
-                return cookie_manager
-            except Exception as test_e:
-                st.session_state.cookie_manager = cookie_manager  # 準備中でも保存
-                return cookie_manager
-                
-        except Exception as e:
-            st.session_state.cookie_manager = None
-    
-    return st.session_state.cookie_manager
-
-def safe_save_cookies(cookies, data_dict):
-    """クッキーを安全に保存（エラーハンドリング付き）"""
-    if not cookies:
-        return False
-    
-    try:
-        # Cookieが準備完了かチェック
-        if hasattr(cookies, '_ready') and not cookies._ready:
-            print("[DEBUG] Cookie not ready for saving")
-            return False
-        
-        # データを設定
-        for key, value in data_dict.items():
-            cookies[key] = value
-        
-        # 保存実行
-        cookies.save()
-        print(f"[DEBUG] Cookies saved successfully: {list(data_dict.keys())}")
-        return True
-        
-    except Exception as e:
-        return False
-
-def get_cookies():
-    """Cookieを安全に取得（CookiesNotReadyエラー完全対応）"""
-    # Cookie機能が利用不可の場合はNoneを返す
-    if not COOKIES_AVAILABLE:
-        return None
-        
-    # 初期化フラグで重複実行を防止
-    if st.session_state.get("cookie_init_attempted"):
-        cookies = st.session_state.get("cookie_manager")
-        if cookies is not None:
-            try:
-                # Cookieが準備完了かチェック
-                if hasattr(cookies, '_ready') and not cookies._ready:
-                    return None
-                # 簡単なアクセステストを行う
-                _ = cookies.get("test", None)
-                return cookies
-            except Exception as e:
-                return None
-        else:
-            return None
-    
-    # 初回のみ初期化を試行
-    st.session_state.cookie_init_attempted = True
-    try:
-        cookies = get_cookie_manager()
-        if cookies is not None:
-            # 準備完了まで待機（時間をおいて再試行）
-            try:
-                if hasattr(cookies, '_ready'):
-                    if not cookies._ready:
-                        return None
-                # 簡単なアクセステストを行う
-                test_value = cookies.get("test", None)
-                st.session_state.cookie_manager = cookies
-                return cookies
-            except Exception as e:
-                return None
-        else:
-            return None
-    except Exception as e:
-        return None
-
-FIREBASE_API_KEY = st.secrets["firebase_api_key"]
-FIREBASE_AUTH_SIGNUP_URL = f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={FIREBASE_API_KEY}"
-FIREBASE_AUTH_SIGNIN_URL = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={FIREBASE_API_KEY}"
-FIREBASE_REFRESH_TOKEN_URL = f"https://securetoken.googleapis.com/v1/token?key={FIREBASE_API_KEY}"
-
-# HTTPセッション再利用でパフォーマンス向上
-@st.cache_resource
-def get_http_session():
-    """HTTPセッションを再利用してパフォーマンスを向上"""
-    session = requests.Session()
-    session.headers.update({
-        'User-Agent': 'DentalAI/1.0 (Streamlit)',
-        'Accept': 'application/json',
-        'Accept-Encoding': 'gzip, deflate',
-        'Connection': 'keep-alive'
-    })
-    return session
-
-def firebase_signup(email, password):
-    """Firebase新規登録（最適化版）"""
-    session = get_http_session()
-    payload = {"email": email, "password": password, "returnSecureToken": True}
-    try:
-        r = session.post(FIREBASE_AUTH_SIGNUP_URL, json=payload, timeout=3)
-        return r.json()
-    except requests.exceptions.RequestException as e:
-        return {"error": {"message": f"Network error: {str(e)}"}}
-
-def firebase_signin(email, password):
-    """Firebase認証（Firestore読み取り最小化版）"""
-    import time
-    start = time.time()
-    
-    # 重複ログイン防止：既にログイン処理中の場合はスキップ
-    if st.session_state.get("login_in_progress"):
-        return {"error": {"message": "Login already in progress"}}
-    
-    st.session_state["login_in_progress"] = True
-    
-    try:
-        payload = {"email": email, "password": password, "returnSecureToken": True}
-        session = get_http_session()
-        
-        api_start = time.time()
-        # 超短タイムアウトで高速化（通常は1-2秒で完了するはず）
-        r = session.post(FIREBASE_AUTH_SIGNIN_URL, json=payload, timeout=3)
-        api_time = time.time() - api_start
-        
-        parse_start = time.time()
-        result = r.json()
-        parse_time = time.time() - parse_start
-        
-        total_time = time.time() - start
-        
-        if r.status_code == 200:
-            # TODO: UID統合処理は、本来は一度限りのデータ移行スクリプトとして実行し、
-            # 毎回のログイン処理からは削除することで読み取り回数を削減する
-            pass
-        
-        return result
-    except requests.exceptions.Timeout:
-        total_time = time.time() - start
-        return {"error": {"message": "Authentication timeout. Please check your network connection."}}
-    except requests.exceptions.RequestException as e:
-        total_time = time.time() - start
-        return {"error": {"message": f"Network error: {str(e)}"}}
-    except Exception as e:
-        total_time = time.time() - start
-        return {"error": {"message": str(e)}}
-    finally:
-        # ログイン処理完了フラグをクリア
-        st.session_state["login_in_progress"] = False
-
-def firebase_refresh_token(refresh_token):
-    """リフレッシュトークンを使って新しいidTokenを取得（最適化版）"""
-    payload = {"grant_type": "refresh_token", "refresh_token": refresh_token}
-    session = get_http_session()
-    try:
-        # 修正：JSONではなくx-www-form-urlencoded + 短いタイムアウト
-        r = session.post(FIREBASE_REFRESH_TOKEN_URL, data=payload, timeout=3)
-        result = r.json()
-        if "id_token" in result:
-            return {
-                "idToken": result["id_token"],
-                "refreshToken": result["refresh_token"],
-                "expiresIn": int(result.get("expires_in", 1800))  # 30分セッション
-            }
-    except requests.exceptions.RequestException as e:
-        print(f"Token refresh error: {e}")
-    except Exception as e:
-        print(f"Token refresh error: {e}")
-    return None
-
-def firebase_reset_password(email):
-    """Firebase パスワードリセットメール送信"""
-    api_key = st.secrets["firebase_api_key"]
-    password_reset_url = f"https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key={api_key}"
-    
-    payload = {
-        "requestType": "PASSWORD_RESET",
-        "email": email
-    }
-    
-    session = get_http_session()
-    try:
-        r = session.post(password_reset_url, json=payload, timeout=5)
-        result = r.json()
-        
-        if r.status_code == 200:
-            print(f"[DEBUG] パスワードリセットメール送信成功: {email}")
-            return {"success": True, "message": "パスワードリセットメールを送信しました"}
-        else:
-            print(f"[DEBUG] パスワードリセットメール送信失敗: {result}")
-            error_message = result.get("error", {}).get("message", "Unknown error")
-            
-            # エラーメッセージを日本語化
-            if "EMAIL_NOT_FOUND" in error_message:
-                return {"success": False, "message": "このメールアドレスは登録されていません"}
-            elif "INVALID_EMAIL" in error_message:
-                return {"success": False, "message": "メールアドレスの形式が正しくありません"}
-            else:
-                return {"success": False, "message": f"エラー: {error_message}"}
-                
-    except requests.exceptions.RequestException as e:
-        print(f"[DEBUG] パスワードリセット通信エラー: {e}")
-        return {"success": False, "message": "ネットワークエラーが発生しました"}
-    except Exception as e:
-        print(f"[DEBUG] パスワードリセット例外: {e}")
-        return {"success": False, "message": "予期しないエラーが発生しました"}
-
-def is_token_expired(token_timestamp, expires_in=1800):
-    """トークンが期限切れかどうかをチェック（30分間有効）"""
-    if not token_timestamp:
-        return True
-    now = datetime.datetime.now(datetime.timezone.utc)
-    token_time = datetime.datetime.fromisoformat(token_timestamp)
-    # 25分（1500秒）で期限切れとして扱い、余裕を持ってリフレッシュ
-    return (now - token_time).total_seconds() > 1500
-
-def try_auto_login_from_cookie():
-    """クッキーからの自動ログイン（超高速版）"""
-    import time
-    start = time.time()
-    
-    # Cookie機能が利用不可の場合は早期リターン
-    if not COOKIES_AVAILABLE:
-        print(f"[DEBUG] try_auto_login_from_cookie - Cookie機能利用不可: {time.time() - start:.3f}s")
-        return False
-    
-    # すでにログイン済みの場合は早期リターン
-    if st.session_state.get("user_logged_in"):
-        print(f"[DEBUG] try_auto_login_from_cookie - 既にログイン済み: {time.time() - start:.3f}s")
-        return False
-    
-    # Cookie取得（安全に）
-    cookies = get_cookies()
-    
-    # Cookie取得に失敗した場合は早期リターン
-    if cookies is None:
-        print(f"[DEBUG] try_auto_login_from_cookie - Cookie取得失敗: {time.time() - start:.3f}s")
-        return False
-    
-    # Cookie取得（高速化・安全性強化）
-    try:
-        rt = None
-        email = None
-        uid = None
-        
-        # CookiesNotReadyエラー対応でtry-catchでアクセス
-        try:
-            rt = cookies.get("refresh_token")
-            email = cookies.get("email") or ""
-            uid = cookies.get("uid") or ""
-            print(f"[DEBUG] Cookie values - rt: {'***' if rt else 'None'}, email: {email}, uid: {'***' if uid else 'None'}")
-        except Exception as e:
-            print(f"[DEBUG] Cookie access error during auto-login: {e}")
-            print(f"[DEBUG] try_auto_login_from_cookie - Cookie準備未完了: {time.time() - start:.3f}s")
-            return False
-            
-        if not rt:
-            print(f"[DEBUG] try_auto_login_from_cookie - refresh_tokenなし")
-            return False
-        
-        # トークンリフレッシュ（タイムアウト短縮）
-        result = firebase_refresh_token(rt)
-        if not result:
-            print(f"[DEBUG] try_auto_login_from_cookie - リフレッシュ失敗")
-            # 失敗したCookieは削除
-            safe_save_cookies(cookies, {"refresh_token": ""})
-            return False
-        
-        # 高速セッション復元（emailベース管理）
-        # email, uidは上で既に取得済み
-        if not uid:
-            uid = result.get("user_id")
-        
-        if not email:
-            print(f"[DEBUG] try_auto_login_from_cookie - emailなし")
-            return False
-        
-        st.session_state.update({
-            "name": email.split("@")[0],
-            "username": email,  # emailをプライマリIDとして使用
-            "email": email,
-            "uid": uid,  # FirebaseのUIDは保持するが、プライマリIDはemail
-            "id_token": result["idToken"],
-            "refresh_token": result["refreshToken"],
-            "token_timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "user_logged_in": email  # emailをログイン状態の識別子として使用
-        })
-        
-        total_time = time.time() - start
-        print(f"[DEBUG] try_auto_login_from_cookie - 成功: {total_time:.3f}s")
-        return True
-        
-    except Exception as e:
-        total_time = time.time() - start
-        print(f"[DEBUG] try_auto_login_from_cookie - エラー: {e}, 時間: {total_time:.3f}s")
-        return False
-
-def ensure_valid_session():
-    """セッションが有効かチェックし、必要に応じてトークンをリフレッシュ（強化版）"""
-    if not st.session_state.get("user_logged_in"):
-        return False
-    
-    token_timestamp = st.session_state.get("token_timestamp")
-    refresh_token = st.session_state.get("refresh_token")
-    
-    # トークンが期限切れの場合はリフレッシュを試行（30分セッション対応）
-    if is_token_expired(token_timestamp) and refresh_token:
-        print(f"[DEBUG] トークン期限切れ検出（30分セッション） - 自動リフレッシュ実行中")
-        refresh_result = firebase_refresh_token(refresh_token)
-        if refresh_result:
-            # トークンの更新
-            st.session_state["id_token"] = refresh_result["idToken"]
-            st.session_state["refresh_token"] = refresh_result["refreshToken"]
-            st.session_state["token_timestamp"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-            
-            # Cookieも更新（Remember meの場合）
-            cookies = get_cookies()
-            if cookies is not None:
-                cookie_data = {
-                    "refresh_token": refresh_result["refreshToken"],
-                    "uid": st.session_state.get("uid"),
-                    "email": st.session_state.get("email")
-                }
-                safe_save_cookies(cookies, cookie_data)
-            
-            print(f"[DEBUG] セッション自動リフレッシュ成功")
-            return True
-        else:
-            # リフレッシュに失敗した場合はログアウト
-            print(f"[DEBUG] セッションリフレッシュ失敗 - ログアウト実行")
-            # セッション状態をクリア
-            for key in ["user_logged_in", "authenticated", "id_token", "refresh_token", "token_timestamp", "uid", "email"]:
-                if key in st.session_state:
-                    del st.session_state[key]
-            return False
-    
-    return True
-
-def call_cloud_function(function_name, payload):
-    """
-    Firebase Cloud Functionを呼び出す統一された関数
-    Firebase Functions SDKが利用可能な場合はSDKを使用、そうでなければHTTP requestsを使用
-    """
-    try:
-        # Firebase認証トークンを取得
-        id_token = st.session_state.get("id_token")
-        if not id_token:
-            print(f"[WARNING] Cloud Function {function_name}の呼び出し: IDトークンが見つかりません")
-            return None
-        
-        # Cloud Function URLを構築
-        base_url = "https://asia-northeast1-dent-ai-4d8d8.cloudfunctions.net"
-        url = f"{base_url}/{function_name}"
-        
-        headers = {
-            "Authorization": f"Bearer {id_token}",
-            "Content-Type": "application/json"
-        }
-        
-        response = requests.post(url, json={"data": payload}, headers=headers, timeout=30)
-        
-        if response.status_code == 200:
-            result = response.json()
-            print(f"[DEBUG] Cloud Function {function_name}呼び出し成功")
-            return result.get("result", result)
-        else:
-            print(f"[ERROR] Cloud Function {function_name}呼び出し失敗: {response.status_code} - {response.text}")
-            return None
-            
-    except Exception as e:
-        print(f"[ERROR] Cloud Function {function_name}呼び出しエラー: {e}")
-        return None
-
-def call_cloud_function_by_url(url, payload):
-    """URLを直接指定してCloud Functionを呼び出す（後方互換性のため残す）"""
-    # call_cloud_functionに転送（URLから関数名を抽出）
-    function_name = url.split('/')[-1]
-    return call_cloud_function(function_name, payload)
-
-def safe_parse_timestamp(timestamp):
-    """安全にタイムスタンプを解析してdatetimeオブジェクトを返す"""
-    try:
-        if isinstance(timestamp, str):
-            # ISO形式の文字列
-            return datetime.datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-        elif hasattr(timestamp, 'seconds'):
-            # Firebase Timestampオブジェクト
-            return datetime.datetime.fromtimestamp(timestamp.seconds)
-        elif isinstance(timestamp, datetime.datetime):
-            return timestamp
-        elif isinstance(timestamp, datetime.date):
-            return datetime.datetime.combine(timestamp, datetime.time())
-        else:
-            return None
-    except (ValueError, TypeError, AttributeError):
-        return None
-
-def safe_get_timestamp(item):
-    """安全にタイムスタンプを取得する関数"""
-    try:
-        timestamp = item[1]['history'][-1]['timestamp']
-        # Firebase Timestampオブジェクトの場合
-        if hasattr(timestamp, 'seconds'):
-            return timestamp.seconds
-        # 文字列の場合
-        elif isinstance(timestamp, str):
-            from datetime import datetime
-            return datetime.fromisoformat(timestamp.replace('Z', '+00:00')).timestamp()
-        # 数値の場合
-        elif isinstance(timestamp, (int, float)):
-            return timestamp
-        else:
-            return 0
-    except (KeyError, IndexError, ValueError, AttributeError):
-        return 0
-
-@st.cache_data(ttl=3600)  # 1時間キャッシュ
-def load_master_data(version="v2025-08-22-all-gakushi-files"):  # キャッシュ更新用バージョン
-    import time
-    start = time.time()
-    
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    master_dir = os.path.join(script_dir, 'data')
-    
-    # 読み込むファイルを直接指定する
-    files_to_load = [
-        'master_questions_final.json', 
-        'gakushi-2022-1-1.json', 
-        'gakushi-2022-1-2.json', 
-        'gakushi-2022-1-3.json', 
-        'gakushi-2022-1再.json',  
-        'gakushi-2022-2.json', 
-        'gakushi-2023-1-1.json',
-        'gakushi-2023-1-2.json',
-        'gakushi-2023-1-3.json',
-        'gakushi-2023-1再.json', 
-        'gakushi-2023-2.json',
-        'gakushi-2023-2再.json',
-        'gakushi-2024-1-1.json', 
-        'gakushi-2024-2.json', 
-        'gakushi-2025-1-1.json'
-    ]
-    target_files = [os.path.join(master_dir, f) for f in files_to_load]
-
-    all_cases = {}
-    all_questions = []
-    seen_numbers = set()
-    missing_files = []
-    
-    file_load_times = []
-
-    for file_path in target_files:
-        file_start = time.time()
-        # ファイルが存在するか念のため確認
-        if not os.path.exists(file_path):
-            missing_files.append(file_path)
-            continue
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            file_load_time = time.time() - file_start
-            file_load_times.append((os.path.basename(file_path), file_load_time))
-
-            if isinstance(data, dict):
-                # 'cases'キーがない場合もエラーにならないように.get()を使用
-                cases = data.get('cases', {})
-                if isinstance(cases, dict):
-                    all_cases.update(cases)
-                
-                questions = data.get('questions', [])
-                if isinstance(questions, list):
-                    for q in questions:
-                        num = q.get('number')
-                        if num and num not in seen_numbers:
-                            all_questions.append(q)
-                            seen_numbers.add(num)
-            
-            elif isinstance(data, list):
-                for q in data:
-                    num = q.get('number')
-                    if num and num not in seen_numbers:
-                        all_questions.append(q)
-                        seen_numbers.add(num)
-
-        except Exception as e:
-            # ログだけ残してUIには表示しない
-            print(f"{file_path} の読み込みでエラー: {e}")
-    
-    total_time = time.time() - start
-    
-    # 学士問題数のカウント（デバッグ用）
-    gakushi_count = sum(1 for q in all_questions if q.get('number', '').startswith('G'))
-    
-    print(f"[DEBUG] load_master_data - 総時間: {total_time:.3f}s, 問題数: {len(all_questions)} (学士: {gakushi_count}問)")
-    for filename, file_time in file_load_times:
-        print(f"[DEBUG] load_master_data - {filename}: {file_time:.3f}s")
-    
-    # ファイルが足りない場合は警告をUIに出さない
-    return all_cases, all_questions
-
-def is_hisshu(q_num_str):
-    """問題番号文字列を受け取り、必修問題かどうかを判定する"""
-    match = re.match(r'(\d+)([A-D])(\d+)', q_num_str)
-    if not match:
-        return False
-    kai, ryoiki, num = int(match.group(1)), match.group(2), int(match.group(3))
-    if 101 <= kai <= 102:
-        return ryoiki in ['A', 'B'] and 1 <= num <= 25
-    elif 103 <= kai <= 110:
-        return ryoiki in ['A', 'C'] and 1 <= num <= 35
-    elif 111 <= kai <= 118:
-        return ryoiki in ['A', 'B', 'C', 'D'] and 1 <= num <= 20
-    return False
-
-def is_gakushi_hisshu(q_num_str):
-    """学士試験の問題番号文字列を受け取り、必修問題かどうかを判定する"""
-    # 学士試験の必修問題は1-20番（全領域A-D共通）
-    match = re.match(r'^G\d{2}-[\d\-再]+-[A-D]-(\d+)$', q_num_str)
-    if match:
-        num = int(match.group(1))
-        return 1 <= num <= 20
-    return False
-
-@st.cache_data(ttl=3600)
-def get_derived_data(all_questions):
-    """派生データを別途キャッシュして計算コストを分散"""
-    import time
-    start = time.time()
-    
-    questions_dict = {q['number']: q for q in all_questions}
-    subjects = sorted(list(set(q['subject'] for q in all_questions if q.get('subject') and q.get('subject') != '（未分類）')))
-    exam_numbers = sorted(list(set(re.match(r'(\d+)', q['number']).group(1) for q in all_questions if re.match(r'(\d+)', q['number']))), key=int, reverse=True)
-    exam_sessions = sorted(list(set(re.match(r'(\d+[A-D])', q['number']).group(1) for q in all_questions if re.match(r'(\d+[A-D])', q['number']))))
-    hisshu_numbers = {q['number'] for q in all_questions if is_hisshu(q['number'])}
-    gakushi_hisshu_numbers = {q['number'] for q in all_questions if is_gakushi_hisshu(q['number'])}
-    
-    derived_time = time.time() - start
-    print(f"[DEBUG] get_derived_data - 派生データ計算: {derived_time:.3f}s")
-    
-    return questions_dict, subjects, exam_numbers, exam_sessions, hisshu_numbers, gakushi_hisshu_numbers
-
-# --- 学士インデックスとフィルタ ---
-import re
-from collections import defaultdict
-
-def build_gakushi_indices(all_questions):
-    years = set()
-    areas_by_year = defaultdict(set)
-    subjects = set()
-    for q in all_questions:
-        qn = q.get("number", "")
-        if not qn.startswith("G"):
-            continue
-        # 2つの形式に対応: G23-2-A-1 と G25-1-1-A-1
-        m = re.match(r'^G(\d{2})-([^-]+(?:-[^-]+)*)-([A-D])-\d+$', qn)
-        if m:
-            y2 = int(m.group(1))
-            year = 2000 + y2 if y2 <= 30 else 1900 + y2
-            area = m.group(3)
-            years.add(year)
-            areas_by_year[year].add(area)
-        s = (q.get("subject") or "").strip()
-        if qn.startswith("G") and s:
-            subjects.add(s)
-    years_sorted = sorted(years, reverse=True)
-    areas_map = {y: sorted(list(areas_by_year[y])) for y in years_sorted}
-    gakushi_subjects = sorted(list(subjects))
-    return years_sorted, areas_map, gakushi_subjects
-
-def build_gakushi_indices_with_sessions(all_questions):
-    """学士試験の年度、回数、領域の情報を整理する"""
-    years = set()
-    sessions_by_year = defaultdict(set)
-    areas_by_year_session = defaultdict(lambda: defaultdict(set))
-    subjects = set()
-    
-    for q in all_questions:
-        qn = q.get("number", "")
-        if not qn.startswith("G"):
-            continue
-            
-        # G23-2-A-1, G25-1-1-A-1, G22-1再-A-1 などの形式に対応
-        m = re.match(r'^G(\d{2})-([^-]+(?:-[^-]+)*)-([A-D])-\d+$', qn)
-        if m:
-            y2 = int(m.group(1))
-            year = 2000 + y2 if y2 <= 30 else 1900 + y2
-            session = m.group(2)  # 1-1, 1-2, 1-3, 1再, 2, 2再 など
-            area = m.group(3)
-            
-            years.add(year)
-            sessions_by_year[year].add(session)
-            areas_by_year_session[year][session].add(area)
-            
-        s = (q.get("subject") or "").strip()
-        if qn.startswith("G") and s:
-            subjects.add(s)
-    
-    years_sorted = sorted(years, reverse=True)
-    
-    # セッションをソート（1-1, 1-2, 1-3, 1再, 2, 2再 の順序）
-    def sort_sessions(sessions):
-        def session_key(s):
-            if s == "1-1": return (1, 1, 0)
-            elif s == "1-2": return (1, 2, 0)
-            elif s == "1-3": return (1, 3, 0)
-            elif s == "1再": return (1, 99, 0)
-            elif s == "2": return (2, 0, 0)
-            elif s == "2再": return (2, 99, 0)
-            else: return (99, 0, 0)
-        return sorted(sessions, key=session_key)
-    
-    sessions_map = {y: sort_sessions(list(sessions_by_year[y])) for y in years_sorted}
-    areas_map = {}
-    for year in years_sorted:
-        areas_map[year] = {}
-        for session in sessions_map[year]:
-            areas_map[year][session] = sorted(list(areas_by_year_session[year][session]))
-    
-    gakushi_subjects = sorted(list(subjects))
-    return years_sorted, sessions_map, areas_map, gakushi_subjects
-
-def filter_gakushi_by_year_area(all_questions, year, area):
-    yy = str(year)[2:]  # 2024 -> "24"
-    pat = re.compile(rf'^G{yy}-[^-]+(?:-[^-]+)*-{area}-\d+$')
-    res = []
-    for q in all_questions:
-        qn = q.get("number", "")
-        if qn.startswith("G") and pat.match(qn):
-            res.append(q)
-    return res
-
-def filter_gakushi_by_year_session_area(all_questions, year, session, area):
-    """学士試験の年度、回数、領域で問題をフィルタリング（改良版）"""
-    yy = str(year)[2:]  # 2024 -> "24"
-    
-    # より柔軟なパターンマッチング（デバッグ用ログ付き）
-    res = []
-    pattern_count = 0
-    
-    for q in all_questions:
-        qn = q.get("number", "")
-        if not qn.startswith("G"):
-            continue
-            
-        # 複数のパターンに対応
-        # G23-2-A-1, G25-1-1-A-1, G22-1再-A-1 など
-        patterns = [
-            rf'^G{yy}-{re.escape(session)}-{area}-\d+$',  # 基本パターン
-            rf'^G{yy}-{re.escape(session)}-{area}\d+$',   # ハイフンなしパターン
-        ]
-        
-        matched = False
-        for pattern in patterns:
-            if re.match(pattern, qn):
-                res.append(q)
-                matched = True
-                break
-        
-        if matched:
-            pattern_count += 1
-    
-    print(f"[DEBUG] 学士フィルタ - 年度:{year}, セッション:{session}, 領域:{area} -> {len(res)}問マッチ")
-    return res
-
-# 初期データ読み込み
-CASES, ALL_QUESTIONS = load_master_data()  # バージョンパラメータで自動的にキャッシュ更新
-ALL_QUESTIONS_DICT, ALL_SUBJECTS, ALL_EXAM_NUMBERS, ALL_EXAM_SESSIONS, HISSHU_Q_NUMBERS_SET, GAKUSHI_HISSHU_Q_NUMBERS_SET = get_derived_data(ALL_QUESTIONS)
-
-# --- Firestore連携 ---
-def load_user_data_minimal(user_id):
-    """ログイン時にユーザーの基本プロフィール情報のみを高速読み込み"""
-    import time
-    start = time.time()
-    
-    if not ensure_valid_session():
-        print(f"[DEBUG] load_user_data_minimal - セッション無効: {time.time() - start:.3f}s")
-        return {"email": "", "settings": {"new_cards_per_day": 10}}
-
-    uid = st.session_state.get("uid")
-    
-    if uid:
-        db = get_db()
-        if db:
-            try:
-                # /users/{uid} から基本プロフィールのみ読み込み
-                start_read = time.time()
-                doc_ref = db.collection("users").document(uid)
-                doc = doc_ref.get(timeout=5)
-                read_time = time.time() - start_read
-                
-                if doc.exists:
-                    data = doc.to_dict()
-                    
-                    # カードデータも読み込む（演習記録を正しく表示するため全データ取得）
-                    try:
-                        print(f"[DEBUG] カードデータ読み込み開始...")
-                        cards_start = time.time()
-                        cards_ref = db.collection("users").document(uid).collection("userCards")
-                        cards_docs = cards_ref.stream()
-                        cards = {}
-                        for card_doc in cards_docs:
-                            cards[card_doc.id] = card_doc.to_dict()
-                        
-                        cards_time = time.time() - cards_start
-                        print(f"[DEBUG] カードデータ読み込み完了: {len(cards)}枚, 時間: {cards_time:.3f}s")
-                        
-                        # 学習ログを統合してSM2パラメータを復元（必要な場合のみ）
-                        if should_integrate_logs(uid):
-                            cards = integrate_learning_logs_into_cards(cards, uid)
-                        data["cards"] = cards
-                    except Exception as e:
-                        print(f"[ERROR] カードデータ読み込みエラー: {e}")
-                        data["cards"] = {}
-                    
-                    total_time = time.time() - start
-                    return data
-                else:
-                    # 新規ユーザーのデフォルトプロフィール作成
-                    email = st.session_state.get("email", "")
-                    default_profile = {
-                        "email": email,
-                        "createdAt": datetime.datetime.utcnow().isoformat(),
-                        "settings": {"new_cards_per_day": 10}
-                    }
-                    doc_ref.set(default_profile)
-                    return default_profile
-                
-            except Exception as e:
-                print(f"[ERROR] load_user_data_minimal エラー: {e}")
-    
-    print(f"[DEBUG] load_user_data_minimal - デフォルト: {time.time() - start:.3f}s")
-    return {"email": "", "settings": {"new_cards_per_day": 10}}
-
-
-
-
-def load_user_data_full(user_id, cache_buster: int = 0):
-    """演習開始時にユーザーの全カードデータを読み込む2段階読み込み版"""
-    import time
-    start = time.time()
-    
-    if not ensure_valid_session():
-        print(f"[DEBUG] load_user_data_full - セッション無効: {time.time() - start:.3f}s")
-        return {"cards": {}, "main_queue": [], "short_term_review_queue": [], "current_q_group": [], "new_cards_per_day": 10}
-
-    uid = st.session_state.get("uid")
-    
-    if uid:
-        db = get_db()
-        if db:
-            try:
-                # 段階1: /users/{uid} から基本プロフィールを取得
-                profile_start = time.time()
-                user_ref = db.collection("users").document(uid)
-                user_doc = user_ref.get(timeout=10)
-                profile_time = time.time() - profile_start
-                
-                if not user_doc.exists:
-                    print(f"[DEBUG] load_user_data_full - ユーザープロフィール未存在: {uid}")
-                    return {"cards": {}, "main_queue": [], "short_term_review_queue": [], "current_q_group": [], "new_cards_per_day": 10}
-                
-                user_data = user_doc.to_dict()
-                
-                # 段階2: /users/{uid}/userCards サブコレクションから全カードを取得
-                cards_start = time.time()
-                cards_ref = db.collection("users").document(uid).collection("userCards")
-                cards_docs = cards_ref.stream()
-                
-                cards = {}
-                for doc in cards_docs:
-                    cards[doc.id] = doc.to_dict()
-                
-                # 学習ログを統合してSM2パラメータを復元（必要な場合のみ）
-                if should_integrate_logs(uid):
-                    cards = integrate_learning_logs_into_cards(cards, uid)
-                
-                cards_time = time.time() - cards_start
-                
-                # 初期化: セッション状態の結果を格納する辞書
-                session_queues = {
-                    "main_queue": user_data.get("main_queue", []),
-                    "short_term_review_queue": user_data.get("short_term_review_queue", []),
-                    "current_q_group": user_data.get("current_q_group", [])
-                }
-                
-                # 段階3: /users/{uid}/sessionState から演習セッション状態を取得
-                session_start = time.time()
-                session_ref = db.collection("users").document(uid).collection("sessionState").document("current")
-                session_doc = session_ref.get(timeout=5)
-                
-                if session_doc.exists:
-                    session_data = session_doc.to_dict()
-                    
-                    # --- Firestore対応：JSON文字列を元のリスト形式に復元 ---
-                    def deserialize_queue(queue):
-                        # 各要素（JSON文字列）を元のリストに変換する
-                        deserialized = []
-                        for item in queue:
-                            try:
-                                # 文字列であればJSONとしてロード
-                                if isinstance(item, str):
-                                    deserialized.append(json.loads(item))
-                                # 既にリスト形式ならそのまま追加（後方互換性）
-                                elif isinstance(item, list):
-                                    deserialized.append(item)
-                            except (json.JSONDecodeError, TypeError):
-                                # 変換に失敗したデータはスキップ
-                                continue
-                        return deserialized
-                    
-                    # セッション状態があれば優先して使用
-                    if session_data.get("current_q_group") or session_data.get("main_queue"):
-                        session_queues["current_q_group"] = deserialize_queue(session_data.get("current_q_group", []))
-                        session_queues["main_queue"] = deserialize_queue(session_data.get("main_queue", []))
-                        # short_term_review_queueは構造が異なるので、そのまま
-                        session_queues["short_term_review_queue"] = session_data.get("short_term_review_queue", [])
-                        print(f"[DEBUG] セッション状態復元成功: current_q_group={len(session_queues['current_q_group'])}, main_queue={len(session_queues['main_queue'])}")
-                    else:
-                        print(f"[DEBUG] セッション状態は空のため復元スキップ")
-                else:
-                    print(f"[DEBUG] セッション状態データなし")
-                
-                session_time = time.time() - session_start
-                
-                result = {
-                    "cards": cards,
-                    "main_queue": session_queues["main_queue"],
-                    "short_term_review_queue": session_queues["short_term_review_queue"],
-                    "current_q_group": session_queues["current_q_group"],
-                    "new_cards_per_day": user_data.get("settings", {}).get("new_cards_per_day", 10),
-                }
-                
-                total_time = time.time() - start
-                print(f"[DEBUG] load_user_data_full - 成功: プロフィール {profile_time:.3f}s, カード {cards_time:.3f}s, セッション {session_time:.3f}s, 合計 {total_time:.3f}s, カード数: {len(cards)}")
-                return result
-                
-            except Exception as e:
-                print(f"[ERROR] load_user_data_full エラー: {e}")
-    
-    print(f"[DEBUG] load_user_data_full - デフォルト: {time.time() - start:.3f}s")
-    return {"cards": {}, "main_queue": [], "short_term_review_queue": [], "current_q_group": [], "new_cards_per_day": 10}
-
-def load_user_data(user_id):
-    """後方互換性のため - 軽量版を呼び出す"""
-    return load_user_data_minimal(user_id)
-
-def should_integrate_logs(uid):
-    """
-    学習ログ統合が必要かどうかをチェックする
-    """
-    try:
-        db = get_db()
-        if not db:
-            return False
-        
-        user_ref = db.collection("users").document(uid)
-        user_doc = user_ref.get()
-        user_data = user_doc.to_dict() if user_doc.exists else {}
-        
-        # 統合済みフラグをチェック
-        logs_integrated = user_data.get("logs_integrated", False)
-        if logs_integrated:
-            print(f"[INFO] UID {uid}: 学習ログ統合済みのためスキップ")
-            return False
-        else:
-            print(f"[INFO] UID {uid}: 学習ログ統合が必要")
-            return True
-    except Exception as e:
-        print(f"[WARNING] 統合済みフラグチェックエラー: {e}")
-        return False  # エラーの場合は安全のため統合しない
-
-def safe_integration_with_backup(cards, uid):
-    """
-    バックアップ機能付きの安全な学習ログ統合
-    """
-    if not uid:
-        return cards
-    
-    try:
-        db = get_db()
-        if not db:
-            return cards
-        
-        # 統合済みフラグをチェック
-        user_ref = db.collection("users").document(uid)
-        user_doc = user_ref.get()
-        user_data = user_doc.to_dict() if user_doc.exists else {}
-        
-        # 既に統合済みの場合はスキップ
-        if user_data.get("logs_integrated", False):
-            print(f"[INFO] UID {uid}: 学習ログ統合済みのためスキップ")
-            return cards
-        
-        print(f"[INFO] UID {uid}: 安全な学習ログ統合を開始...")
-        
-        # 現在のユーザーのメールアドレスを取得
-        current_email = st.session_state.get("email", "")
-        
-        # メールアドレスが存在する場合、そのメールに関連する全UIDを取得
-        all_uids = [uid]  # 現在のUIDは必ず含める
-        
-        if current_email:
-            try:
-                # users コレクションから同じメールアドレスを持つ全ユーザーを検索
-                users_ref = db.collection("users").where("email", "==", current_email)
-                users_docs = users_ref.get()
-                
-                for user_doc in users_docs:
-                    user_uid = user_doc.id
-                    if user_uid not in all_uids:
-                        all_uids.append(user_uid)
-                        
-                print(f"[INFO] 統合対象UID: {len(all_uids)}個")
-                        
-            except Exception as e:
-                print(f"[WARNING] UID検索エラー: {e}")
-        
-        # 🆕 バックアップの作成
-        backup_data = {}
-        print(f"[INFO] 統合前バックアップを作成中...")
-        
-        # 全UIDの学習ログをバックアップ
-        for search_uid in all_uids:
-            try:
-                backup_data[search_uid] = {
-                    "learningLogs": [],
-                    "userCards": [],
-                    "userData": {}
-                }
-                
-                # learningLogsをバックアップ
-                learning_logs_ref = db.collection("learningLogs").where("userId", "==", search_uid)
-                logs_docs = learning_logs_ref.get()
-                
-                for doc in logs_docs:
-                    log_data = doc.to_dict()
-                    log_data["_doc_id"] = doc.id  # ドキュメントIDも保存
-                    backup_data[search_uid]["learningLogs"].append(log_data)
-                
-                # userCardsをバックアップ
-                cards_ref = db.collection("users").document(search_uid).collection("userCards")
-                cards_docs = cards_ref.stream()
-                
-                for doc in cards_docs:
-                    card_data = doc.to_dict()
-                    card_data["_doc_id"] = doc.id
-                    backup_data[search_uid]["userCards"].append(card_data)
-                
-                # ユーザーデータをバックアップ
-                user_ref = db.collection("users").document(search_uid)
-                user_doc = user_ref.get()
-                if user_doc.exists:
-                    backup_data[search_uid]["userData"] = user_doc.to_dict()
-                
-                print(f"[INFO] UID {search_uid}: learningLogs={len(backup_data[search_uid]['learningLogs'])}, userCards={len(backup_data[search_uid]['userCards'])}")
-                
-            except Exception as e:
-                print(f"[WARNING] UID {search_uid} のバックアップエラー: {e}")
-        
-        # バックアップをFirestoreに保存
-        try:
-            backup_ref = db.collection("integration_backups").document(f"{uid}_{int(time.time())}")
-            backup_ref.set({
-                "uid": uid,
-                "email": current_email,
-                "backup_timestamp": datetime.datetime.utcnow().isoformat(),
-                "data": backup_data
-            })
-            print(f"[SUCCESS] バックアップ保存完了: {backup_ref.id}")
-        except Exception as e:
-            print(f"[ERROR] バックアップ保存失敗: {e}")
-            # バックアップに失敗した場合は統合を中止
-            return cards
-        
-        # 🔄 既存の統合プロセスを実行
-        return integrate_learning_logs_into_cards(cards, uid)
-        
-    except Exception as e:
-        print(f"[ERROR] 安全な学習ログ統合エラー: {e}")
-        import traceback
-        traceback.print_exc()
-        return cards
-
-def integrate_learning_logs_into_cards(cards, uid):
-    """
-    学習ログをカードデータに統合してSM2パラメータを復元する
-    一度統合したら古いlearningLogsは削除して重複を防ぐ
-    """
-    if not uid:
-        return cards
-    
-    try:
-        db = get_db()
-        if not db:
-            return cards
-        
-        # 統合済みフラグをチェック
-        user_ref = db.collection("users").document(uid)
-        user_doc = user_ref.get()
-        user_data = user_doc.to_dict() if user_doc.exists else {}
-        
-        # 既に統合済みの場合はスキップ
-        if user_data.get("logs_integrated", False):
-            print(f"[INFO] UID {uid}: 学習ログ統合済みのためスキップ")
-            return cards
-        
-        print(f"[INFO] UID {uid}: 学習ログ統合を開始...")
-        
-        # 現在のユーザーのメールアドレスを取得
-        current_email = st.session_state.get("email", "")
-        
-        # メールアドレスが存在する場合、そのメールに関連する全UIDを取得
-        all_uids = [uid]  # 現在のUIDは必ず含める
-        
-        if current_email:
-            try:
-                # users コレクションから同じメールアドレスを持つ全ユーザーを検索
-                users_ref = db.collection("users").where("email", "==", current_email)
-                users_docs = users_ref.get()
-                
-                for user_doc in users_docs:
-                    user_uid = user_doc.id
-                    if user_uid not in all_uids:
-                        all_uids.append(user_uid)
-                        
-                print(f"[INFO] 統合対象UID: {len(all_uids)}個")
-                        
-            except Exception as e:
-                print(f"[WARNING] UID検索エラー: {e}")
-        
-        # 全UIDの学習ログを取得
-        all_learning_logs = {}
-        total_logs = 0
-        logs_to_delete = []  # 削除対象のログドキュメント
-        
-        for search_uid in all_uids:
-            try:
-                learning_logs_ref = db.collection("learningLogs").where("userId", "==", search_uid)
-                logs_docs = learning_logs_ref.get()
-                
-                uid_log_count = 0
-                for doc in logs_docs:
-                    log_data = doc.to_dict()
-                    question_id = log_data.get("questionId", "")
-                    if question_id:
-                        if question_id not in all_learning_logs:
-                            all_learning_logs[question_id] = []
-                        all_learning_logs[question_id].append(log_data)
-                        logs_to_delete.append(doc.reference)  # 削除対象に追加
-                        uid_log_count += 1
-                        total_logs += 1
-                    
-            except Exception as e:
-                print(f"[WARNING] UID {search_uid} のログ取得エラー: {e}")
-        
-        print(f"統合対象学習ログ: {total_logs}件, 問題数: {len(all_learning_logs)}問")
-        
-        # 各問題IDの学習ログを時系列でソート
-        for question_id in all_learning_logs:
-            all_learning_logs[question_id].sort(key=lambda x: x.get("timestamp", ""))
-        
-        # カードデータに学習ログを統合
-        updated_cards = 0
-        cards_to_save = {}
-        
-        for q_num in all_learning_logs:
-            # カードが存在しない場合は新規作成
-            if q_num not in cards:
-                cards[q_num] = {
-                    "n": 0,
-                    "EF": 2.5,
-                    "interval": 0,
-                    "due": None,
-                    "history": []
-                }
-            
-            card = cards[q_num]
-            logs = all_learning_logs[q_num]
-            
-            # 学習ログから最新のSM2パラメータを復元
-            if logs:
-                latest_log = logs[-1]  # 最新のログ
-                
-                # SM2パラメータを復元
-                card["n"] = len(logs)  # 学習回数
-                
-                # 最新ログからSM2パラメータを取得、なければ再計算
-                latest_ef = latest_log.get("EF")
-                latest_interval = latest_log.get("interval")
-                
-                if latest_ef is None or latest_interval is None:
-                    # SM2パラメータが記録されていない場合、履歴から再計算
-                    ef = 2.5
-                    interval = 0
-                    n = 0
-                    
-                    for log in logs:
-                        quality = log.get("quality", 0)
-                        # SM2アルゴリズムで再計算
-                        if n == 0:
-                            interval = 1
-                        elif n == 1:
-                            interval = 6
-                        else:
-                            interval = max(1, round(interval * ef))
-                        
-                        ef = ef + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02))
-                        ef = max(1.3, ef)
-                        
-                        n += 1
-                    
-                    card["EF"] = ef
-                    card["interval"] = interval
-                else:
-                    card["EF"] = latest_ef
-                    card["interval"] = latest_interval
-                
-                # dueの計算（最新の学習タイムスタンプ + interval）
-                last_timestamp = latest_log.get("timestamp")
-                if last_timestamp and card["interval"] > 0:
-                    try:
-                        if isinstance(last_timestamp, str):
-                            # ISO形式の文字列をパース
-                            last_dt = datetime.datetime.fromisoformat(last_timestamp.replace('Z', '+00:00'))
-                        else:
-                            last_dt = last_timestamp
-                        
-                        due_dt = last_dt + datetime.timedelta(days=card["interval"])
-                        due_iso = due_dt.isoformat()
-                        card["due"] = due_iso
-                        card["next_review"] = due_iso  # 復習カード計算との互換性のため追加
-                    except Exception:
-                        card["due"] = None
-                        card["next_review"] = None
-                else:
-                    card["due"] = None
-                    card["next_review"] = None
-                
-                # historyの構築
-                card["history"] = []
-                for log in logs:
-                    if "quality" in log and "timestamp" in log:
-                        card["history"].append({
-                            "quality": log["quality"],
-                            "timestamp": log["timestamp"]
-                        })
-                
-                # 統合後のカードを保存対象に追加
-                cards_to_save[q_num] = card
-                updated_cards += 1
-        
-        if updated_cards > 0:
-            print(f"学習ログ統合完了: {len(all_learning_logs)}問題の履歴を統合")
-            print(f"  - 更新されたカード数: {updated_cards}")
-            
-            try:
-                # バッチでカードデータを保存
-                batch = db.batch()
-                user_cards_ref = db.collection("users").document(uid).collection("userCards")
-                
-                for question_id, card_data in cards_to_save.items():
-                    card_ref = user_cards_ref.document(question_id)
-                    batch.set(card_ref, card_data, merge=True)
-                
-                # 統合済みフラグを設定
-                batch.update(user_ref, {
-                    "logs_integrated": True,
-                    "logs_integrated_at": datetime.datetime.utcnow().isoformat()
-                })
-                
-                batch.commit()
-                print(f"[SUCCESS] カードデータの保存完了")
-                
-                # 古いlearningLogsを削除（正規化）
-                delete_count = 0
-                batch_delete = db.batch()
-                for i, log_ref in enumerate(logs_to_delete):
-                    batch_delete.delete(log_ref)
-                    delete_count += 1
-                    
-                    # バッチサイズ制限（500件）に対応
-                    if (i + 1) % 500 == 0:
-                        batch_delete.commit()
-                        batch_delete = db.batch()
-                
-                # 残りのログを削除
-                if delete_count % 500 != 0:
-                    batch_delete.commit()
-                
-                print(f"[SUCCESS] 古いlearningLogsを削除: {delete_count}件")
-                print(f"[INFO] UID {uid}: 学習ログ統合・正規化完了")
-                
-            except Exception as e:
-                print(f"[ERROR] データ保存・削除エラー: {e}")
-        
-        return cards
-        
-    except Exception as e:
-        print(f"[ERROR] 学習ログ統合エラー: {e}")
-        import traceback
-        traceback.print_exc()
-        return cards
-
-def detailed_remaining_data_analysis(uid):
-    """
-    残存データの詳細分析で統合問題を特定
-    """
-    try:
-        db = get_db()
-        if not db:
-            return "データベース接続エラー"
-        
-        analysis_log = ["🔍 残存データの詳細分析..."]
-        
-        # 1. 残存カードの詳細情報
-        cards_ref = db.collection("users").document(uid).collection("userCards")
-        cards_docs = list(cards_ref.stream())
-        
-        cards_with_history = []
-        cards_without_history = []
-        
-        for doc in cards_docs:
-            card_data = doc.to_dict()
-            if card_data.get("history"):
-                cards_with_history.append({
-                    "id": doc.id,
-                    "history": card_data["history"],
-                    "n": card_data.get("n", 0),
-                    "EF": card_data.get("EF", 2.5),
-                    "interval": card_data.get("interval", 0)
-                })
-            else:
-                cards_without_history.append({
-                    "id": doc.id,
-                    "has_quality": "quality" in card_data,
-                    "quality": card_data.get("quality"),
-                    "n": card_data.get("n", 0)
-                })
-        
-        analysis_log.append(f"\n📊 残存データ詳細:")
-        analysis_log.append(f"- history有り: {len(cards_with_history)}枚")
-        analysis_log.append(f"- history無し: {len(cards_without_history)}枚")
-        
-        # 2. history有りカードの詳細
-        if cards_with_history:
-            analysis_log.append(f"\n✅ history有りカード詳細:")
-            for card in cards_with_history[:10]:  # 最大10件
-                history_count = len(card["history"])
-                first_date = card["history"][0].get("timestamp", "不明")[:10] if card["history"] else "不明"
-                last_date = card["history"][-1].get("timestamp", "不明")[:10] if card["history"] else "不明"
-                analysis_log.append(f"  {card['id']}: {history_count}回 ({first_date} → {last_date})")
-        
-        # 3. 統合ログの確認
-        user_ref = db.collection("users").document(uid)
-        user_doc = user_ref.get()
-        user_data = user_doc.to_dict() if user_doc.exists else {}
-        
-        logs_integrated = user_data.get("logs_integrated", False)
-        logs_integrated_at = user_data.get("logs_integrated_at", "未設定")
-        
-        analysis_log.append(f"\n🔄 統合プロセス情報:")
-        analysis_log.append(f"- 統合完了フラグ: {logs_integrated}")
-        analysis_log.append(f"- 統合日時: {logs_integrated_at}")
-        
-        # 4. 可能な復旧方法の提案
-        analysis_log.append(f"\n💡 可能な対策:")
-        analysis_log.append(f"1. Firestore管理コンソールでバックアップ確認")
-        analysis_log.append(f"2. 統合プロセスのバグ修正後、手動でログ再生成")
-        analysis_log.append(f"3. 残存データから学習パターンを推定して部分復旧")
-        
-        # 5. 緊急停止フラグの設定提案
-        analysis_log.append(f"\n⚠️ 推奨アクション:")
-        analysis_log.append(f"- 他ユーザーの統合プロセスを緊急停止")
-        analysis_log.append(f"- 統合アルゴリズムの修正")
-        analysis_log.append(f"- バックアップ復旧の検討")
-        
-        return "\n".join(analysis_log)
-        
-    except Exception as e:
-        return f"分析エラー: {e}"
-
-def restore_from_backup(uid):
-    """
-    バックアップから学習データを復旧
-    """
-    try:
-        db = get_db()
-        if not db:
-            return "データベース接続エラー"
-        
-        # バックアップを検索
-        backups_ref = db.collection("integration_backups").where("uid", "==", uid)
-        backup_docs = list(backups_ref.stream())
-        
-        if not backup_docs:
-            return "❌ バックアップが見つかりませんでした"
-        
-        # 最新のバックアップを選択
-        latest_backup = max(backup_docs, key=lambda x: x.to_dict().get("backup_timestamp", ""))
-        backup_data = latest_backup.to_dict()
-        
-        restore_log = [f"🔄 バックアップからの復旧を開始..."]
-        restore_log.append(f"バックアップID: {latest_backup.id}")
-        restore_log.append(f"バックアップ日時: {backup_data.get('backup_timestamp', '不明')}")
-        
-        # 復旧処理（実際の復旧は危険なため、情報表示のみ）
-        backup_uids = backup_data.get("data", {})
-        restore_log.append(f"\n📊 バックアップ内容:")
-        
-        total_logs = 0
-        total_cards = 0
-        
-        for backup_uid, uid_data in backup_uids.items():
-            logs_count = len(uid_data.get("learningLogs", []))
-            cards_count = len(uid_data.get("userCards", []))
-            total_logs += logs_count
-            total_cards += cards_count
-            
-            restore_log.append(f"  UID {backup_uid}:")
-            restore_log.append(f"    learningLogs: {logs_count}件")
-            restore_log.append(f"    userCards: {cards_count}件")
-        
-        restore_log.append(f"\n📈 復旧可能データ:")
-        restore_log.append(f"- 総learningLogs: {total_logs}件")
-        restore_log.append(f"- 総userCards: {total_cards}件")
-        
-        restore_log.append(f"\n⚠️ 重要:")
-        restore_log.append(f"実際の復旧は手動で慎重に行う必要があります")
-        restore_log.append(f"現在のデータ(250枚)は既に正常に統合済みです")
-        
-        return "\n".join(restore_log)
-        
-    except Exception as e:
-        return f"復旧チェックエラー: {e}"
-
-def analyze_integration_process(uid):
-    """
-    統合プロセスの詳細分析
-    """
-    try:
-        db = get_db()
-        if not db:
-            return "データベース接続エラー"
-        
-        analysis_log = ["🔄 統合プロセス分析..."]
-        
-        # 1. 現在のユーザーデータ確認
-        user_ref = db.collection("users").document(uid)
-        user_doc = user_ref.get()
-        user_data = user_doc.to_dict() if user_doc.exists else {}
-        
-        analysis_log.append(f"現在のUID: {uid}")
-        analysis_log.append(f"統合済みフラグ: {user_data.get('logs_integrated', False)}")
-        analysis_log.append(f"統合日時: {user_data.get('logs_integrated_at', '未設定')}")
-        analysis_log.append(f"Email: {user_data.get('email', '未設定')}")
-        analysis_log.append(f"作成日時: {user_data.get('created_at', '未設定')}")
-        
-        # 2. 統合されたカードの詳細分析
-        cards_ref = db.collection("users").document(uid).collection("userCards")
-        cards_docs = list(cards_ref.stream())
-        
-        history_by_date = {}
-        earliest_record = None
-        latest_record = None
-        
-        for card_doc in cards_docs:
-            card_data = card_doc.to_dict()
-            history = card_data.get("history", [])
-            
-            for record in history:
-                timestamp = record.get("timestamp", "")
-                if timestamp:
-                    date = timestamp[:10]  # YYYY-MM-DD
-                    if date not in history_by_date:
-                        history_by_date[date] = 0
-                    history_by_date[date] += 1
-                    
-                    # 最古・最新記録の追跡
-                    if not earliest_record or timestamp < earliest_record:
-                        earliest_record = timestamp
-                    if not latest_record or timestamp > latest_record:
-                        latest_record = timestamp
-        
-        analysis_log.append(f"\n📅 演習記録の時系列分析:")
-        analysis_log.append(f"- 最古の記録: {earliest_record}")
-        analysis_log.append(f"- 最新の記録: {latest_record}")
-        analysis_log.append(f"- 記録のある日数: {len(history_by_date)}日")
-        
-        # 日別の記録数（上位10日）
-        sorted_dates = sorted(history_by_date.items(), key=lambda x: x[1], reverse=True)
-        analysis_log.append(f"\n📊 日別演習回数（上位10日）:")
-        for date, count in sorted_dates[:10]:
-            analysis_log.append(f"  {date}: {count}回")
-        
-        # 3. 統合前の推定UID数
-        # historyのタイムスタンプパターンから元のUID数を推定
-        timestamp_patterns = set()
-        for card_doc in cards_docs[:50]:  # サンプルとして50件
-            card_data = card_doc.to_dict()
-            history = card_data.get("history", [])
-            for record in history:
-                timestamp = record.get("timestamp", "")
-                if timestamp:
-                    # タイムスタンプの秒・ミリ秒部分でパターン分析
-                    pattern = timestamp[-10:]  # 秒以下の部分
-                    timestamp_patterns.add(pattern)
-        
-        analysis_log.append(f"\n🔢 推定情報:")
-        analysis_log.append(f"- タイムスタンプパターン数: {len(timestamp_patterns)}")
-        analysis_log.append(f"- 推定元UID数: 不明（要詳細調査）")
-        
-        # 4. 異常な記録の確認
-        suspicious_records = []
-        for card_doc in cards_docs[:20]:
-            card_data = card_doc.to_dict()
-            history = card_data.get("history", [])
-            
-            if len(history) > 5:  # 5回以上の記録
-                suspicious_records.append({
-                    "card": card_doc.id,
-                    "count": len(history),
-                    "dates": [h.get("timestamp", "")[:10] for h in history]
-                })
-        
-        if suspicious_records:
-            analysis_log.append(f"\n🕵️ 多回数演習カード:")
-            for record in suspicious_records[:5]:
-                analysis_log.append(f"  {record['card']}: {record['count']}回")
-        
-        return "\n".join(analysis_log)
-        
-    except Exception as e:
-        return f"統合プロセス分析エラー: {e}"
-
-def comprehensive_uid_investigation(current_uid, current_email):
-    """
-    包括的UID調査：関連するすべてのデータを徹底的に調査
-    """
-    try:
-        db = get_db()
-        if not db:
-            return "データベース接続エラー"
-        
-        investigation_log = ["🔍 包括的UID調査を開始..."]
-        investigation_log.append(f"現在のUID: {current_uid}")
-        investigation_log.append(f"現在のEmail: {current_email}")
-        
-        # 1. users コレクション全体の調査
-        investigation_log.append(f"\n📁 usersコレクション調査:")
-        users_ref = db.collection("users")
-        all_users = list(users_ref.stream())
-        
-        email_matches = []
-        for user_doc in all_users:
-            user_data = user_doc.to_dict()
-            user_email = user_data.get("email", "")
-            if user_email == current_email:
-                email_matches.append({
-                    "uid": user_doc.id,
-                    "email": user_email,
-                    "created": user_data.get("created_at", "不明"),
-                    "logs_integrated": user_data.get("logs_integrated", False),
-                    "logs_integrated_at": user_data.get("logs_integrated_at", "未設定")
-                })
-        
-        investigation_log.append(f"- 総ユーザー数: {len(all_users)}")
-        investigation_log.append(f"- {current_email}のUID数: {len(email_matches)}")
-        
-        for match in email_matches:
-            investigation_log.append(f"  UID: {match['uid']}")
-            investigation_log.append(f"    作成日: {match['created']}")
-            investigation_log.append(f"    統合済み: {match['logs_integrated']}")
-            investigation_log.append(f"    統合日時: {match['logs_integrated_at']}")
-        
-        # 2. learningLogs コレクション全体の調査
-        investigation_log.append(f"\n📊 learningLogsコレクション調査:")
-        logs_ref = db.collection("learningLogs")
-        
-        # 現在のUIDのログ
-        current_logs = list(logs_ref.where("userId", "==", current_uid).stream())
-        investigation_log.append(f"- 現在のUID({current_uid})のログ: {len(current_logs)}件")
-        
-        # 全体のログ数確認（大きすぎる場合はサンプルのみ）
-        try:
-            # まず最初の100件を取得してサンプル調査
-            sample_logs = list(logs_ref.limit(100).stream())
-            investigation_log.append(f"- learningLogsサンプル: {len(sample_logs)}件")
-            
-            # サンプルからuserIdの種類を確認
-            sample_uids = set()
-            for log_doc in sample_logs:
-                log_data = log_doc.to_dict()
-                user_id = log_data.get("userId", "")
-                if user_id:
-                    sample_uids.add(user_id)
-            
-            investigation_log.append(f"- サンプル中のUID種類: {len(sample_uids)}個")
-            
-            # 各UIDでemail検索
-            email_related_logs = {}
-            for uid in sample_uids:
-                try:
-                    user_ref = db.collection("users").document(uid)
-                    user_doc = user_ref.get()
-                    if user_doc.exists:
-                        user_data = user_doc.to_dict()
-                        if user_data.get("email") == current_email:
-                            uid_logs = list(logs_ref.where("userId", "==", uid).stream())
-                            email_related_logs[uid] = len(uid_logs)
-                except:
-                    continue
-            
-            if email_related_logs:
-                investigation_log.append(f"\n🎯 {current_email}関連のlearningLogs:")
-                for uid, count in email_related_logs.items():
-                    investigation_log.append(f"  UID {uid}: {count}件")
-            else:
-                investigation_log.append(f"\n❌ {current_email}関連のlearningLogsなし")
-                
-        except Exception as e:
-            investigation_log.append(f"learningLogs調査エラー: {e}")
-        
-        # 3. 統合前の痕跡を探す
-        investigation_log.append(f"\n🕵️ 統合前の痕跡調査:")
-        
-        # 統合されたUIDのuserCardsを詳細調査
-        for match in email_matches:
-            uid = match["uid"]
-            cards_ref = db.collection("users").document(uid).collection("userCards")
-            cards_with_history = 0
-            total_cards = 0
-            
-            try:
-                cards_docs = list(cards_ref.stream())
-                total_cards = len(cards_docs)
-                
-                for card_doc in cards_docs:
-                    card_data = card_doc.to_dict()
-                    if card_data.get("history"):
-                        cards_with_history += 1
-                
-                investigation_log.append(f"  UID {uid}: {cards_with_history}/{total_cards} カードにhistory")
-                
-            except Exception as e:
-                investigation_log.append(f"  UID {uid}: userCards調査エラー - {e}")
-        
-        # 4. 推定される状況
-        investigation_log.append(f"\n💭 推定される状況:")
-        if len(email_matches) == 1:
-            investigation_log.append("- 他のUIDが削除されている可能性")
-            investigation_log.append("- 統合プロセスでUIDが統合された可能性")
-        else:
-            investigation_log.append("- 複数UIDが存在するがデータが分散")
-        
-        investigation_log.append(f"\n🔄 次のアクション提案:")
-        investigation_log.append("1. Firestore管理コンソールでの手動確認")
-        investigation_log.append("2. deleted_usersコレクション等の確認")
-        investigation_log.append("3. 統合ログの詳細確認")
-        
-        return "\n".join(investigation_log)
-        
-    except Exception as e:
-        return f"包括的調査エラー: {e}"
-
-def attempt_data_recovery(uid):
-    """
-    データ復旧を試行する
-    """
-    try:
-        db = get_db()
-        if not db:
-            return "データベース接続エラー"
-        
-        recovery_log = ["🔄 データ復旧を開始..."]
-        
-        # 1. 同じメールアドレスの他のUIDから残存データを収集
-        current_email = st.session_state.get("email", "")
-        if not current_email:
-            return "メールアドレス情報がありません"
-        
-        # 2. 他のUIDを検索
-        users_ref = db.collection("users").where("email", "==", current_email)
-        users_docs = users_ref.get()
-        
-        other_uids = []
-        for user_doc in users_docs:
-            if user_doc.id != uid:
-                other_uids.append(user_doc.id)
-        
-        recovery_log.append(f"📧 {current_email} に関連するUID: {len(other_uids) + 1}個")
-        
-        # 3. 他のUIDのlearningLogsとuserCardsを確認
-        recovered_logs = {}
-        recovered_cards = {}
-        
-        for other_uid in other_uids:
-            # learningLogsをチェック
-            logs_ref = db.collection("learningLogs").where("userId", "==", other_uid)
-            logs_docs = logs_ref.get()
-            
-            for doc in logs_docs:
-                log_data = doc.to_dict()
-                question_id = log_data.get("questionId", "")
-                if question_id:
-                    if question_id not in recovered_logs:
-                        recovered_logs[question_id] = []
-                    recovered_logs[question_id].append(log_data)
-            
-            # userCardsもチェック
-            cards_ref = db.collection("users").document(other_uid).collection("userCards")
-            cards_docs = cards_ref.stream()
-            
-            for doc in cards_docs:
-                card_data = doc.to_dict()
-                if card_data.get("history"):  # historyがあるカードのみ
-                    recovered_cards[doc.id] = card_data
-            
-            recovery_log.append(f"UID {other_uid}: learningLogs={len(logs_docs)}, userCards={len(list(cards_docs))}")
-        
-        # 4. 復旧可能性の評価
-        total_recoverable_logs = sum(len(logs) for logs in recovered_logs.values())
-        total_recoverable_cards = len(recovered_cards)
-        
-        recovery_log.append(f"\n📊 復旧可能データ:")
-        recovery_log.append(f"- 学習ログ: {total_recoverable_logs}件")
-        recovery_log.append(f"- カード: {total_recoverable_cards}枚")
-        
-        if total_recoverable_logs > 0 or total_recoverable_cards > 0:
-            recovery_log.append(f"\n✅ データ復旧の可能性があります！")
-            # 実際の復旧処理はここに実装する
-        else:
-            recovery_log.append(f"\n❌ 復旧可能なデータが見つかりませんでした")
-        
-        return "\n".join(recovery_log)
-        
-    except Exception as e:
-        return f"復旧チェックエラー: {e}"
-
-def emergency_data_check(uid):
-    """
-    緊急データチェック: Firestoreの実際の状態を確認
-    """
-    try:
-        db = get_db()
-        if not db:
-            return "データベース接続エラー"
-        
-        # 1. userCardsコレクションの確認
-        cards_ref = db.collection("users").document(uid).collection("userCards")
-        cards_docs = list(cards_ref.stream())
-        
-        cards_with_history = 0
-        total_history_entries = 0
-        sample_history = []
-        
-        for doc in cards_docs[:10]:  # 最初の10件をサンプル
-            card_data = doc.to_dict()
-            history = card_data.get("history", [])
-            if history:
-                cards_with_history += 1
-                total_history_entries += len(history)
-                if len(sample_history) < 3:  # 3件のサンプルを収集
-                    sample_history.append({
-                        "card_id": doc.id,
-                        "history_count": len(history),
-                        "sample": history[-1] if history else None  # 最新の履歴
-                    })
-        
-        # 2. 元のlearningLogsが本当に削除されているかチェック
-        learning_logs_ref = db.collection("learningLogs").where("userId", "==", uid)
-        logs_docs = list(learning_logs_ref.stream())
-        
-        # 3. 同じメールアドレスの他のUIDをチェック
-        current_email = st.session_state.get("email", "")
-        other_uids = []
-        if current_email:
-            users_ref = db.collection("users").where("email", "==", current_email)
-            users_docs = users_ref.get()
-            for user_doc in users_docs:
-                if user_doc.id != uid:
-                    other_uids.append(user_doc.id)
-        
-        # 4. 他のUIDのlearningLogsをチェック
-        other_logs_count = 0
-        for other_uid in other_uids:
-            other_logs_ref = db.collection("learningLogs").where("userId", "==", other_uid)
-            other_logs_count += len(list(other_logs_ref.stream()))
-        
-        result = f"""
-🚨 緊急データチェック結果:
-
-【現在のUID: {uid}】
-- userCards総数: {len(cards_docs)}
-- history有りカード数: {cards_with_history}
-- 総history記録数: {total_history_entries}
-- 残存learningLogs: {len(logs_docs)}
-
-【他のUID ({len(other_uids)}個)】
-- 他のUIDのlearningLogs残数: {other_logs_count}
-
-【サンプルhistory】
-"""
-        for sample in sample_history:
-            result += f"- カード{sample['card_id']}: {sample['history_count']}回 最新={sample['sample']}\n"
-        
-        return result
-        
-    except Exception as e:
-        return f"エラー: {e}"
-
-# --- Google Analytics連携 ---
-def log_to_ga(event_name: str, user_id: str, params: dict):
-    """
-    Measurement Protocolを使ってサーバーからGA4にイベントを送信する関数
-    """
-    # st.secretsを使って安全にIDとシークレットを取得
-    api_secret = st.secrets.get("ga_api_secret")
-    measurement_id = st.secrets.get("ga_measurement_id")
-
-    # Secretsが設定されていない場合は何もしない
-    if not api_secret or not measurement_id:
-        print("[Analytics] Secrets not found. Skipping event log.")
-        return
-
-    payload = {
-        "client_id": user_id, # ユーザーを一意に識別するID（uidが最適）
-        "non_personalized_ads": False, # デバッグ時にはこれがあると良い
-        "events": [{
-            "name": event_name,
-            "params": {
-                **params, # 元のパラメータを展開
-                "debug_mode": True # ★ DebugViewでリアルタイム確認用
-            }
-        }]
-    }
-    
-    try:
-        requests.post(
-            f"https://www.google-analytics.com/mp/collect?measurement_id={measurement_id}&api_secret={api_secret}",
-            data=json.dumps(payload),
-            headers={"Content-Type": "application/json"}
-        )
-        print(f"[Analytics] Logged event '{event_name}' for user {user_id}")
-    except Exception as e:
-        print(f"[ERROR] Failed to log GA event: {e}")
-
-def save_user_data(user_id, question_id=None, updated_card_data=None, session_state=None):
-    """
-    リファクタリング済み：Firestoreの読み取り/書き込み回数を最小化した保存関数
-    - 単一カードの更新のみサポート（一括更新廃止）
-    - learningLogsコレクションへの書き込み廃止
-    """
-    try:
-        if not ensure_valid_session():
-            return
-
-        db = get_db()
-        if not db or not user_id:
-            return
-        
-        # 1. 単一カードデータの更新（解答時のみ）
-        if question_id and updated_card_data:
-            user_cards_ref = db.collection("users").document(user_id).collection("userCards")
-            card_ref = user_cards_ref.document(question_id)
-            card_ref.set(updated_card_data, merge=True)
-            print(f"[DEBUG] save_user_data - カード更新: {question_id}")
-        
-        # 2. セッション状態保存（学習キューの保存）
-        if session_state:
-            # --- Firestore対応：ネストした配列をJSON文字列に変換 ---
-            def serialize_queue(queue):
-                # 各グループ（リスト）をJSON文字列に変換する
-                return [json.dumps(group) for group in queue]
-
-            session_data = {
-                "current_q_group": serialize_queue(session_state.get("current_q_group", [])),
-                "main_queue": serialize_queue(session_state.get("main_queue", [])),
-                "short_term_review_queue": session_state.get("short_term_review_queue", []), # これは既に文字列にできる形式のはず
-                "result_log": session_state.get("result_log", {}),
-                "last_updated": datetime.datetime.utcnow().isoformat()
-            }
-            
-            # 演習セッション状態の保存
-            if session_data["current_q_group"] or session_data["main_queue"]:
-                try:
-                    session_ref = db.collection("users").document(user_id).collection("sessionState").document("current")
-                    session_ref.set(session_data, merge=True)
-                    print(f"[DEBUG] save_user_data - セッション状態保存: current_q_group={len(session_data['current_q_group'])}, main_queue={len(session_data['main_queue'])}")
-                except Exception as e:
-                    print(f"[ERROR] セッション状態保存失敗: {e}")
-            
-            # 3. 設定の更新（設定変更時のみ）
-            settings_changed = session_state.get("settings_changed", False)
-            if settings_changed:
-                user_ref = db.collection("users").document(user_id)
-                settings_update = {
-                    "settings": {
-                        "new_cards_per_day": session_state.get("new_cards_per_day", 10)
-                    },
-                    "lastUpdated": datetime.datetime.utcnow().isoformat()
-                }
-                user_ref.update(settings_update)
-                session_state["settings_changed"] = False
-                print(f"[DEBUG] save_user_data - 設定更新完了")
-            
-    except Exception as e:
-        print(f"[ERROR] save_user_data エラー: {e}")
-        # エラーが発生してもアプリケーションを停止させない
-
-# ユーザー権限チェック（キャッシュを復活）
-@st.cache_data(ttl=300)  # 5分間キャッシュ
-def check_gakushi_permission(user_id):
-    """
-    Firestoreのuser_permissionsコレクションから権限を判定。
-    can_access_gakushi: trueならTrue, それ以外はFalse
-    新しいFirestore構造対応版
-    """
-    db = get_db()
-    if not db:
-        return False
-    
-    uid = st.session_state.get("uid")
-    if not uid:
-        return False
-    
-    try:
-        # /user_permissions/{uid} から権限情報を取得
-        doc_ref = db.collection("user_permissions").document(uid)
-        doc = doc_ref.get()
-        if doc.exists:
-            data = doc.to_dict()
-            result = bool(data.get("can_access_gakushi", False))
-            print(f"[DEBUG] 学士権限チェック(UID): {result}")
-            return result
-        else:
-            print(f"[DEBUG] 学士権限なし: {uid}")
-            return False
-    except Exception as e:
-        print(f"[ERROR] 学士権限チェックエラー: {e}")
-        return False
-
-def _subject_of(q):
-    return (q.get("subject") or "未分類").strip()
-
-def _make_subject_index(all_questions):
-    qid_to_subject, subj_to_qids = {}, {}
-    for q in all_questions:
-        qid = q.get("number")
-        if not qid: continue
-        s = _subject_of(q)
-        qid_to_subject[qid] = s
-        subj_to_qids.setdefault(s, set()).add(qid)
-    return qid_to_subject, subj_to_qids
-
-def _recent_subject_penalty(q_subject, recent_qids, qid_to_subject):
-    if not recent_qids: return 0.0
-    recent_subjects = [qid_to_subject.get(r) for r in recent_qids if r in qid_to_subject]
-    return 0.15 if q_subject in recent_subjects else 0.0
-
-def pick_new_cards_for_today(all_questions, cards, N=10, recent_qids=None):
-    recent_qids = recent_qids or []
-    qid_to_subject, subj_to_qids = _make_subject_index(all_questions)
-
-    # 科目ごとの導入済み枚数
-    introduced_counts = {subj: 0 for subj in subj_to_qids.keys()}
-    for qid, card in cards.items():
-        if qid in qid_to_subject:
-            # n が 0 より大きいか、historyが存在する場合に導入済みとみなす
-            if card.get("n", 0) > 0 or card.get("history"):
-                introduced_counts[qid_to_subject[qid]] += 1
-
-    # 目標は当面「均等配分」
-    target_ratio = {subj: 1/len(subj_to_qids) for subj in subj_to_qids.keys()} if subj_to_qids else {}
-
-    # 全体正答率（subject別が無くても動く簡易版）
-    global_correct = global_total = 0
-    for card in cards.values():
-        for h in card.get("history", []):
-            if isinstance(h, dict) and "quality" in h:
-                global_total += 1
-                if h["quality"] >= 4: global_correct += 1
-    global_mastery = (global_correct / global_total) if global_total else 0.0
-
-    # 候補は未演習のみ
-    seen_qids = set(cards.keys())
-    candidates = []
-    for q in all_questions:
-        qid = q.get("number")
-        if not qid: continue
-        c = cards.get(qid, {})
-        if qid not in seen_qids or (not c.get("history") and c.get("n") in (None, 0)):
-            candidates.append(q)
-
-    def score_of(q):
-        qid = q["number"]; subj = qid_to_subject.get(qid, "未分類")
-        mastery_term = 1.0 - global_mastery
-        subj_pool = len(subj_to_qids.get(subj, [])) or 1
-        introduced_ratio = introduced_counts.get(subj, 0) / subj_pool
-        gap = max(0.0, target_ratio.get(subj, 0.0) - introduced_ratio)
-        difficulty_prior = 0.5
-        penalty = _recent_subject_penalty(subj, recent_qids, qid_to_subject)
-        return 0.6*mastery_term + 0.2*gap + 0.2*difficulty_prior - penalty
-
-    # case_id がある問題は代表1問のみ（兄弟を同時に出さない）
-    case_groups, singles = {}, []
-    for q in candidates:
-        cid = q.get("case_id")
-        (case_groups.setdefault(cid, []).append(q)) if cid else singles.append(q)
-
-    case_reps = [max(qs, key=score_of) for qs in case_groups.values()]
-    pool_sorted = sorted(singles + case_reps, key=score_of, reverse=True)
-    return [q["number"] for q in pool_sorted[:N]]
-
-def list_storage_files(prefix="", max_files=50):
-    """Firebase Storageのファイル一覧を取得してデバッグ用に表示"""
-    try:
-        bucket = get_bucket()  # 統一
-        if bucket is None:
-            return []
-        blobs = bucket.list_blobs(prefix=prefix, max_results=max_files)
-        files = [blob.name for blob in blobs]
-        print(f"[DEBUG] Storage files with prefix '{prefix}': {files[:10]}...")  # 最初の10件のみ表示
-        return files
-    except Exception as e:
-        print(f"[ERROR] Storage file listing error: {e}")
-        return []
-
-def get_secure_image_url(path):
-    """
-    Firebase Storageのパスから15分有効な署名付きURLを生成。
-    http(s) はそのまま返す。gs:// にも対応。
-    """
-    print(f"[DEBUG] 画像URL生成開始: {path}")
-    
-    if isinstance(path, str) and (path.startswith('http://') or path.startswith('https://')):
-        print(f"[DEBUG] HTTPURLをそのまま返却: {path}")
-        return path
-    try:
-        # 既定バケット（initialize_firebaseで正しい appspot.com が設定されている前提）
-        default_bucket = get_bucket()  # 統一
-        if default_bucket is None:
-            print(f"[ERROR] バケット取得失敗")
-            return None
-        blob = None
-
-        if isinstance(path, str) and path.startswith("gs://"):
-            print(f"[DEBUG] gs://形式のパス処理: {path}")
-            # gs://<bucket>/<object> を安全に分解
-            rest = path[5:]
-            if "/" in rest:
-                bname, bpath = rest.split("/", 1)
-            else:
-                bname, bpath = rest, ""
-            print(f"[DEBUG] バケット名: {bname}, ブロブパス: {bpath}")
-            bucket_to_use = storage.bucket(name=bname)
-            blob = bucket_to_use.blob(bpath)
-        else:
-            print(f"[DEBUG] 相対パス処理: {path}")
-            # 相対パスは既定バケット
-            blob = default_bucket.blob(path)
-
-        print(f"[DEBUG] blob作成完了: {blob.name}")
-        
-        # ブロブの存在確認を無効化して、とりあえずURL生成を試す
-        try:
-            # 存在確認をせずにURL生成を試行
-            print(f"[DEBUG] 存在確認をスキップしてURL生成を試行")
-            url = blob.generate_signed_url(
-                expiration=datetime.timedelta(minutes=15),
-                method="GET",
-                version="v4"  # v4署名を明示
-            )
-            print(f"[DEBUG] 署名付きURL生成完了: {url[:100]}...")
-            return url
-        except Exception as url_err:
-            print(f"[ERROR] URL生成エラー: {url_err}")
-            
-            # フォールバック: 異なるパス形式を試行
-            alternative_paths = [
-                path.replace("gakushi/", ""),  # gakushiプレフィックスを削除
-                path.replace("/", "_"),  # スラッシュをアンダースコアに変更
-                f"images/{path}",  # imagesプレフィックスを追加
-                f"dental_images/{path}",  # dental_imagesプレフィックスを追加
-            ]
-            
-            for alt_path in alternative_paths:
-                try:
-                    print(f"[DEBUG] 代替パス試行: {alt_path}")
-                    alt_blob = default_bucket.blob(alt_path)
-                    alt_url = alt_blob.generate_signed_url(
-                        expiration=datetime.timedelta(minutes=15),
-                        method="GET",
-                        version="v4"
-                    )
-                    print(f"[DEBUG] 代替パス成功: {alt_path}")
-                    return alt_url
-                except Exception as alt_err:
-                    print(f"[DEBUG] 代替パス失敗: {alt_path} - {alt_err}")
-                    continue
-            
-            print(f"[ERROR] 全ての代替パスでも失敗")
-            return None
-            
-    except Exception as e:
-        print(f"[ERROR] 画像URL生成エラー for {path}: {e}")
-        import traceback
-        print(f"[ERROR] スタックトレース: {traceback.format_exc()}")
-        return None
-
-def _latex_escape(s: str) -> str:
-    """
-    LaTeX特殊文字をエスケープする関数
-    バックスラッシュを最初に処理して二重エスケープを防ぐ
-    """
-    if not s:
-        return ""
-    # バックスラッシュを最初に処理
-    s = s.replace("\\", r"\textbackslash{}")
-    # 残りの特殊文字
-    for a, b in [
-        ("&", r"\&"), ("%", r"\%"), ("$", r"\$"),
-        ("#", r"\#"), ("_", r"\_"), ("{", r"\{"), ("}", r"\}"),
-        ("^", r"\textasciicircum{}"), ("~", r"\textasciitilde{}"),
-    ]:
-        s = s.replace(a, b)
-    return s
-
-import subprocess, shutil, tempfile
-
-def create_simple_fallback_template(latex_source: str) -> str:
-    """最小限のパッケージでフォールバック版LaTeXテンプレートを作成"""
-    import re
-    
-    # 基本的なヘッダーのみ使用
-    simple_header = r"""\documentclass[dvipdfmx,a4paper,uplatex]{jsarticle}
-\usepackage[utf8]{inputenc}
-\usepackage[dvipdfmx]{hyperref}
-\usepackage{xcolor}
-\usepackage{amsmath,amssymb}
-\usepackage{graphicx}
-\usepackage[top=30truemm,bottom=30truemm,left=25truemm,right=25truemm]{geometry}
-\newcommand{\ctext}[1]{\textcircled{\scriptsize{#1}}}
-\begin{document}
-"""
-    
-    # ボディ部分を抽出（\begin{document}から\end{document}まで）
-    body_match = re.search(r'\\begin\{document\}(.*?)\\end\{document\}', latex_source, re.DOTALL)
-    if body_match:
-        body = body_match.group(1)
-        # tcolorboxやその他の高度な機能を削除
-        body = re.sub(r'\\begin\{tcolorbox\}.*?\\end\{tcolorbox\}', '', body, flags=re.DOTALL)
-        body = re.sub(r'\\tcbset\{.*?\}', '', body)
-        body = re.sub(r'\\tcbuselibrary\{.*?\}', '', body)
-    else:
-        body = "\n\\section{PDF生成エラー}\n最小限のテンプレートで生成しています。\n"
-    
-    return simple_header + body + "\n\\end{document}"
-
-def compile_latex_to_pdf(latex_source: str, assets: dict | None = None):
-    """
-    LaTeX → PDF。画像バイト列(assets)を同一作業ディレクトリへ展開してから
-    uplatex + dvipdfmx 優先でコンパイル。
-    """
-    try:
-        with tempfile.TemporaryDirectory() as tmp:
-            tex_path = os.path.join(tmp, "doc.tex")
-            with open(tex_path, "w", encoding="utf-8") as f:
-                f.write(latex_source)
-
-            # 画像を書き出し
-            if assets:
-                for name, data in assets.items():
-                    with open(os.path.join(tmp, os.path.basename(name)), "wb") as g:
-                        g.write(data)
-
-            def _run(cmd):
-                cp = subprocess.run(cmd, cwd=tmp, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-                return cp.returncode, cp.stdout
-
-            if shutil.which("uplatex") and shutil.which("dvipdfmx"):
-                for i in range(2):
-                    rc, log = _run(["uplatex", "-interaction=nonstopmode", "-halt-on-error", "doc.tex"])
-                    if rc != 0:
-                        # 最初の失敗時に、シンプルなテンプレートで再試行
-                        if i == 0:
-                            print(f"[DEBUG] uplatex failed on first try, attempting with minimal template")
-                            simple_template = create_simple_fallback_template(latex_source)
-                            with open(tex_path, "w", encoding="utf-8") as f:
-                                f.write(simple_template)
-                            continue
-                        return None, f"uplatex failed (pass {i+1}):\n{log}"
-                rc, log = _run(["dvipdfmx", "-o", "doc.pdf", "doc.dvi"])
-                if rc != 0:
-                    return None, f"dvipdfmx failed:\n{log}"
-                pdf_path = os.path.join(tmp, "doc.pdf")
-                if os.path.exists(pdf_path):
-                    with open(pdf_path, "rb") as f:
-                        return f.read(), "uplatex+dvipdfmx ok"
-                return None, "PDF not found"
-
-            if shutil.which("latexmk") and shutil.which("uplatex") and shutil.which("dvipdfmx"):
-                rc, log = _run(["latexmk", "-interaction=nonstopmode", "-pdfdvi", "-latex=uplatex", "doc.tex"])
-                pdf_path = os.path.join(tmp, "doc.pdf")
-                if rc == 0 and os.path.exists(pdf_path):
-                    with open(pdf_path, "rb") as f:
-                        return f.read(), "latexmk ok"
-                return None, f"latexmk failed:\n{log}"
-
-            if shutil.which("tectonic"):
-                rc, log = _run(["tectonic", "-X", "compile", "--keep-intermediates", "--keep-logs", "doc.tex"])
-                pdf_path = os.path.join(tmp, "doc.pdf")
-                if rc == 0 and os.path.exists(pdf_path):
-                    with open(pdf_path, "rb") as f:
-                        return f.read(), "tectonic ok"
-                return None, f"tectonic failed:\n{log}"
-
-            if shutil.which("xelatex"):
-                # XeLaTeX用にテンプレートを変換
-                with open(tex_path, "r", encoding="utf-8") as f:
-                    orig = f.read()
-                xetex_src = rewrite_to_xelatex_template(orig)
-                with open(tex_path, "w", encoding="utf-8") as f:
-                    f.write(xetex_src)
-                
-                for i in range(2):
-                    rc, log = _run(["xelatex", "-interaction=nonstopmode", "-halt-on-error", "doc.tex"])
-                    if rc != 0:
-                        return None, f"xelatex failed (pass {i+1}):\n{log}"
-                pdf_path = os.path.join(tmp, "doc.pdf")
-                if os.path.exists(pdf_path):
-                    with open(pdf_path, "rb") as f:
-                        return f.read(), "xelatex ok"
-                return None, "PDF not found"
-
-            return None, "TeXエンジン未検出（uplatex/dvipdfmx 推奨）"
-    except Exception as e:
-        return None, f"Unexpected error: {e}"
-
-def rewrite_to_xelatex_template(tex_source: str) -> str:
-    """XeLaTeX用にjsarticleをbxjsarticleに変換し、日本語フォント設定を追加"""
-    import re
-    tex = tex_source
-    # uplatexオプション付きのjsarticleをbxjsarticleに変換
-    tex = re.sub(r"\\documentclass\[.*?\]\{jsarticle\}", r"\\documentclass[a4paper]{bxjsarticle}", tex, flags=re.S)
-    tex = tex.replace(r"\usepackage[dvipdfmx]{hyperref}", r"\usepackage{hyperref}")
-    if r"\usepackage{graphicx}" not in tex:
-        tex = tex.replace(r"\begin{document}", r"\usepackage{graphicx}\n\begin{document}")
-    if r"\usepackage{xeCJK}" not in tex:
-        extra = r"""
-\usepackage{xeCJK}
-\setCJKmainfont{Noto Serif CJK JP}
-\setCJKsansfont{Noto Sans CJK JP}
-\setmainfont{Noto Serif}
-"""
-        tex = tex.replace(r"\begin{document}", extra + "\n\\begin{document}")
-    return tex
-
-# --- tcolorbox PDF用ヘルパ ---
-def _answer_mark_for_overlay(answer_str: str) -> str:
-    """'A', 'C', 'A/C' を右下用 'a', 'c', 'a/c' へ正規化"""
-    if not answer_str:
-        return ""
-    raw = answer_str.replace("／", "/")
-    letters = (raw.split("/") if "/" in raw else list(raw.strip()))
-    def _to_alph(ch):
-        return chr(ord('a') + (ord(ch.upper()) - ord('A'))) if ch.isalpha() else ch
-    return "/".join(_to_alph(ch) for ch in letters if ch)
-
-def _image_block_latex(file_list):
-    """1枚 → 0.45幅、2枚 → 0.45×2、3枚以上 → 2列折返し"""
-    if not file_list:
-        return ""
-    if len(file_list) == 1:
-        return rf"\begin{{center}}\includegraphics[width=0.45\textwidth]{{{file_list[0]}}}\end{{center}}"
-    if len(file_list) == 2:
-        a, b = file_list[0], file_list[1]
-        return (r"\begin{center}"
-                rf"\includegraphics[width=0.45\textwidth]{{{a}}}"
-                rf"\includegraphics[width=0.45\textwidth]{{{b}}}"
-                r"\end{center}")
-    out = [r"\begin{center}"]
-    for i, fn in enumerate(file_list):
-        out.append(rf"\includegraphics[width=0.45\textwidth]{{{fn}}}")
-        if i % 2 == 1 and i != len(file_list) - 1:
-            out.append(r"\\[0.5ex]")
-    out.append(r"\end{center}")
-    return "\n".join(out)
-
-def _gather_images_for_questions(questions):
-    """
-    各問題の image_urls / image_paths を署名URL化してダウンロード。
-    戻り値: ( {ファイル名:バイト列}, [[問題ごとのローカル名...], ...] )
-    """
-    import pathlib
-    assets = {}
-    per_q_files = []
-    session = get_http_session()
-
-    for qi, q in enumerate(questions, start=1):
-        files = []
-        candidates = []
-        for k in ("image_urls", "image_paths"):
-            v = q.get(k)
-            if v: candidates.extend(v)
-
-        # URL解決（http/https はそのまま、Storage パスは署名URL）
-        resolved = []
-        for path in candidates:
-            if isinstance(path, str) and (path.startswith("http://") or path.startswith("https://")):
-                resolved.append(path)
-            else:
-                url = get_secure_image_url(path)
-                if url: resolved.append(url)
-
-        # ダウンロード
-        for j, url in enumerate(resolved, start=1):
-            try:
-                r = session.get(url, timeout=10)
-                if r.status_code != 200:
-                    continue
-                # 拡張子推定
-                ext = ".jpg"
-                p = pathlib.Path(url.split("?")[0])
-                if p.suffix.lower() in [".jpg", ".jpeg", ".png", ".pdf"]:
-                    ext = p.suffix.lower()
-                else:
-                    ct = (r.headers.get("Content-Type") or "").lower()
-                    if "png" in ct: ext = ".png"
-                    if "jpeg" in ct or "jpg" in ct: ext = ".jpg"
-                name = f"q{qi:03d}_img{j:02d}{ext}"
-                assets[name] = r.content
-                files.append(name)
-            except Exception:
-                continue
-
-        per_q_files.append(files)
-
-    return assets, per_q_files
-
-def export_questions_to_latex_tcb_jsarticle(questions, right_label_fn=None):
-    """
-    tcolorbox(JS)版のLaTeX生成。高品質レイアウトで問題を出力。
-    right_label_fn: lambda q -> 右上に出す文字列（例: 科目/年度など）。未指定なら '◯◯◯◯◯'
-    title={...} には q['display_title']→q['number'] の優先で入れます。
-    """
-    header = r"""\documentclass[dvipdfmx,a4paper,uplatex]{jsarticle}
-\usepackage[utf8]{inputenc}
-\usepackage[dvipdfmx]{hyperref}
-\hypersetup{colorlinks=true,citecolor=blue,linkcolor=blue}
-\usepackage{xcolor}
-\definecolor{lightgray}{HTML}{F9F9F9}
-\renewcommand{\labelitemi}{・}
-\def\labelitemi{・}
-\usepackage{tikz}
-\usetikzlibrary{calc}
-\IfFileExists{bxtexlogo.sty}{\usepackage{bxtexlogo}}{}
-\IfFileExists{ascmac.sty}{\usepackage{ascmac}}{}
-\IfFileExists{mhchem.sty}{\usepackage[version=3]{mhchem}}{}
-\usepackage{tcolorbox}
-\tcbuselibrary{breakable, skins, theorems}
-\usepackage[top=30truemm,bottom=30truemm,left=25truemm,right=25truemm]{geometry}
-\newcommand{\ctext}[1]{\raise0.2ex\hbox{\textcircled{\scriptsize{#1}}}}
-\renewcommand{\labelenumii}{\theenumii}
-\renewcommand{\theenumii}{\alph{enumi}}
-\IfFileExists{chemfig.sty}{\usepackage{chemfig}}{}
-\IfFileExists{adjustbox.sty}{\usepackage{adjustbox}}{}
-\usepackage{amsmath,amssymb}
-\usepackage{tabularx}
-\usepackage{enumitem}
-\usepackage{graphicx} % 画像
-\begin{document}
-"""
-    body = []
-    for i, q in enumerate(questions, start=1):
-        title_text = _latex_escape(q.get("display_title") or q.get("number") or f"問{i}")
-        question_text = _latex_escape(q.get("question", "") or "")
-        right_label = _latex_escape((right_label_fn(q) if right_label_fn else "◯◯◯◯◯") or "")
-        ans_mark = _answer_mark_for_overlay((q.get("answer") or "").strip())
-
-        box_open = (
-            rf"\begin{{tcolorbox}}"
-            r"[enhanced, colframe=black, colback=white,"
-            rf" title={{{title_text}}}, fonttitle=\bfseries, breakable=true,"
-            r" coltitle=black,"
-            r" attach boxed title to top left={xshift=5mm, yshift=-3mm},"
-            r" boxed title style={colframe=black, colback=white, },"
-            r" top=4mm,"
-            r" overlay={"
-            + (rf"\node[anchor=north east, xshift=-5mm, yshift=3mm, font=\bfseries\Large, fill=white, inner sep=2pt] at (frame.north east) {{{right_label}}};" if right_label else "")
-            + (rf"\node[anchor=south east, xshift=-3mm, yshift=3mm] at (frame.south east) {{{ans_mark}}};" if ans_mark else "")
-            + r"}]"
-        )
-        body.append(box_open)
-        body.append(question_text)
-
-        # 画像スロット（後で置換）
-        body.append(rf"%__IMAGES_SLOT__{i}__")
-
-        # 選択肢
-        choices = q.get("choices") or []
-        if choices:
-            body.append(r"\begin{enumerate}[nosep, left=0pt,label=\alph*.]")
-            for ch in choices:
-                text = ch.get("text", str(ch)) if isinstance(ch, dict) else str(ch)
-                body.append(r"\item " + _latex_escape(text))
-            body.append(r"\end{enumerate}")
-
-        body.append(r"\end{tcolorbox}")
-        body.append(r"\vspace{0.8em}")
-
-        # ▼ここを変更：各問題ごとに改ページ（最後だけ入れない）
-        if i < len(questions):
-            body.append(r"\clearpage")  # 画像(浮動体)があっても確実に改ページ
-
-    footer = r"\end{document}"
-    return header + "\n".join(body) + "\n" + footer
-
-def get_shuffled_choices(q):
-    key = f"shuffled_{q['number']}"
-    if key not in st.session_state or len(st.session_state.get(key, [])) != len(q.get("choices", [])):
-        indices = list(range(len(q.get("choices", []))))
-        random.shuffle(indices)
-        st.session_state[key] = indices
-    return [q["choices"][i] for i in st.session_state[key]], st.session_state[key]
-
-def extract_year_from_question_number(q_num):
-    """
-    問題番号から年度を抽出する
-    従来形式: "112A5" -> 112
-    学士試験形式: "G22-1-1-A-1" -> 2022
-    """
-    if not q_num:
-        return None
-    
-    # 従来形式（例：112A5）
-    if q_num[:3].isdigit():
-        return int(q_num[:3])
-    
-    # 学士試験形式（例：G22-1-1-A-1）
-    if q_num.startswith("G") and len(q_num) >= 3 and q_num[1:3].isdigit():
-        year_2digit = int(q_num[1:3])
-        # 2桁年を4桁年に変換（22 -> 2022）
-        return 2000 + year_2digit if year_2digit <= 30 else 1900 + year_2digit
-    
-    return None
 
 def get_natural_sort_key(q_dict):
     """
@@ -2578,3252 +44,1208 @@ def get_natural_sort_key(q_dict):
             return (
                 0,                       # 学士試験は先頭に0を置いて従来形式と区別
                 m_gakushi.group(1),      # G
-                int(m_gakushi.group(2)), # 24
-                m_gakushi.group(3),      # '1-1' や '2再' など（文字列としてソート）
+                int(m_gakushi.group(2)), # 年度
+                m_gakushi.group(3),      # 1-1や2再
                 m_gakushi.group(4),      # A
-                int(m_gakushi.group(5))  # 1
+                int(m_gakushi.group(5))  # 問題番号
             )
-        # 従来形式: 112A5
-        m_normal = re.match(r'^(\d+)([A-Z]*)(\d+)$', q_num_str)
-        if m_normal:
-            part1 = int(m_normal.group(1))
-            part2 = m_normal.group(2)
-            part3 = int(m_normal.group(3))
-            return (1, part1, part2, part3, "", 0)  # 従来形式は1から始めて構造を統一
-        # フォールバック: すべて文字列として扱う
-        return (2, q_num_str, "", 0, "", 0)
+        
+        # 従来形式: 112A5 → (1, 112, 'A', 5)
+        m = re.match(r'^(\d+)([A-Z])(\d+)$', q_num_str)
+        if m:
+            return (
+                1,                    # 従来形式は1を置く
+                int(m.group(1)),      # 回数
+                m.group(2),           # 領域 (A, B, C, D)
+                int(m.group(3))       # 問題番号
+            )
+        
+        # その他の形式はそのまま文字列でソート
+        return (2, q_num_str)
+        
     except Exception as e:
-        # エラーが発生した場合のフォールバック: すべて文字列として扱う
-        return (3, str(q_dict.get('number', 'unknown')), "", 0, "", 0)
+        print(f"[DEBUG] ソートキー生成エラー: {q_num_str}, {e}")
+        return (999, q_num_str)
 
-def chem_latex(text):
-    return text.replace('Ca2+', '$\\mathrm{Ca^{2+}}$')
 
-def is_ordering_question(q):
-    text = q.get("question", "")
-    keywords = ["順番に並べよ", "正しい順序", "適切な順序", "正しい順番", "順序で"]
-    return any(k in text for k in keywords)
+# アプリバージョン
+APP_VERSION = "2024-08-24-refactored"
 
-def search_questions_by_keyword(keyword, gakushi_only=False, has_gakushi_permission=True):
-    """
-    キーワードで問題を検索する関数
-    問題文、選択肢、解説などからキーワードを検索
-    has_gakushi_permission: 学士試験の問題を表示する権限があるかどうか
-    """
-    if not keyword:
-        return []
-    
-    keyword_lower = keyword.lower()
-    matching_questions = []
-    
-    for q in ALL_QUESTIONS:
-        question_number = q.get("number", "")
-        
-        # 学士試験の問題かどうかをチェック
-        is_gakushi_question = question_number.startswith("G")
-        
-        # 権限チェック：学士試験の問題で権限がない場合はスキップ
-        if is_gakushi_question and not has_gakushi_permission:
-            continue
-        
-        # 学士試験限定検索の場合、学士試験の問題のみに絞る
-        if gakushi_only and not is_gakushi_question:
-            continue
-        
-        # 検索対象のテキストを収集
-        search_texts = []
-        
-        # 問題文
-        if q.get("question"):
-            search_texts.append(q["question"])
-        
-        # 選択肢
-        if q.get("choices"):
-            for choice in q["choices"]:
-                if isinstance(choice, dict):
-                    search_texts.append(choice.get("text", ""))
-                else:
-                    search_texts.append(str(choice))
-        
-        # 解説
-        if q.get("explanation"):
-            search_texts.append(q["explanation"])
-        
-        # 科目
-        if q.get("subject"):
-            search_texts.append(q["subject"])
-        
-        # すべてのテキストを結合して検索
-        combined_text = " ".join(search_texts).lower()
-        
-        # キーワードが含まれているかチェック
-        if keyword_lower in combined_text:
-            matching_questions.append(q)
-    
-    return matching_questions
+# ページ設定
+st.set_page_config(
+    page_title="歯科国試アプリ | AI対策システム",
+    page_icon="🦷",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-def calculate_card_level(n, latest_quality, history):
-    """
-    学習回数と評価履歴に基づいてカードのレベルを計算
-    - n: 学習回数（SM-2のnパラメータ）
-    - latest_quality: 最新の評価（1-5）
-    - history: 評価履歴のリスト
-    """
-    if n == 0:
-        return 0  # 未学習
-    
-    # 最近の成績を重視した評価計算
-    if len(history) == 0:
-        avg_quality = latest_quality
-    else:
-        # 最新5回の評価の平均を計算（重み付き：最新ほど重要）
-        recent_qualities = []
-        for i, record in enumerate(history[-5:]):
-            weight = i + 1  # 新しいほど重み大
-            recent_qualities.extend([record["quality"]] * weight)
-        
-        # 最新の評価も追加
-        recent_qualities.extend([latest_quality] * len(recent_qualities))
-        avg_quality = sum(recent_qualities) / len(recent_qualities)
-    
-    # レベル計算ロジック
-    if n >= 10 and avg_quality >= 4.5:
-        return 6  # 習得済み相当
-    elif n >= 8 and avg_quality >= 4.0:
-        return 5
-    elif n >= 6 and avg_quality >= 3.5:
-        return 4
-    elif n >= 4 and avg_quality >= 3.0:
-        return 3
-    elif n >= 2 and avg_quality >= 2.5:
-        return 2
-    elif n >= 1:
-        return 1
-    else:
-        return 0
+# スタイル設定
+st.markdown("""
+<style>
+/* ライトモード固定設定 */
+.stApp {
+    background-color: #ffffff;
+    color: #000000;
+}
 
-def sm2_update(card, quality, now=None):
-    if now is None: now = datetime.datetime.now(datetime.timezone.utc)
-    EF, n, I = card.get("EF", 2.5), card.get("n", 0), card.get("I", 0)
-    if quality == 1:
-        n = 0
-        EF = max(EF - 0.3, 1.3)
-        I = 10 / 1440
-    elif quality == 2:
-        EF = max(EF - 0.15, 1.3)
-        I = max(card.get("I", 1) * 0.5, 10 / 1440)
-    elif quality == 4 or quality == 5:
-        if n == 0:
-            I = 1
-        elif n == 1:
-            I = 4
-        else:
-            EF = max(EF + (0.1 - (5-quality)*(0.08 + (5-quality)*0.02)), 1.3)
-            I = card.get("I", 1) * EF
-        n += 1
-        if quality == 5:
-            I *= 1.3
-    else:
-        n = 0
-        I = 10 / 1440
-    next_review_dt = now + datetime.timedelta(days=I)
-    card["history"] = card.get("history", []) + [{"timestamp": now.isoformat(), "quality": quality, "interval": I, "EF": EF}]
-    
-    # レベル計算（学習回数と成績に基づく）
-    level = calculate_card_level(n, quality, card.get("history", []))
-    
-    card.update({"EF": EF, "n": n, "I": I, "next_review": next_review_dt.isoformat(), "quality": quality, "level": level})
-    return card
+.stSidebar {
+    background-color: #f0f2f6;
+}
 
-def sm2_update_with_policy(card: dict, quality: int, q_num_str: str, now=None):
-    """必修は q==2 を lapse 扱い。それ以外は既存 sm2_update を適用。"""
-    if now is None:
-        now = datetime.datetime.now(datetime.timezone.utc)
-    # 国試の必修または学士試験の必修で「難しい」の場合は lapse 扱い
-    if (is_hisshu(q_num_str) or is_gakushi_hisshu(q_num_str)) and quality == 2:
-        # ★ 必修で「難しい」の場合は lapse 扱い
-        EF = max(card.get("EF", 2.5) - 0.2, 1.3)
-        n = 0
-        I = 10 / 1440  # 10分
-        next_review_dt = now + datetime.timedelta(minutes=10)
-        hist = card.get("history", [])
-        hist = hist + [{"timestamp": now.isoformat(), "quality": quality, "interval": I, "EF": EF}]
-        card.update({"EF": EF, "n": n, "I": I, "next_review": next_review_dt.isoformat(), "quality": quality, "history": hist})
-        return card
-    else:
-        return sm2_update(card, quality, now=now)
+/* サイドバーのボタン色を統一 */
+.stSidebar .stButton > button[kind="primary"] {
+    background-color: #0066cc !important;
+    color: white !important;
+    border: none !important;
+}
 
-# --- 検索ページ ---
-def render_search_page():
-    # Firestoreクライアントを取得
-    db = firestore.client()
-    
-    # サイドバーのフィルター設定を取得
-    uid = st.session_state.get("uid")
-    has_gakushi_permission = check_gakushi_permission(uid)
-    analysis_target = st.session_state.get("analysis_target", "国試")
-    level_filter = st.session_state.get("level_filter", ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "レベル5", "習得済み"])
-    
-    # 学習進捗の可視化セクションを追加
-    st.subheader("📈 学習ダッシュボード")
-    
-    # 学習データの準備 - 新しいFirestore構造に対応
-    cards = st.session_state.get("cards", {})
-    
-    # カードデータが空の場合、完全版データを読み込む
-    if not cards and uid:
-        try:
-            cache_buster = int(datetime.datetime.now().timestamp())
-            full_data = load_user_data_full(uid, cache_buster)
-            cards = full_data.get("cards", {})
-            st.session_state["cards"] = cards
-        except Exception as e:
-            st.error(f"学習データの読み込みエラー: {e}")
-    
-    # 学習ログを統合してSM2パラメータを最新化（統合済みの場合はスキップ）
-    if uid and cards and should_integrate_logs(uid):
-        print(f"[INFO] ダッシュボード: 学習ログ統合を実行")
-        cards = integrate_learning_logs_into_cards(cards, uid)
-        st.session_state["cards"] = cards
-    
-    # 分析対象に応じたフィルタリング
-    filtered_data = []
-    for q in ALL_QUESTIONS:
-        q_num = q.get("number", "")
-        
-        # 権限チェック
-        if q_num.startswith("G") and not has_gakushi_permission:
-            continue
-        
-        # 分析対象フィルタ（明確に国試か学士試験のみ）
-        if analysis_target == "学士試験":
-            if not q_num.startswith("G"):
-                continue
-        elif analysis_target == "国試":
-            if q_num.startswith("G"):
-                continue
-            
-        card = cards.get(q_num, {})
-        
-        # レベル計算
-        if not card:
-            level = "未学習"
-        else:
-            # SM-2アルゴリズムのnと評価履歴から動的にレベル計算
-            n = card.get("n", 0)
-            latest_quality = card.get("quality", 1)
-            history = card.get("history", [])
-            card_level = calculate_card_level(n, latest_quality, history)
-            
-            if card_level >= 6:
-                level = "習得済み"
-            else:
-                level = f"レベル{card_level}"
-        
-        # 必修問題チェック（分析対象に応じて正確に判定）
-        if analysis_target == "学士試験":
-            # 学士試験の必修問題判定にはis_gakushi_hisshu関数を使用
-            is_mandatory = q_num in GAKUSHI_HISSHU_Q_NUMBERS_SET
-        else:  # 国試
-            # 国試の必修問題判定にはis_hisshu関数を使用
-            is_mandatory = q_num in HISSHU_Q_NUMBERS_SET
-        
-        # カードの履歴を取得（学習ログ統合済み）
-        card_history = card.get("history", [])
-        
-        filtered_data.append({
-            "id": q_num,
-            "subject": q.get("subject", "未分類"),
-            "level": level,
-            "ef": card.get("EF", 2.5),  # 大文字EFに修正
-            "history": card_history,
-            "is_hisshu": is_mandatory
-        })
-    
-    # DataFrameに変換
-    import pandas as pd
-    filtered_df = pd.DataFrame(filtered_data)
-    
-    # 科目リストをサイドバー用に設定
-    if not filtered_df.empty:
-        available_subjects = sorted(filtered_df["subject"].unique())
-        st.session_state.available_subjects = available_subjects
-        # 科目フィルターの取得（デフォルトは全科目）
-        subject_filter = st.session_state.get("subject_filter", available_subjects)
-        
-        # レベルと科目でフィルタリング
-        filtered_df = filtered_df[
-            (filtered_df["level"].isin(level_filter)) &
-            (filtered_df["subject"].isin(subject_filter))
-        ]
-    else:
-        st.session_state.available_subjects = []
-    
-    # 統合後の学習状況サマリーを表示
-    if uid and not filtered_df.empty:
-        st.markdown("---")
-        st.markdown("### 📊 学習状況")
-        
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            total_studied = len(filtered_df[filtered_df["level"] != "未学習"])
-            total_problems = len(filtered_df)
-            st.metric("学習済み問題", f"{total_studied}", 
-                     delta=f"{total_studied}/{total_problems}")
-        
-        with col2:
-            mastered_count = len(filtered_df[filtered_df["level"] == "習得済み"])
-            st.metric("習得済み問題", f"{mastered_count}",
-                     delta=f"{mastered_count/total_problems*100:.1f}%" if total_problems > 0 else "0%")
-        
-        with col3:
-            # 全履歴から学習回数を計算
-            total_learning_sessions = 0
-            for _, row in filtered_df.iterrows():
-                history_list = row["history"]
-                if isinstance(history_list, list):
-                    total_learning_sessions += len(history_list)
-            st.metric("総学習回数", f"{total_learning_sessions}")
-        
-        with col4:
-            # 平均EF値
-            studied_cards = filtered_df[filtered_df["level"] != "未学習"]
-            if not studied_cards.empty:
-                avg_ef = studied_cards["ef"].mean()
-                st.metric("平均記憶定着度", f"{avg_ef:.2f}",
-                         delta="良好" if avg_ef >= 2.5 else "要復習")
-            else:
-                st.metric("平均記憶定着度", "N/A")
-    
-    # 4タブ構成の可視化
-    tab1, tab2, tab3, tab4 = st.tabs(["概要", "グラフ分析", "問題リスト", "キーワード検索"])
-    
-    with tab1:
-        st.subheader("学習状況サマリー")
-        if filtered_df.empty:
-            st.warning("選択された条件に一致する問題がありません。")
-        else:
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown("##### カード習熟度分布")
-                levels_sorted = ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "習得済み"]
-                level_counts = filtered_df["level"].value_counts().reindex(levels_sorted).fillna(0).astype(int)
-                st.dataframe(level_counts)
-                
-            with col2:
-                st.markdown("##### 正解率 (True Retention)")
-                total_reviews = 0
-                correct_reviews = 0
-                
-                for idx, history_list in enumerate(filtered_df["history"]):
-                    for review in history_list:
-                        if isinstance(review, dict) and "quality" in review:
-                            total_reviews += 1
-                            if review["quality"] >= 4:
-                                correct_reviews += 1
-                
-                retention_rate = (correct_reviews / total_reviews * 100) if total_reviews > 0 else 0
-                st.metric(label="選択範囲の正解率", value=f"{retention_rate:.1f}%", delta=f"{correct_reviews} / {total_reviews} 回")
-                
-                # 必修問題の正解率計算
-                hisshu_df = filtered_df[filtered_df["is_hisshu"] == True]
-                hisshu_label = "【必修問題】の正解率 (目標: 80%以上)"
-                
-                hisshu_total_reviews = 0
-                hisshu_correct_reviews = 0
-                for history_list in hisshu_df["history"]:
-                    for review in history_list:
-                        if isinstance(review, dict) and "quality" in review:
-                            hisshu_total_reviews += 1
-                            if review["quality"] >= 4:
-                                hisshu_correct_reviews += 1
-                hisshu_retention_rate = (hisshu_correct_reviews / hisshu_total_reviews * 100) if hisshu_total_reviews > 0 else 0
-                st.metric(label=hisshu_label, value=f"{hisshu_retention_rate:.1f}%", delta=f"{hisshu_correct_reviews} / {hisshu_total_reviews} 回")
+.stSidebar .stButton > button[kind="primary"]:hover {
+    background-color: #0052a3 !important;
+    color: white !important;
+}
 
-    with tab2:
-        st.subheader("学習データの可視化")
-        if filtered_df.empty:
-            st.warning("選択された条件に一致する問題がありません。")
-        else:
-            # 科目別進捗状況の可視化
-            st.markdown("##### 科目別進捗状況")
-            subject_progress = []
-            for subject in filtered_df["subject"].unique():
-                subject_data = filtered_df[filtered_df["subject"] == subject]
-                total_problems = len(subject_data)
-                studied_problems = len(subject_data[subject_data["level"] != "未学習"])
-                mastered_problems = len(subject_data[subject_data["level"] == "習得済み"])
-                
-                progress_rate = (studied_problems / total_problems * 100) if total_problems > 0 else 0
-                mastery_rate = (mastered_problems / total_problems * 100) if total_problems > 0 else 0
-                
-                subject_progress.append({
-                    "科目": subject,
-                    "総問題数": total_problems,
-                    "学習済み": studied_problems,
-                    "習得済み": mastered_problems,
-                    "学習進捗率(%)": round(progress_rate, 1),
-                    "習得率(%)": round(mastery_rate, 1)
-                })
-            
-            progress_df = pd.DataFrame(subject_progress)
-            progress_df = progress_df.sort_values("学習進捗率(%)", ascending=False)
-            
-            # 進捗率グラフ
-            try:
-                import plotly.express as px
-                import plotly.graph_objects as go
-                
-                fig = go.Figure()
-                
-                # 学習進捗率のバー
-                fig.add_trace(go.Bar(
-                    name='学習進捗率',
-                    x=progress_df["科目"],
-                    y=progress_df["学習進捗率(%)"],
-                    marker_color='lightblue',
-                    text=progress_df["学習進捗率(%)"].astype(str) + '%',
-                    textposition='outside'
-                ))
-                
-                # 習得率のバー
-                fig.add_trace(go.Bar(
-                    name='習得率',
-                    x=progress_df["科目"],
-                    y=progress_df["習得率(%)"],
-                    marker_color='green',
-                    text=progress_df["習得率(%)"].astype(str) + '%',
-                    textposition='outside'
-                ))
-                
-                fig.update_layout(
-                    title="科目別進捗状況（100%=全問題演習済み）",
-                    xaxis_title="科目",
-                    yaxis_title="進捗率 (%)",
-                    yaxis=dict(range=[0, 105]),
-                    barmode='group',
-                    xaxis_tickangle=-45,
-                    height=500
-                )
-                
-                st.plotly_chart(fig, use_container_width=True)
-                
-            except ImportError:
-                st.bar_chart(progress_df.set_index("科目")[["学習進捗率(%)", "習得率(%)"]])
-            
-            # 詳細テーブル
-            st.dataframe(progress_df, use_container_width=True)
-            
-            st.markdown("##### 学習の記録")
-            
-            # 学習記録の取得と最初の学習日の特定
-            review_history = []
-            first_study_date = None
-            
-            for history_list in filtered_df["history"]:
-                for review in history_list:
-                    if isinstance(review, dict) and "timestamp" in review:
-                        timestamp = review["timestamp"]
-                        try:
-                            # 安全な日付解析
-                            parsed_time = safe_parse_timestamp(timestamp)
-                            if parsed_time:
-                                review_date = parsed_time.date()
-                                review_history.append(review_date)
-                                if first_study_date is None or review_date < first_study_date:
-                                    first_study_date = review_date
-                        except (ValueError, TypeError, AttributeError) as e:
-                            # 日付解析に失敗した場合はスキップ
-                            continue
-            
-            if review_history and first_study_date:
-                from collections import Counter
-                review_counts = Counter(review_history)
-                
-                # 最初の学習日から今日までの日付範囲を作成
-                today = datetime.datetime.now(datetime.timezone.utc).date()
-                days_since_start = (today - first_study_date).days + 1
-                
-                # 表示する日数を90日に制限
-                display_days = min(days_since_start, 90)
-                start_date = today - datetime.timedelta(days=display_days - 1)
-                
-                dates = [start_date + datetime.timedelta(days=i) for i in range(display_days)]
-                counts = [review_counts.get(d, 0) for d in dates]
-                chart_df = pd.DataFrame({"Date": dates, "Reviews": counts})
-                
-                # plotlyを使ってy軸の最小値を0に固定
-                try:
-                    import plotly.express as px
-                    fig = px.bar(chart_df, x="Date", y="Reviews", 
-                                title=f"日々の学習量（過去90日間）")
-                    fig.update_layout(
-                        yaxis=dict(range=[0, max(counts) * 1.1] if counts else [0, 5]),
-                        showlegend=False
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    # 学習統計の表示（90日間のデータに基づく）
-                    total_reviews = sum(counts)
-                    active_days = len([c for c in counts if c > 0])
-                    avg_reviews_per_active_day = total_reviews / active_days if active_days > 0 else 0
-                    
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        st.metric("総学習回数", f"{total_reviews}回", help="過去90日間")
-                    with col2:
-                        st.metric("学習日数", f"{active_days}日", help="過去90日間")
-                    with col3:
-                        st.metric("学習継続日数", f"{display_days}日", help="表示期間")
-                    with col4:
-                        st.metric("1日平均学習回数", f"{avg_reviews_per_active_day:.1f}回", help="過去90日間")
-                        
-                except ImportError:
-                    # plotlyが利用できない場合は従来のbar_chart
-                    st.bar_chart(chart_df.set_index("Date"))
-            else:
-                st.info("選択された範囲にレビュー履歴がまだありません。")
-            
-            st.markdown("##### 学習レベル別分布")
-            if not filtered_df.empty:
-                level_counts = filtered_df['level'].value_counts()
-                
-                # 色分け定義
-                level_colors_chart = {
-                    "未学習": "#757575", "レベル0": "#FF9800", "レベル1": "#FFC107",
-                    "レベル2": "#8BC34A", "レベル3": "#9C27B0", "レベル4": "#03A9F4",
-                    "レベル5": "#1E88E5", "習得済み": "#4CAF50"
-                }
-                
-                try:
-                    import plotly.express as px
-                    import pandas as pd
-                    
-                    # レベル順に並べ替え
-                    level_order = ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "レベル5", "習得済み"]
-                    chart_data = []
-                    colors = []
-                    
-                    for level in level_order:
-                        if level in level_counts.index:
-                            chart_data.append({"Level": level, "Count": level_counts[level]})
-                            colors.append(level_colors_chart.get(level, "#888888"))
-                    
-                    chart_df = pd.DataFrame(chart_data)
-                    
-                    fig = px.bar(chart_df, x="Level", y="Count", 
-                                title="学習レベル別問題数",
-                                color="Level",
-                                color_discrete_map=level_colors_chart)
-                    fig.update_layout(
-                        yaxis=dict(range=[0, None]),
-                        showlegend=False,
-                        xaxis_tickangle=-45
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                except ImportError:
-                    # plotlyが利用できない場合は基本的なbar_chart
-                    st.bar_chart(level_counts)
-            else:
-                st.info("学習データがありません。")
+.stSidebar .stButton > button[kind="primary"]:focus {
+    background-color: #0066cc !important;
+    color: white !important;
+    box-shadow: 0 0 0 0.2rem rgba(0, 102, 204, 0.25) !important;
+}
 
-    with tab3:
-        st.subheader("問題リスト")
-        level_colors = {
-            "未学習": "#757575", "レベル0": "#FF9800", "レベル1": "#FFC107",
-            "レベル2": "#8BC34A", "レベル3": "#9C27B0", "レベル4": "#03A9F4",
-            "レベル5": "#1E88E5", "習得済み": "#4CAF50"
+/* 問題カードのスタイル */
+.question-card {
+    background-color: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    padding: 20px;
+    margin: 10px 0;
+}
+
+/* メトリクスのスタイル */
+.metric-container {
+    background-color: #f8f9fa;
+    padding: 15px;
+    border-radius: 8px;
+    border-left: 4px solid #0066cc;
+}
+</style>""", unsafe_allow_html=True)
+
+
+class DentalApp:
+    """歯科国家試験対策アプリのメインクラス"""
+    
+    def __init__(self):
+        self.auth_manager = AuthManager()
+        self.cookie_manager = CookieManager()
+        self.firestore_manager = get_firestore_manager()
+        
+        # セッション状態の初期化
+        self._initialize_session_state()
+    
+    def _initialize_session_state(self):
+        """セッション状態の初期化"""
+        default_values = {
+            "user_logged_in": None,
+            "uid": None,
+            "email": None,
+            "name": None,
+            "page": "練習",  # デフォルトを演習ページに
+            "cards": {},
+            "analysis_target": "国試",
+            "level_filter": ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "レベル5", "習得済み"],  # 全レベルをデフォルトで表示
+            "new_cards_per_day": 10,
+            "result_log": {},
+            "auto_login_attempted": False  # 自動ログイン試行フラグを追加
         }
         
-        # サイドバーのフィルターを適用
-        if not filtered_df.empty:
-            # サイドバーの level_filter は既に適用済み
-            
-            st.markdown(f"**{len(filtered_df)}件の問題が見つかりました**")
-            if not filtered_df.empty:
-                def sort_key(row_id):
-                    m_gakushi = re.match(r'^(G)(\d+)[–\-]([\d–\-再]+)[–\-]([A-Z])[–\-](\d+)$', str(row_id))
-                    if m_gakushi: return (m_gakushi.group(1), int(m_gakushi.group(2)), m_gakushi.group(3), m_gakushi.group(4), int(m_gakushi.group(5)))
-                    m_normal = re.match(r"(\d+)([A-D])(\d+)", str(row_id))
-                    if m_normal: return ('Z', int(m_normal.group(1)), m_normal.group(2), '', int(m_normal.group(3)))
-                    return ('Z', 0, '', '', 0)
-
-                detail_filtered_sorted = filtered_df.copy()
-                detail_filtered_sorted['sort_key'] = detail_filtered_sorted['id'].apply(sort_key)
-                detail_filtered_sorted = detail_filtered_sorted.sort_values(by='sort_key').drop(columns=['sort_key'])
-                for _, row in detail_filtered_sorted.iterrows():
-                    # 権限チェック：学士試験の問題で権限がない場合はスキップ
-                    if str(row.id).startswith("G") and not has_gakushi_permission:
-                        continue
-                        
-                    st.markdown(
-                        f"<div style='margin-bottom: 5px; padding: 5px; border-left: 5px solid {level_colors.get(row.level, '#888')};'>"
-                        f"<span style='display:inline-block;width:80px;font-weight:bold;color:{level_colors.get(row.level, '#888')};'>{row.level}</span>"
-                        f"<span style='font-size:1.1em;'>{row.id}</span>"
-                        f"</div>",
-                        unsafe_allow_html=True
-                    )
-            else:
-                st.info("フィルタ条件に一致する問題がありません。")
-        else:
-            st.info("表示する問題がありません。")
+        for key, value in default_values.items():
+            if key not in st.session_state:
+                st.session_state[key] = value
+        
+        # 科目の初期化
+        self._initialize_available_subjects()
     
-    with tab4:
-        # キーワード検索フォーム（サイドバーフィルター連動）
-        st.subheader("🔍 キーワード検索")
-        
-        col1, col2 = st.columns([4, 1])
-        with col1:
-            search_keyword = st.text_input("検索キーワード", placeholder="検索したいキーワードを入力", key="search_keyword_input")
-        with col2:
-            shuffle_results = st.checkbox("結果をシャッフル", key="shuffle_checkbox")
-        
-        search_btn = st.button("検索実行", type="primary", use_container_width=True)
-        
-        # キーワード検索の実行と結果表示
-        if search_btn and search_keyword.strip():
-            # キーワード検索を実行
-            search_words = [word.strip() for word in search_keyword.strip().split() if word.strip()]
+    def _initialize_available_subjects(self):
+        """利用可能な科目を初期化"""
+        if 'available_subjects' not in st.session_state:
+            uid = st.session_state.get("uid")
+            has_gakushi_permission = check_gakushi_permission(uid) if uid else False
+            analysis_target = st.session_state.get("analysis_target", "国試")
             
-            keyword_results = []
+            # 分析対象に応じて科目を取得
+            subjects_set = set()
             for q in ALL_QUESTIONS:
-                # 権限チェック：学士試験の問題で権限がない場合はスキップ
-                question_number = q.get('number', '')
-                if question_number.startswith("G") and not has_gakushi_permission:
+                q_num = q.get("number", "")
+                
+                # 権限チェック
+                if q_num.startswith("G") and not has_gakushi_permission:
                     continue
                 
-                # 分析対象フィルタチェック（サイドバーの設定を使用）
+                # 分析対象フィルタ
                 if analysis_target == "学士試験":
-                    if not question_number.startswith("G"):
+                    if not q_num.startswith("G"):
                         continue
                 elif analysis_target == "国試":
-                    if question_number.startswith("G"):
+                    if q_num.startswith("G"):
                         continue
                 
-                # キーワード検索
-                text_to_search = f"{q.get('question', '')} {q.get('subject', '')} {q.get('number', '')}"
-                if any(word.lower() in text_to_search.lower() for word in search_words):
-                    keyword_results.append(q)
+                subject = q.get("subject", "未分類")
+                if subject:
+                    subjects_set.add(subject)
             
-            # シャッフル処理
-            if shuffle_results:
-                random.shuffle(keyword_results)
+            available_subjects = sorted(list(subjects_set))
+            st.session_state.available_subjects = available_subjects
             
-            # 結果をセッション状態に保存
-            st.session_state["search_results"] = keyword_results
-            st.session_state["search_query"] = search_keyword.strip()
-            st.session_state["search_page_analysis_target"] = analysis_target
-            st.session_state["search_page_shuffle_setting"] = shuffle_results
-        
-        # 検索結果の表示
-        if "search_results" in st.session_state:
-            results = st.session_state["search_results"]
-            query = st.session_state.get("search_query", "")
-            search_type = st.session_state.get("search_page_analysis_target", "全体")
-            shuffle_info = "（シャッフル済み）" if st.session_state.get("search_page_shuffle_setting", False) else "（順番通り）"
-            
-            if results:
-                st.success(f"「{query}」で{len(results)}問見つかりました（{search_type}）{shuffle_info}")
-                
-                # 結果の統計を表示
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("検索結果", f"{len(results)}問")
-                with col2:
-                    subjects = [q.get("subject", "未分類") for q in results]
-                    unique_subjects = len(set(subjects))
-                    st.metric("関連科目", f"{unique_subjects}科目")
-                with col3:
-                    years = []
-                    for q in results:
-                        year = extract_year_from_question_number(q.get("number", ""))
-                        if year is not None:
-                            years.append(int(year))
-                    
-                    year_range = f"{min(years)}-{max(years)}" if years else "不明"
-                    st.metric("年度範囲", year_range)
-                
-                # 検索結果の詳細表示
-                st.subheader("検索結果")
-                
-                # レベル別色分け定義
-                level_colors = {
-                    "未学習": "#757575", "レベル0": "#FF9800", "レベル1": "#FFC107",
-                    "レベル2": "#8BC34A", "レベル3": "#9C27B0", "レベル4": "#03A9F4",
-                    "レベル5": "#1E88E5", "習得済み": "#4CAF50"
-                }
-                
-                level_icons = {
-                    "未学習": "#757575",        # グレー系
-                    "レベル0": "#FF9800",      # オレンジ #FF9800
-                    "レベル1": "#FFC107",      # イエロー #FFC107
-                    "レベル2": "#8BC34A",      # グリーン #8BC34A
-                    "レベル3": "#9C27B0",      # パープル #9C27B0
-                    "レベル4": "#03A9F4",      # ブルー #03A9F4
-                    "レベル5": "#1E88E5",      # ダークブルー #1E88E5
-                    "習得済み": "#4CAF50"      # グリーン完了 #4CAF50
-                }
-                
-                for i, q in enumerate(results[:20]):  # 最初の20件を表示
-                    # 権限チェック：学士試験の問題で権限がない場合はスキップ
-                    question_number = q.get('number', '')
-                    if question_number.startswith("G") and not has_gakushi_permission:
-                        continue
-                    
-                    # 学習レベルの取得
-                    card = st.session_state.cards.get(question_number, {})
-                    if not card:
-                        level = "未学習"
-                    else:
-                        card_level = card.get("level", 0)
-                        if card_level >= 6:
-                            level = "習得済み"
-                        else:
-                            level = f"レベル{card_level}"
-                    
-                    # 必修問題チェック
-                    if search_type == "学士試験":
-                        is_mandatory_question = question_number in GAKUSHI_HISSHU_Q_NUMBERS_SET
-                    else:
-                        is_mandatory_question = question_number in HISSHU_Q_NUMBERS_SET
-                    
-                    level_color = level_colors.get(level, "#888888")
-                    hisshu_mark = "🔥" if is_mandatory_question else ""
-                    
-                    # 色付きドットアイコンをHTMLで生成
-                    color_dot = f'<span style="color: {level_color}; font-size: 1.2em; font-weight: bold;">●</span>'
-                    
-                    with st.expander(f"● {q.get('number', 'N/A')} - {q.get('subject', '未分類')} {hisshu_mark}"):
-                        # レベルを大きく色付きで表示  
-                        st.markdown(f"**学習レベル:** <span style='color: {level_color}; font-weight: bold; font-size: 1.2em;'>{level}</span>", unsafe_allow_html=True)
-                        st.markdown(f"**問題:** {q.get('question', '')[:100]}...")
-                        if q.get('choices'):
-                            st.markdown("**選択肢:**")
-                            for j, choice in enumerate(q['choices']):  # 全ての選択肢を表示
-                                choice_text = choice.get('text', str(choice)) if isinstance(choice, dict) else str(choice)
-                                st.markdown(f"  {chr(65+j)}. {choice_text[:50]}...")
-                        
-                        # 学習履歴の表示
-                        if card and card.get('history'):
-                            st.markdown(f"**学習履歴:** {len(card['history'])}回")
-                            for j, review in enumerate(card['history'][-3:]):  # 最新3件
-                                if isinstance(review, dict):
-                                    timestamp = review.get('timestamp', '不明')
-                                    quality = review.get('quality', 0)
-                                    quality_emoji = "✅" if quality >= 4 else "❌"
-                                    st.markdown(f"  {j+1}. {timestamp} - 評価: {quality} {quality_emoji}")
-                        else:
-                            st.markdown("**学習履歴:** なし")
-                
-                if len(results) > 20:
-                    st.info(f"表示は最初の20件です。全{len(results)}件中")
-                
-                # PDF生成とダウンロード機能
-                st.markdown("#### 📄 PDF生成")
-                
-                colA, colB = st.columns(2)
-                with colA:
-                    if st.button("📄 PDFを生成", key="pdf_tcb_js_generate"):
-                        with st.spinner("PDFを生成中..."):
-                            # 1) LaTeX本文（右上は固定の'◯◯◯◯◯'を表示）
-                            latex_tcb = export_questions_to_latex_tcb_jsarticle(results)
-                            # 2) 画像収集（URL/Storage問わず）
-                            assets, per_q_files = _gather_images_for_questions(results)
-                            # 3) 画像スロットを includegraphics に差し替え
-                            for i, files in enumerate(per_q_files, start=1):
-                                block = _image_block_latex(files)
-                                latex_tcb = latex_tcb.replace(rf"%__IMAGES_SLOT__{i}__", block)
-                            # 4) コンパイル
-                            pdf_bytes, log = compile_latex_to_pdf(latex_tcb, assets=assets)
-                            if pdf_bytes:
-                                ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                                st.session_state["pdf_bytes_tcb_js"] = pdf_bytes
-                                st.session_state["pdf_filename_tcb_js"] = f"dental_questions_tcb_js_{ts}.pdf"
-                                st.success("✅ PDFの生成に成功しました。右のボタンからDLできます。")
-                            else:
-                                st.error("❌ PDF生成に失敗しました。")
-                                with st.expander("ログを見る"):
-                                    st.code(log or "no log", language="text")
-
-                with colB:
-                    if "pdf_bytes_tcb_js" in st.session_state:
-                        # 統一されたPDFダウンロード（新タブで開く）
-                        pdf_data = st.session_state["pdf_bytes_tcb_js"]
-                        filename = st.session_state.get("pdf_filename_tcb_js", "dental_questions_tcb_js.pdf")
-                        
-                        # Base64エンコード
-                        import base64
-                        b64_pdf = base64.b64encode(pdf_data).decode()
-                        
-                        # Data URI を持つHTMLリンクを生成（新タブで開く）
-                        href = f'<a href="data:application/pdf;base64,{b64_pdf}" download="{filename}" target="_blank" style="display: inline-block; padding: 12px; background-color: #ff6b6b; color: white; text-decoration: none; border-radius: 6px; text-align: center; width: 100%; font-size: 16px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">📥 PDFをダウンロード</a>'
-                        
-                        st.markdown(href, unsafe_allow_html=True)
-                    else:
-                        st.button("⬇️ PDFをDL", disabled=True, use_container_width=True)
-                
-            else:
-                st.warning(f"「{query}」に該当する問題が見つかりませんでした")
-        else:
-            st.info("キーワードを入力して検索してください")
-
-# --- ランキングページ ---
-@st.cache_data(ttl=300)  # 5分間キャッシュ
-def fetch_ranking_data():
-    """
-    Firestoreのuser_profilesコレクションからランキングデータを取得
-    ランキング参加の選択制をサポート
-    """
-    try:
-        db = firestore.client()
-        
-        # 全user_profilesを取得してフィルタリング
-        collection_ref = db.collection("user_profiles")
-        docs = collection_ref.stream()
-        all_profiles = []
-        
-        print(f"[DEBUG] user_profilesコレクションを検索中...")
-        doc_count = 0
-        
-        for doc in docs:
-            doc_count += 1
-            data = doc.to_dict()
-            print(f"[DEBUG] ドキュメント {doc.id}: {data}")
-            
-            if data:
-                has_weekly_activity = data.get("hasWeeklyActivity", False)
-                weekly_points = data.get("weeklyPoints", 0)
-                show_on_leaderboard = data.get("showOnLeaderboard")
-                
-                # ランキング参加のロジック
-                # showOnLeaderboard が None の場合は既存ユーザーとして参加扱い
-                # False の場合は明示的に非参加
-                # True の場合は明示的に参加
-                should_show = show_on_leaderboard is not False
-                
-                # 週間活動があり、ランキング表示がOKのユーザーのみ
-                if (has_weekly_activity or weekly_points > 0) and should_show:
-                    profile = {
-                        "docId": doc.id,  # ドキュメントIDを追加
-                        "nickname": data.get("nickname", "匿名ユーザー"),
-                        "weeklyPoints": weekly_points,
-                        "totalPoints": data.get("totalPoints", 0),
-                        "studyDays": data.get("studyDays", 0),
-                        "currentMasteryScore": data.get("currentMasteryScore", 0),
-                        "hasWeeklyActivity": has_weekly_activity,
-                        "showOnLeaderboard": show_on_leaderboard
-                    }
-                    all_profiles.append(profile)
-                    print(f"[DEBUG] ランキング参加ユーザー追加: {profile}")
-                else:
-                    print(f"[DEBUG] ランキング非参加ユーザーをスキップ: {data.get('nickname', doc.id)}")
-        
-        print(f"[DEBUG] 検索完了: {doc_count}件のドキュメント, {len(all_profiles)}件のプロフィール")
-        
-        # 重複ユーザーの除去（ニックネームが同じ場合、週間ポイントが高い方を採用）
-        unique_profiles = {}
-        for profile in all_profiles:
-            nickname = profile["nickname"]
-            if nickname in unique_profiles:
-                # 既存のプロフィールと比較して、週間ポイントが高い方を採用
-                if profile["weeklyPoints"] > unique_profiles[nickname]["weeklyPoints"]:
-                    print(f"[DEBUG] 重複ユーザー更新: {nickname} ({unique_profiles[nickname]['weeklyPoints']} -> {profile['weeklyPoints']})")
-                    unique_profiles[nickname] = profile
-                else:
-                    print(f"[DEBUG] 重複ユーザーをスキップ: {nickname} (既存: {unique_profiles[nickname]['weeklyPoints']}, 新規: {profile['weeklyPoints']})")
-            else:
-                unique_profiles[nickname] = profile
-        
-        # 辞書から値のリストに変換
-        deduplicated_profiles = list(unique_profiles.values())
-        print(f"[DEBUG] 重複除去後: {len(deduplicated_profiles)}件のプロフィール")
-        
-        # weeklyPointsで降順ソート
-        deduplicated_profiles.sort(key=lambda x: x["weeklyPoints"], reverse=True)
-        
-        # 上位50件に制限
-        top_profiles = deduplicated_profiles[:50]
-        
-        # 順位付きでランキングデータを作成
-        ranking_data = []
-        for i, profile in enumerate(top_profiles, 1):
-            ranking_data.append({
-                "順位": i,
-                "ニックネーム": profile["nickname"],
-                "週間ポイント": profile["weeklyPoints"],
-                "総ポイント": profile["totalPoints"],
-                "学習日数": profile["studyDays"],
-                "習熟度": f"{profile['currentMasteryScore']:.1f}%"
-            })
-        
-        return ranking_data, deduplicated_profiles  # 統計用に重複除去後の全プロフィールも返す
+            # 科目フィルターのデフォルト設定
+            if 'subject_filter' not in st.session_state:
+                st.session_state.subject_filter = available_subjects
     
-    except Exception as e:
-        print(f"[ERROR] ランキングデータ取得エラー: {e}")
-        return [], []
-
-def get_user_profile_for_ranking():
-    """現在のユーザーのプロフィール情報を取得（ランキング用）"""
-    try:
-        uid = st.session_state.get("uid")
-        if not uid:
-            return None
+    def run(self):
+        """アプリケーションのメイン実行"""
+        # Google Analytics初期化（ページ読み込み時に一度だけ実行）
+        if not st.session_state.get("ga_initialized"):
+            AnalyticsUtils.inject_ga_script()
+            st.session_state["ga_initialized"] = True
         
-        db = firestore.client()
-        profile_ref = db.collection("user_profiles").document(uid)
-        profile_doc = profile_ref.get()
+        # ユーザーのアクティビティ追跡
+        self._track_user_activity()
         
-        if profile_doc.exists:
-            return profile_doc.to_dict()
-        else:
-            return None
-    
-    except Exception as e:
-        st.error(f"プロフィール取得エラー: {e}")
-        return None
-
-def create_test_profile_for_current_user():
-    """現在のユーザー用のテストプロフィールを作成"""
-    try:
-        uid = st.session_state.get("uid")
-        if not uid:
-            st.error("ユーザーIDが見つかりません")
-            return
-        
-        db = firestore.client()
-        profile_ref = db.collection("user_profiles").document(uid)
-        
-        # テスト用プロフィールデータ
-        test_profile = {
-            "nickname": "テストユーザー",
-            "showOnLeaderboard": True,
-            "weeklyPoints": 500,
-            "totalPoints": 2500,
-            "studyDays": 15,
-            "currentMasteryScore": 82.5,
-            "lastUpdated": firestore.SERVER_TIMESTAMP,
-            "weeklyResetDate": firestore.SERVER_TIMESTAMP
-        }
-        
-        profile_ref.set(test_profile, merge=True)
-        st.success("テスト用プロフィールを作成しました！ページを更新してランキングを確認してください。")
-        
-        # キャッシュをクリアして最新データを取得
-        st.cache_data.clear()
-        
-    except Exception as e:
-        st.error(f"プロフィール作成エラー: {e}")
-
-def save_user_profile(nickname, show_on_leaderboard):
-    """ユーザープロフィールを保存（UIDとEmailの両方のプロフィールを同期）"""
-    try:
-        uid = st.session_state.get("uid")
-        email = st.session_state.get("email")
-        if not uid:
-            st.error("ユーザーIDが見つかりません")
-            return
-        
-        if not nickname.strip():
-            st.error("ニックネームを入力してください")
-            return
-        
-        db = firestore.client()
-        
-        # プロフィールデータ
-        profile_data = {
-            "nickname": nickname.strip(),
-            "showOnLeaderboard": show_on_leaderboard,
-            "lastUpdated": firestore.SERVER_TIMESTAMP
-        }
-        
-        # UIDプロフィールを更新
-        uid_profile_ref = db.collection("user_profiles").document(uid)
-        existing_uid_profile = uid_profile_ref.get()
-        
-        uid_profile_data = profile_data.copy()
-        if not existing_uid_profile.exists:
-            uid_profile_data.update({
-                "weeklyPoints": 0,
-                "totalPoints": 0,
-                "studyDays": 0,
-                "currentMasteryScore": 0.0,
-                "weeklyResetDate": firestore.SERVER_TIMESTAMP
-            })
-        
-        uid_profile_ref.set(uid_profile_data, merge=True)
-        
-        # Emailプロフィールも存在する場合は同期
-        if email:
-            email_profile_ref = db.collection("user_profiles").document(email)
-            existing_email_profile = email_profile_ref.get()
+        # 🔄 1. Automatic Login Attempt
+        if (not st.session_state.get("user_logged_in") and 
+            not st.session_state.get("auto_login_attempted")):
             
-            if existing_email_profile.exists:
-                # Emailプロフィールにもニックネームとランキング設定を同期
-                email_sync_data = {
-                    "nickname": nickname.strip(),
-                    "showOnLeaderboard": show_on_leaderboard,
-                    "lastUpdated": firestore.SERVER_TIMESTAMP
-                }
-                email_profile_ref.set(email_sync_data, merge=True)
-                st.info("UIDとEmailの両方のプロフィールを更新しました")
-            else:
-                st.info("UIDプロフィールを更新しました")
+            st.session_state["auto_login_attempted"] = True
+            if self.cookie_manager.try_auto_login():
+                # 自動ログイン成功時に科目を初期化
+                self._initialize_available_subjects()
+                st.rerun()
+        
+        # ログイン状態をチェック
+        if not st.session_state.get("user_logged_in") or not self.auth_manager.ensure_valid_session():
+            # ログイン画面ではサイドバーを非表示
+            self._hide_sidebar()
+            self._render_login_page()
+            AnalyticsUtils.track_page_view("Login Page")
         else:
-            st.info("UIDプロフィールを更新しました")
-        
-        st.success("プロフィールを保存しました！")
-        
-        # キャッシュをクリアして最新データを取得
-        st.cache_data.clear()
-        time.sleep(0.5)  # 保存の確実な完了を待つ
-        st.rerun()
-        
-    except Exception as e:
-        st.error(f"プロフィール保存エラー: {e}")
-
-def integrate_user_data(target_uid, email):
-    """ユーザーデータをemailベースで統合する"""
-    try:
-        db = firestore.client()
-        
-        # emailでプロフィールを検索
-        email_profile_ref = db.collection("user_profiles").document(email)
-        email_profile_doc = email_profile_ref.get()
-        
-        # uidでプロフィールを検索
-        uid_profile_ref = db.collection("user_profiles").document(target_uid)
-        uid_profile_doc = uid_profile_ref.get()
-        
-        if email_profile_doc.exists:
-            email_data = email_profile_doc.to_dict()
+            # ログイン済みの場合はサイドバーとメインコンテンツを表示
+            # 科目が初期化されていない場合は初期化
+            if not hasattr(st.session_state, 'available_subjects') or not st.session_state.available_subjects:
+                self._initialize_available_subjects()
             
-            if uid_profile_doc.exists:
-                # 両方存在する場合：より高いスコアのデータを保持
-                uid_data = uid_profile_doc.to_dict()
-                
-                # より高いスコアを保持
-                merged_data = email_data.copy()
-                for key in ["weeklyPoints", "totalPoints", "studyDays", "currentMasteryScore"]:
-                    if uid_data.get(key, 0) > email_data.get(key, 0):
-                        merged_data[key] = uid_data[key]
-                
-                # uidのプロフィールを更新
-                uid_profile_ref.set(merged_data)
-                st.success(f"データを統合しました: {email} → {target_uid}")
-                
-            else:
-                # emailのデータをuidにコピー
-                uid_profile_ref.set(email_data)
-                st.success(f"データをコピーしました: {email} → {target_uid}")
-                
-        else:
-            st.warning(f"Email {email} のプロフィールが見つかりません")
+            self._render_sidebar()
+            self._render_main_content()
             
-    except Exception as e:
-        st.error(f"データ統合エラー: {e}")
-        print(f"[ERROR] データ統合エラー: {e}")
-
-def render_ranking_page():
-    """ランキングページを表示（簡素化版）"""
+            # ログイン後のページビュー追跡
+            current_page = st.session_state.get("current_page", "演習")
+            AnalyticsUtils.track_page_view(f"Main App - {current_page}")
     
-    # リアルタイム更新ボタン
-    col1, col2 = st.columns([3, 1])
-    with col2:
-        if st.button("🔄 データ更新", use_container_width=True):
-            st.cache_data.clear()
-            st.rerun()
-    
-    # ランキングデータを取得
-    with st.spinner("データを読み込み中..."):
+    def _track_user_activity(self):
+        """ユーザーアクティビティの追跡"""
         try:
-            ranking_data, all_profiles = fetch_ranking_data()
-        except ValueError:
-            # 古い形式の戻り値に対応
-            ranking_data = fetch_ranking_data()
-            all_profiles = []
-    
-    # 週間ランキング表示
-    if ranking_data:
-        # 現在のユーザーの順位を計算
-        current_user_rank = None
-        current_user_data = None
-        
-        uid = st.session_state.get("uid")
-        email = st.session_state.get("email")
-        
-        if uid:
-            try:
-                db = firestore.client()
-                
-                # まずuidでuser_profilesを検索
-                profile_ref = db.collection("user_profiles").document(uid)
-                profile_doc = profile_ref.get()
-                
-                # uidで見つからない場合はemailで検索
-                if not profile_doc.exists and email:
-                    profile_ref = db.collection("user_profiles").document(email)
-                    profile_doc = profile_ref.get()
-                    st.warning(f"UID {uid} で見つからないため、Email {email} で検索しました")
-                
-                if profile_doc.exists:
-                    current_user_data = profile_doc.to_dict()
-                    current_user_points = current_user_data.get("weeklyPoints", 0)
-                    
-                    # 順位計算（修正）
-                    for i, user in enumerate(ranking_data):
-                        if user["週間ポイント"] < current_user_points:
-                            current_user_rank = i + 1
-                            break
-                    if current_user_rank is None:
-                        # 同じポイントまたはより低いポイントの場合
-                        for i, user in enumerate(ranking_data):
-                            if user["週間ポイント"] == current_user_points:
-                                current_user_rank = i + 1
-                                break
-                        if current_user_rank is None:
-                            current_user_rank = len(ranking_data) + 1
-                            
-                else:
-                    st.error(f"ユーザープロフィールが見つかりません。UID: {uid}, Email: {email}")
-                    
-                    # データ統合の提案
-                    if email and st.button("🔄 データ統合を実行", help="emailベースでユーザーデータを統合します"):
-                        integrate_user_data(uid, email)
-                        st.rerun()
-            
-            except Exception as e:
-                print(f"[ERROR] 現在ユーザー順位計算エラー: {e}")
-                st.error(f"データ取得エラー: {e}")
-        
-# ========== スマートカード生成関数 ==========
-    
-    # 3つのタブを作成
-    tab1, tab2, tab3 = st.tabs(["🏅 週間ランキング", "📊 習熟度分布", "📈 進捗統計"])
-    
-    with tab1:
-        # 週間ランキングタブ
-        st.subheader("🏆 週間ランキング")
-
-        if ranking_data:
-            # 現在のユーザーの順位を計算
-            current_user_rank = None
-            current_user_data = None
-            
             uid = st.session_state.get("uid")
-            email = st.session_state.get("email")
-            
             if uid:
-                try:
-                    db = firestore.client()
+                # セッションの開始追跡（初回のみ）
+                if not st.session_state.get("session_tracked"):
+                    log_to_ga("session_start", uid, {
+                        "session_type": "web_app",
+                        "timestamp": datetime.datetime.now().isoformat(),
+                        "user_agent": st.context.headers.get("User-Agent", "unknown") if hasattr(st.context, 'headers') else "unknown"
+                    })
+                    st.session_state["session_tracked"] = True
+                
+                # アクティブユーザーの追跡（5分ごと）
+                import time
+                last_activity = st.session_state.get("last_activity_logged", 0)
+                current_time = time.time()
+                
+                if current_time - last_activity > 300:  # 5分 = 300秒
+                    log_to_ga("user_active", uid, {
+                        "active_duration_seconds": current_time - last_activity,
+                        "current_page": st.session_state.get("current_page", "unknown")
+                    })
+                    st.session_state["last_activity_logged"] = current_time
                     
-                    # UIDとEmailの両方でプロフィールを検索して、より良いデータを取得
-                    uid_profile_data = None
-                    email_profile_data = None
-                    
-                    # まずuidでuser_profilesを検索
-                    profile_ref = db.collection("user_profiles").document(uid)
-                    profile_doc = profile_ref.get()
-                    if profile_doc.exists:
-                        uid_profile_data = profile_doc.to_dict()
-                    
-                    # emailでも検索
-                    if email:
-                        email_profile_ref = db.collection("user_profiles").document(email)
-                        email_profile_doc = email_profile_ref.get()
-                        if email_profile_doc.exists:
-                            email_profile_data = email_profile_doc.to_dict()
-                    
-                    # より良いプロフィールデータを選択（ニックネーム設定済み > 週間ポイント > 最新更新）
-                    if uid_profile_data and email_profile_data:
-                        uid_nickname = uid_profile_data.get("nickname", "")
-                        email_nickname = email_profile_data.get("nickname", "")
-                        uid_weekly_points = uid_profile_data.get("weeklyPoints", 0)
-                        email_weekly_points = email_profile_data.get("weeklyPoints", 0)
-                        uid_updated = uid_profile_data.get("lastUpdated")
-                        email_updated = email_profile_data.get("lastUpdated")
-                        
-                        # ニックネームが設定されている方を優先
-                        if uid_nickname and uid_nickname != "匿名ユーザー" and (not email_nickname or email_nickname == "匿名ユーザー"):
-                            current_user_data = uid_profile_data
-                        elif email_nickname and email_nickname != "匿名ユーザー" and (not uid_nickname or uid_nickname == "匿名ユーザー"):
-                            current_user_data = email_profile_data
-                        # 両方にニックネームがある場合は週間ポイントで判断
-                        elif uid_weekly_points >= email_weekly_points:
-                            current_user_data = uid_profile_data
-                        else:
-                            current_user_data = email_profile_data
-                    elif uid_profile_data:
-                        current_user_data = uid_profile_data
-                    elif email_profile_data:
-                        current_user_data = email_profile_data
-                    
-                    if current_user_data:
-                        current_user_points = current_user_data.get("weeklyPoints", 0)
-                        
-                        # 順位計算（現在のユーザーのポイントより高いユーザー数+1）
-                        higher_users = 0
-                        for user in ranking_data:
-                            if user["週間ポイント"] > current_user_points:
-                                higher_users += 1
-                        current_user_rank = higher_users + 1
-                                
-                    else:
-                        st.error(f"ユーザープロフィールが見つかりません。UID: {uid}, Email: {email}")
-                        
-                        # データ統合の提案
-                        if email and st.button("🔄 データ統合を実行", help="emailベースでユーザーデータを統合します"):
-                            integrate_user_data(uid, email)
-                            st.rerun()
-                
-                except Exception as e:
-                    print(f"[ERROR] 現在ユーザー順位計算エラー: {e}")
-                    st.error(f"データ取得エラー: {e}")
-            
-            # 簡潔なランキング表示
-            import pandas as pd
-            df = pd.DataFrame(ranking_data)
-            
-            # 現在のユーザーの順位表示
-            if current_user_rank and current_user_data:
-                st.info(f"🎯 あなたの現在の順位: {current_user_rank}位 (週間ポイント: {current_user_data.get('weeklyPoints', 0):,}pt)")
-            
-            # テーブル表示
-            st.dataframe(
-                df,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "順位": st.column_config.NumberColumn("順位", width="small"),
-                    "ニックネーム": st.column_config.TextColumn("ニックネーム", width="medium"),
-                    "週間ポイント": st.column_config.NumberColumn("週間ポイント", width="small"),
-                    "総ポイント": st.column_config.NumberColumn("総ポイント", width="small"),
-                    "学習日数": st.column_config.NumberColumn("学習日数", width="small"),
-                    "習熟度": st.column_config.TextColumn("習熟度", width="small")
-                }
-            )
-            
-            # 基本統計情報
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.metric("参加者数", len(ranking_data))
-            
-            with col2:
-                if ranking_data:
-                    total_weekly_points = sum(user["週間ポイント"] for user in ranking_data)
-                    avg_weekly_points = total_weekly_points / len(ranking_data)
-                    st.metric("平均週間ポイント", f"{avg_weekly_points:.1f}")
-            
-        else:
-            st.info("現在ランキングに参加しているユーザーがいません。")
-
-    with tab2:
-        # 習熟度分布タブ
-        st.subheader("📊 習熟度分布と正規分布分析")
-        
-        if all_profiles:
-            # 習熟度データの抽出
-            mastery_scores = [profile.get("currentMasteryScore", 0) for profile in all_profiles if profile.get("currentMasteryScore", 0) > 0]
-            
-            if len(mastery_scores) >= 3:
-                # 基本統計量
-                if SCIPY_AVAILABLE:
-                    import numpy as np
-                    mean_mastery = np.mean(mastery_scores)
-                    std_mastery = np.std(mastery_scores)
-                    median_mastery = np.median(mastery_scores)
-                else:
-                    mean_mastery = sum(mastery_scores) / len(mastery_scores)
-                    median_mastery = sorted(mastery_scores)[len(mastery_scores)//2]
-                    std_mastery = (sum([(x - mean_mastery)**2 for x in mastery_scores]) / len(mastery_scores))**0.5
-                
-                # 統計量表示
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("平均値", f"{mean_mastery:.1f}%")
-                with col2:
-                    st.metric("標準偏差", f"{std_mastery:.1f}%")
-                with col3:
-                    st.metric("中央値", f"{median_mastery:.1f}%")
-                with col4:
-                    st.metric("データ数", len(mastery_scores))
-                
-                # 正規分布との比較プロット
-                if PLOTLY_AVAILABLE:
-                    if SCIPY_AVAILABLE:
-                        x = np.linspace(0, 100, 1000)
-                        normal_dist = stats.norm.pdf(x, mean_mastery, std_mastery)
-                        
-                        fig = go.Figure()
-                        
-                        # ヒストグラム（実際のデータ）
-                        fig.add_trace(go.Histogram(
-                            x=mastery_scores,
-                            name="実際の分布",
-                            nbinsx=20,
-                            opacity=0.7,
-                            histnorm='probability density',
-                            marker_color='lightblue'
-                        ))
-                        
-                        # 正規分布曲線
-                        fig.add_trace(go.Scatter(
-                            x=x, y=normal_dist,
-                            mode='lines',
-                            name=f'正規分布 (μ={mean_mastery:.1f}, σ={std_mastery:.1f})',
-                            line=dict(color='red', width=2)
-                        ))
-                        
-                        fig.update_layout(
-                            title="習熟度分布と正規分布の比較",
-                            xaxis_title="習熟度 (%)",
-                            yaxis_title="確率密度",
-                            showlegend=True,
-                            height=500
-                        )
-                        
-                        st.plotly_chart(fig, use_container_width=True)
-                    else:
-                        # scipyが利用できない場合は基本的なヒストグラムのみ表示
-                        fig = go.Figure()
-                        fig.add_trace(go.Histogram(
-                            x=mastery_scores,
-                            name="習熟度分布",
-                            nbinsx=20,
-                            opacity=0.7,
-                            marker_color='lightblue'
-                        ))
-                        
-                        fig.update_layout(
-                            title="習熟度分布",
-                            xaxis_title="習熟度 (%)",
-                            yaxis_title="人数",
-                            height=500
-                        )
-                        
-                        st.plotly_chart(fig, use_container_width=True)
-                        st.info("📊 正規分布との比較には scipy が必要です。より詳細な統計分析を行うには `pip install scipy` でインストールしてください。")
-                else:
-                    st.info("📊 グラフ表示には plotly が必要です。")
-                
-                # 現在のユーザーの位置
-                uid = st.session_state.get("uid")
-                if uid:
-                    try:
-                        db = firestore.client()
-                        profile_ref = db.collection("user_profiles").document(uid)
-                        profile_doc = profile_ref.get()
-                        if profile_doc.exists:
-                            user_data = profile_doc.to_dict()
-                            user_mastery = user_data.get("currentMasteryScore", 0)
-                            
-                            if user_mastery > 0:
-                                # ユーザーの偏差値計算
-                                if SCIPY_AVAILABLE and std_mastery > 0:
-                                    z_score = (user_mastery - mean_mastery) / std_mastery
-                                    percentile = stats.norm.cdf(z_score) * 100
-                                    deviation_score = 50 + 10 * z_score
-                                    
-                                    st.markdown("#### 🎯 あなたの位置")
-                                    col1, col2, col3 = st.columns(3)
-                                    with col1:
-                                        st.metric("あなたの習熟度", f"{user_mastery:.1f}%")
-                                    with col2:
-                                        st.metric("偏差値", f"{deviation_score:.1f}")
-                                    with col3:
-                                        st.metric("上位パーセンタイル", f"{100-percentile:.1f}%")
-                                    
-                                    # 位置の説明
-                                    if percentile >= 80:
-                                        st.success("🌟 優秀！上位20%に入っています")
-                                    elif percentile >= 60:
-                                        st.info("📈 平均以上の習熟度です")
-                                    elif percentile >= 40:
-                                        st.info("📊 平均的な習熟度です")
-                                    else:
-                                        st.warning("💪 まだまだ伸びしろがあります！")
-                                else:
-                                    # scipyが利用できない場合は簡易的な位置計算
-                                    above_user = sum(1 for score in mastery_scores if score > user_mastery)
-                                    rank_percent = (above_user / len(mastery_scores)) * 100 if len(mastery_scores) > 0 else 0
-                                    
-                                    st.markdown("#### 🎯 あなたの位置")
-                                    col1, col2 = st.columns(2)
-                                    with col1:
-                                        st.metric("あなたの習熟度", f"{user_mastery:.1f}%")
-                                    with col2:
-                                        st.metric("上位パーセンタイル", f"{rank_percent:.1f}%")
-                                    
-                                    # 位置の説明
-                                    if rank_percent <= 20:
-                                        st.success("🌟 優秀！上位20%に入っています")
-                                    elif rank_percent <= 40:
-                                        st.info("📈 平均以上の習熟度です")
-                                    elif rank_percent <= 60:
-                                        st.info("📊 平均的な習熟度です")
-                                    else:
-                                        st.warning("💪 まだまだ伸びしろがあります！")
-                    except Exception as e:
-                        print(f"[ERROR] ユーザー位置計算エラー: {e}")
-                
-                # 習熟度レンジ別分布
-                st.markdown("#### 📈 習熟度レンジ別分布")
-                bins = [0, 20, 40, 60, 80, 100]
-                bin_labels = ["0-20%", "20-40%", "40-60%", "60-80%", "80-100%"]
-                
-                bin_counts = []
-                for i in range(len(bins)-1):
-                    count = sum(1 for score in mastery_scores if bins[i] <= score < bins[i+1])
-                    bin_counts.append(count)
-                
-                # 最高レンジの調整（100%を含める）
-                if mastery_scores:
-                    max_score = max(mastery_scores)
-                    if max_score == 100:
-                        bin_counts[-1] += 1
-                
-                col1, col2, col3, col4, col5 = st.columns(5)
-                for i, (label, count) in enumerate(zip(bin_labels, bin_counts)):
-                    with [col1, col2, col3, col4, col5][i]:
-                        st.metric(label, count)
-                
-            else:
-                st.info("習熟度分析には最低3人のデータが必要です。")
-        else:
-            st.info("分析用のデータがありません。")
-    
-    with tab3:
-        # 進捗統計タブ
-        st.subheader("📈 全体進捗統計")
-        
-        try:
-            if all_profiles:
-                # 各指標のデータを抽出
-                weekly_points = [profile.get("weeklyPoints", 0) for profile in all_profiles]
-                total_points = [profile.get("totalPoints", 0) for profile in all_profiles]
-                study_days = [profile.get("studyDays", 0) for profile in all_profiles]
-                mastery_scores = [profile.get("currentMasteryScore", 0) for profile in all_profiles if profile.get("currentMasteryScore", 0) > 0]
-                
-                # 基本統計
-                col1, col2, col3, col4 = st.columns(4)
-                
-                with col1:
-                    st.metric("アクティブユーザー数", len(set().union(
-                        {i for i, _ in enumerate(weekly_points)},
-                        {i for i, _ in enumerate(total_points)},
-                        {i for i, _ in enumerate(study_days)}
-                    )))
-                
-                with col2:
-                    if total_points:
-                        if SCIPY_AVAILABLE:
-                            avg_total = np.mean(total_points)
-                        else:
-                            avg_total = sum(total_points) / len(total_points)
-                        st.metric("平均総ポイント", f"{avg_total:,.0f}")
-                    else:
-                        st.metric("平均総ポイント", "N/A")
-                
-                with col3:
-                    if study_days:
-                        if SCIPY_AVAILABLE:
-                            avg_days = np.mean(study_days)
-                        else:
-                            avg_days = sum(study_days) / len(study_days)
-                        st.metric("平均学習日数", f"{avg_days:.1f}日")
-                    else:
-                        st.metric("平均学習日数", "N/A")
-                
-                with col4:
-                    if mastery_scores:
-                        if SCIPY_AVAILABLE:
-                            avg_mastery = np.mean(mastery_scores)
-                        else:
-                            avg_mastery = sum(mastery_scores) / len(mastery_scores)
-                        st.metric("平均習熟度", f"{avg_mastery:.1f}%")
-                    else:
-                        st.metric("平均習熟度", "N/A")
-                
-                # 各指標の分布グラフ
-                if PLOTLY_AVAILABLE:
-                    # 2x2のサブプロット
-                    fig = make_subplots(
-                        rows=2, cols=2,
-                        subplot_titles=('週間ポイント分布', '総ポイント分布', '学習日数分布', '習熟度分布'),
-                        specs=[[{"secondary_y": False}, {"secondary_y": False}],
-                               [{"secondary_y": False}, {"secondary_y": False}]]
-                    )
-                    
-                    # 週間ポイント分布
-                    if weekly_points:
-                        fig.add_trace(
-                            go.Histogram(x=weekly_points, name="週間ポイント", nbinsx=20),
-                            row=1, col=1
-                        )
-                    
-                    # 総ポイント分布
-                    if total_points:
-                        fig.add_trace(
-                            go.Histogram(x=total_points, name="総ポイント", nbinsx=20),
-                            row=1, col=2
-                        )
-                    
-                    # 学習日数分布
-                    if study_days:
-                        fig.add_trace(
-                            go.Histogram(x=study_days, name="学習日数", nbinsx=20),
-                            row=2, col=1
-                        )
-                    
-                    # 習熟度分布
-                    if mastery_scores:
-                        fig.add_trace(
-                            go.Histogram(x=mastery_scores, name="習熟度", nbinsx=20),
-                            row=2, col=2
-                        )
-                    
-                    fig.update_layout(
-                        showlegend=False,
-                        title_text="全体進捗分布",
-                        height=600
-                    )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                # 相関分析
-                if len(total_points) > 5 and len(mastery_scores) > 5:
-                    st.markdown("#### 🔗 相関分析")
-                    
-                    # 総ポイントと習熟度の相関
-                    import pandas as pd
-                    
-                    # データを合わせる（長さを統一）
-                    min_len = min(len(total_points), len(mastery_scores))
-                    if min_len > 0:
-                        correlation_df = pd.DataFrame({
-                            '総ポイント': total_points[:min_len],
-                            '習熟度': mastery_scores[:min_len]
-                        })
-                        
-                        # 散布図
-                        if PLOTLY_AVAILABLE:
-                            fig_corr = px.scatter(
-                                correlation_df, 
-                                x='総ポイント', 
-                                y='習熟度',
-                                title='総ポイント vs 習熟度の相関',
-                                trendline="ols" if SCIPY_AVAILABLE else None
-                            )
-                            
-                            st.plotly_chart(fig_corr, use_container_width=True)
-                        else:
-                            st.info("📊 散布図の表示には plotly が必要です。")
-                        
-                        # 相関係数
-                        correlation = correlation_df.corr().iloc[0, 1]
-                        st.metric("相関係数", f"{correlation:.3f}")
-                        
-                        if correlation > 0.7:
-                            st.success("🔗 強い正の相関があります")
-                        elif correlation > 0.4:
-                            st.info("📈 中程度の正の相関があります")
-                        elif correlation > 0.1:
-                            st.info("📊 弱い正の相関があります")
-                        else:
-                            st.warning("📋 相関は見られません")
-                        
-                        if not SCIPY_AVAILABLE:
-                            st.info("📈 トレンドライン表示には scipy が必要です。`pip install scipy` でインストールしてください。")
-                    
-            else:
-                st.info("統計分析用のデータがありません。")
-                
         except Exception as e:
-            st.error(f"進捗統計の取得に失敗しました: {str(e)}")
-            st.info("データベースからの進捗情報の取得に失敗しました。")
+            print(f"[DEBUG] User activity tracking error: {e}")
     
-    # 更新情報
-    st.caption("⏰ データは5分ごとに更新されます | ランキング参加設定はサイドバーで変更できます")
-
-# --- 短期復習キュー管理関数 ---
-SHORT_REVIEW_COOLDOWN_MIN_Q1 = 5        # もう一度
-SHORT_REVIEW_COOLDOWN_MIN_Q2_HISSHU = 10 # 必修で「難しい」
-
-def enqueue_short_review(group, minutes: int):
-    ready_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=minutes)
-    st.session_state.short_term_review_queue = st.session_state.get("short_term_review_queue", [])
-    st.session_state.short_term_review_queue.append({"group": group, "ready_at": ready_at})
-
-# --- 演習ページ ---
-def render_practice_page():
-    # 学習ログを統合してカードデータを最新化（必要な場合のみ）
-    uid = st.session_state.get("uid")
-    if uid and st.session_state.get("cards") and should_integrate_logs(uid):
-        st.session_state.cards = integrate_learning_logs_into_cards(st.session_state.cards, uid)
+    def _hide_sidebar(self):
+        """サイドバーを非表示にする"""
+        st.markdown("""
+        <style>
+        /* サイドバーを完全に非表示にする */
+        .css-1d391kg {display: none !important}
+        section[data-testid="stSidebar"] {display: none !important}
+        .sidebar .sidebar-content {display: none !important}
+        
+        /* メインコンテンツエリアを調整（サイドバー分の余白を削除） */
+        .css-18e3th9 {padding-left: 1rem !important}
+        .css-1lcbmhc {margin-left: 0 !important}
+        .main .block-container {padding-left: 1rem !important}
+        
+        /* Streamlit 1.28+ の新しいサイドバークラス */
+        [data-testid="stSidebar"][aria-expanded="true"] {display: none !important}
+        [data-testid="stSidebar"][aria-expanded="false"] {display: none !important}
+        
+        /* サイドバートグルボタンも非表示 */
+        .css-1v0mbdj {display: none !important}
+        button[kind="header"] {display: none !important}
+        </style>
+        """, unsafe_allow_html=True)
     
-    # 前回セッション復帰処理
-    if st.session_state.get("continue_previous") and st.session_state.get("session_choice_made"):
-        st.success("🔄 前回のセッションを復帰しました")
-        # 復帰フラグをクリア
-        st.session_state.pop("continue_previous", None)
-        
-        # 前回のアクティブセッション情報があれば、完全なデータを読み込んでキューを復元
-        if st.session_state.get("current_question_index") is not None:
-            st.info(f"問題 {st.session_state.get('current_question_index', 0) + 1} から継続します")
-        
-        # おまかせ演習の場合は学習キューを復元
-        uid = st.session_state.get("uid")
-        if uid and st.session_state.get("previous_session_type") == "おまかせ演習":
-            st.info("📚 おまかせ演習の学習キューを復元中...")
-            # 完全なユーザーデータを読み込み
-            full_data = load_user_data_full(uid, cache_buster=int(time.time()))
-            if full_data:
-                # 学習キューをセッションに復元
-                st.session_state["main_queue"] = full_data.get("main_queue", [])
-                st.session_state["short_term_review_queue"] = full_data.get("short_term_review_queue", [])
-                st.session_state["current_q_group"] = full_data.get("current_q_group", [])
-                print(f"[DEBUG] 学習キュー復元: main_queue={len(st.session_state.get('main_queue', []))}, current_q_group={len(st.session_state.get('current_q_group', []))}")
+    def _render_sidebar(self):
+        """サイドバーの描画（ログイン済みユーザー向け）"""
+        with st.sidebar:
+            self._render_user_menu()
     
-    def get_next_q_group():
-        now = datetime.datetime.now(datetime.timezone.utc)
+    def _render_login_page(self):
+        """🔐 2. Manual Login Screen - タブ形式のログイン画面"""
+        st.title("🦷 歯科国家試験AI対策アプリ")
+        st.markdown("### 🔐 ログイン／新規登録")
         
-        # 利用可能な復習問題を取得
-        stq = st.session_state.get("short_term_review_queue", [])
-        ready_reviews = []
-        for i, item in enumerate(stq):
-            ra = item.get("ready_at")
-            if isinstance(ra, str):
-                try: ra = datetime.datetime.fromisoformat(ra)
-                except Exception: ra = now
-            if not ra or ra <= now:
-                ready_reviews.append((i, item))
+        tab_login, tab_signup, tab_reset = st.tabs(["ログイン", "新規登録", "パスワードリセット"])
         
-        # 利用可能な新規問題を取得
-        main_queue = st.session_state.get("main_queue", [])
+        with tab_login:
+            self._render_login_tab()
         
-        # 復習問題と新規問題のバランス調整
-        # 復習問題が多い場合は優先度を上げる
-        review_count = len(ready_reviews)
-        new_count = len(main_queue)
+        with tab_signup:
+            self._render_signup_tab()
         
-        # 復習問題が5個以上溜まっている場合は復習を優先
-        if review_count >= 5:
-            if ready_reviews:
-                i, item = ready_reviews[0]
-                stq.pop(i)
-                return item.get("group", [])
-        
-        # 通常時：復習30%、新規70%の確率で選択
-        elif review_count > 0 and new_count > 0:
-            import random
-            if random.random() < 0.3:  # 30%の確率で復習
-                i, item = ready_reviews[0]
-                stq.pop(i)
-                return item.get("group", [])
-            else:  # 70%の確率で新規
-                return main_queue.pop(0)
-        
-        # 復習問題のみ利用可能
-        elif ready_reviews:
-            i, item = ready_reviews[0]
-            stq.pop(i)
-            return item.get("group", [])
-        
-        # 新規問題のみ利用可能
-        elif main_queue:
-            return main_queue.pop(0)
-        
-        return []
-
-    if not st.session_state.get("current_q_group"):
-        st.session_state.current_q_group = get_next_q_group()
-
-    current_q_group = st.session_state.get("current_q_group", [])
-    if not current_q_group:
-        st.info("学習を開始するには、サイドバーで問題を選択してください。")
-        st.stop()
-
-    q_objects = []
-    uid = st.session_state.get("uid")
-    has_gakushi_permission = check_gakushi_permission(uid)
-    processed_case_ids = set()
+        with tab_reset:
+            self._render_reset_tab()
     
-    for q_num in current_q_group:
-        if q_num in ALL_QUESTIONS_DICT:
-            # 権限チェック：学士試験の問題で権限がない場合はスキップ
-            if q_num.startswith("G") and not has_gakushi_permission:
-                continue
-            
-            q_obj = ALL_QUESTIONS_DICT[q_num]
-            case_id = q_obj.get('case_id')
-            
-            # case_idがある場合、同じcase_idの全ての問題を取得（二連問対応）
-            if case_id and case_id in CASES and case_id not in processed_case_ids:
-                processed_case_ids.add(case_id)
-                # 同じcase_idの全問題を取得
-                case_questions = []
-                for candidate_q in ALL_QUESTIONS:
-                    if candidate_q.get('case_id') == case_id:
-                        if candidate_q['number'].startswith("G") and not has_gakushi_permission:
-                            continue
-                        case_questions.append(candidate_q)
-                
-                # 問題番号順にソート
-                case_questions.sort(key=lambda x: x['number'])
-                q_objects.extend(case_questions)
-            elif not case_id:  # case_idがない単問のみ追加
-                q_objects.append(q_obj)
-    if not q_objects:
-        # デバッグ情報の表示
-        now = datetime.datetime.now(datetime.timezone.utc)
-        stq = st.session_state.get("short_term_review_queue", [])
-        ready_reviews = sum(1 for item in stq if (lambda ra: not ra or ra <= now)(
-            datetime.datetime.fromisoformat(item.get("ready_at")) if isinstance(item.get("ready_at"), str) 
-            else item.get("ready_at", now)
-        ))
-        pending_new = len(st.session_state.get("main_queue", []))
-        
-        if ready_reviews + pending_new > 0:
-            st.info("学習を開始するには、サイドバーで「🚀 今日の学習を開始する」をクリックしてください。")
-        else:
-            st.success("🎉 このセッションの学習はすべて完了しました！")
-            st.balloons()
-        st.stop()
-
-    first_q = q_objects[0]
-    group_id = first_q['number']
-    is_checked = st.session_state.get(f"checked_{group_id}", False)
-    case_data = CASES.get(first_q.get('case_id')) if first_q.get('case_id') else None
-
-    # 問題タイプの表示（復習か新規か）
-    cards = st.session_state.get("cards", {})
-    if group_id in cards and cards[group_id].get('n', 0) > 0:
-        st.info(f"🔄 **復習問題**")
-    else:
-        st.info("🆕 **新規問題**")
-
-    if case_data:
-        st.info(f"【連問】この症例には{len(q_objects)}問の問題が含まれています。")
-        if 'scenario_text' in case_data:
-            st.markdown(case_data['scenario_text'])
-
-    if not is_checked:
-        with st.form(key=f"answer_form_{group_id}"):
-            for q in q_objects:
-                st.markdown(f"#### {q['number']}")
-                st.markdown(chem_latex(q.get('question', '')))
-                
-                if is_ordering_question(q):
-                    # --- 修正箇所①：並び替え問題の選択肢表示 ---
-                    # 選択肢をシャッフルし、A, B, C...のラベルを付けて表示
-                    shuffled_choices, _ = get_shuffled_choices(q)
-                    st.markdown("##### 選択肢")
-                    for i, choice_text in enumerate(shuffled_choices):
-                        st.markdown(f"**{chr(65 + i)}.** {choice_text}")
-                    # 解答例を固定のプレースホルダーに変更
-                    st.text_input("解答を順番に入力してください（例: ABCDE）", key=f"order_input_{q['number']}")
-                elif "choices" in q and q["choices"]:
-                    shuffled_choices, _ = get_shuffled_choices(q)
-                    user_selection_key = f"user_selection_{q['number']}"
-                    if user_selection_key not in st.session_state:
-                        st.session_state[user_selection_key] = [False] * len(shuffled_choices)
-                    for i, choice_item in enumerate(shuffled_choices):
-                        if isinstance(choice_item, dict):
-                            label = f"{chr(65 + i)}. {chem_latex(choice_item.get('text', str(choice_item)))}"
-                        else:
-                            label = f"{chr(65 + i)}. {chem_latex(str(choice_item))}"
-                        checked = st.session_state[user_selection_key][i]
-                        new_checked = st.checkbox(label, value=checked, key=f"user_selection_{q['number']}_{i}")
-                        st.session_state[user_selection_key][i] = new_checked
-                else:
-                    st.text_input("回答を入力", key=f"free_input_{q['number']}")
-            submitted_check = st.form_submit_button("回答をチェック", type="primary")
-            # スキップボタンに追加のマークアップを提供
-            st.markdown("""
-            <style>
-            /* スキップボタン専用スタイル */
-            .stForm button:nth-of-type(2) {
-                background-color: #4a5568 !important;
-                color: #ffffff !important;
-                border: 1px solid #718096 !important;
-            }
-            .stForm button:nth-of-type(2):hover {
-                background-color: #718096 !important;
-                color: #ffffff !important;
-            }
-            </style>
-            """, unsafe_allow_html=True)
-            skipped = st.form_submit_button("スキップ", type="secondary")
-            if submitted_check:
-                # セッション維持：ユーザー活動検知
-                if not ensure_valid_session():
-                    st.warning("セッションが期限切れです。再度ログインしてください。")
-                    st.rerun()
-                    
-                for q in q_objects:
-                    answer_str = (q.get("answer") or "").strip()
-
-                    # 補助: 文字列 → インデックス列（A=0, B=1,...）。全角英字・区切り文字も許容
-                    def _letters_to_indices(s: str, num_choices: int, uniq=False, sort=False):
-                        if not isinstance(s, str):
-                            return []
-                        # 全角英大文字→半角, 非英字は除去
-                        table = str.maketrans({chr(0xFF21 + i): chr(0x41 + i) for i in range(26)})  # Ａ..Ｚ→A..Z
-                        s = s.translate(table)
-                        # よくある区切り: / , ・ 、 ， と → - > スペース などを全部削除して A..Z のみ残す
-                        s = re.sub(r"[^A-Za-z]", "", s).upper()
-                        idxs = [ord(ch) - 65 for ch in s if 0 <= (ord(ch) - 65) < num_choices]
-                        if uniq:
-                            idxs = list(dict.fromkeys(idxs))
-                        if sort:
-                            idxs = sorted(idxs)
-                        return idxs
-
-                    # 並び替え問題
-                    if is_ordering_question(q):
-                        shuffle_indices = st.session_state.get(
-                            f"shuffled_{q['number']}",
-                            list(range(len(q.get("choices", []))))
-                        )
-                        n = len(q.get("choices", []))
-                        user_raw = st.session_state.get(f"order_input_{q['number']}", "")
-
-                        # 表示上の A,B,C...（=シャッフル後の並び）を元のインデックスへ戻す
-                        disp_idxs = _letters_to_indices(user_raw, n)
-                        if len(disp_idxs) != n:
-                            is_correct = False
-                            reason = "入力の文字数が選択肢数と一致しません。例: ABCDE"
-                        else:
-                            user_orig_order = [shuffle_indices[i] for i in disp_idxs]
-                            correct_orig_order = _letters_to_indices(answer_str, n)
-                            is_correct = (user_orig_order == correct_orig_order)
-                            reason = ""
-
-                        # 結果表示（正解シーケンスも見せる）
-                        def _fmt_seq(idxs):
-                            return " → ".join(chr(65 + i) for i in idxs)
-
-                        if is_correct:
-                            # 正解表示は削除（ユーザーリクエスト）
-                            pass
-                        else:
-                            # 正解は元の並び基準。ユーザー入力は表示基準なので、見せるときは表示基準にも直す
-                            # 正解（表示基準）に変換: 正解の各 original idx が shuffle 上で何番目かを逆写像で求める
-                            inv = {orig: disp for disp, orig in enumerate(shuffle_indices)}
-                            correct_disp = [_fmt_seq([inv[i] for i in _letters_to_indices(answer_str, n)])]
-                            # 不正解表示は削除（ユーザーリクエスト）
-                            pass
-
-                        # 結果をセッション状態に保存（自己評価後にSM-2更新）
-                        st.session_state.result_log[q["number"]] = is_correct
-
-                    # 単一/複数選択（チェックボックス）
-                    elif "choices" in q and q["choices"]:
-                        shuffled_choices, shuffle_indices = get_shuffled_choices(q)
-                        user_selection_key = f"user_selection_{q['number']}"
-                        picks_disp = [
-                            i for i, v in enumerate(st.session_state.get(user_selection_key, []))
-                            if bool(v)
-                        ]
-                        picks_orig = sorted(shuffle_indices[i] for i in picks_disp)
-
-                        n = len(q["choices"])
-                        ans_orig = sorted(set(_letters_to_indices(answer_str, n)))
-
-                        is_correct = (picks_orig == ans_orig)
-
-                        # 結果表示
-                        def _fmt_set(idxs):
-                            return " / ".join(sorted(chr(65 + i) for i in idxs))
-
-                        if is_correct:
-                            # 正解表示は削除（ユーザーリクエスト）
-                            pass
-                        else:
-                            # 不正解表示は削除（ユーザーリクエスト）
-                            pass
-
-                        # 結果をセッション状態に保存（自己評価後にSM-2更新）
-                        st.session_state.result_log[q["number"]] = is_correct
-
-                    # 自由入力
-                    else:
-                        user_ans = (st.session_state.get(f"free_input_{q['number']}", "") or "").strip()
-                        def _norm(s: str) -> str:
-                            s = str(s)
-                            # 記号・空白を除いて小文字化（ざっくり一致）
-                            return re.sub(r"\s+", "", s).lower()
-
-                        is_correct = (_norm(user_ans) == _norm(answer_str))
-
-                        if is_correct:
-                            # 正解表示は削除（ユーザーリクエスト）
-                            pass
-                        else:
-                            # 不正解表示は削除（ユーザーリクエスト）
-                            pass
-
-                        # 結果をセッション状態に保存（自己評価後にSM-2更新）
-                        st.session_state.result_log[q["number"]] = is_correct
-
-                # フォーム全体の後処理：解答結果を保存し、自己評価段階へ移行
-                st.session_state[f"checked_{group_id}"] = True
-                
-                # セッション状態の自動保存は廃止（書き込み頻度削減のため）
-                # 保存は自己評価フォーム送信時のみ実行
-                
-                # 画面を再描画して自己評価フォームを表示
-                st.rerun()
-            if skipped:
-                # セッション維持：ユーザー活動検知
-                if not ensure_valid_session():
-                    st.warning("セッションが期限切れです。再度ログインしてください。")
-                    st.rerun()
-                    
-                # スキップ：現在のグループを末尾へ戻して次へ
-                st.session_state.main_queue = st.session_state.get("main_queue", [])
-                st.session_state.main_queue.append(current_q_group)
-                st.session_state.current_q_group = []
-                st.rerun()
-    else:
-        for q in q_objects:
-            st.markdown(f"#### {q['number']}")
-            st.markdown(chem_latex(q.get('question', '')))
-            is_correct = st.session_state.result_log.get(q['number'], False)
-            if is_ordering_question(q):
-                # --- 修正箇所③：並び替え問題の正解表示 ---
-                # 正解を計算するためにシャッフル情報を取得
-                shuffled_choices, shuffle_indices = get_shuffled_choices(q)
-
-                # 正解を確認するために、シャッフルされた選択肢を再度表示
-                st.markdown("##### 選択肢")
-                for i, choice_text in enumerate(shuffled_choices):
-                    st.markdown(f"**{chr(65 + i)}.** {choice_text}")
-
-                st.text_input("あなたの解答", value=st.session_state.get(f"order_input_{q['number']}", ""), disabled=True)
-                if is_correct:
-                    st.markdown("<span style='font-size:1.5em; color:green;'>✓ 正解！</span>", unsafe_allow_html=True)
-                else:
-                    st.markdown("<span style='font-size:1.5em; color:red;'>× 不正解</span>", unsafe_allow_html=True)
-                    # シャッフル後の正しい答えを計算して表示
-                    correct_shuffled_answer_str = ""
-                    try:
-                        reverse_shuffle_map = {orig_idx: new_idx for new_idx, orig_idx in enumerate(shuffle_indices)}
-                        original_answer_str = q.get("answer", "").strip().upper()
-                        original_indices_correct_order = [ord(c) - 65 for c in original_answer_str]
-                        shuffled_correct_indices = [reverse_shuffle_map[orig_idx] for orig_idx in original_indices_correct_order]
-                        correct_shuffled_answer_str = "".join([chr(65 + i) for i in shuffled_correct_indices])
-                    except (KeyError, TypeError, ValueError):
-                        correct_shuffled_answer_str = "エラー"
-                    st.markdown(f"<span style='color:blue;'>正解: {correct_shuffled_answer_str}</span>", unsafe_allow_html=True)
-
-            elif "choices" in q and q["choices"]:
-                shuffled_choices, shuffle_indices = get_shuffled_choices(q)
-                answer_str = q.get("answer", "")
-                if "/" in answer_str or "／" in answer_str:
-                    correct_letters = answer_str.replace("／", "/").split("/")
-                else:
-                    correct_letters = list(answer_str)
-                correct_indices = [ord(l) - 65 for l in correct_letters if l.isalpha()]
-                correct_labels = [chr(65 + shuffle_indices.index(i)) for i in correct_indices if i < len(shuffle_indices) and i in shuffle_indices]
-                for i, choice_item in enumerate(shuffled_choices):
-                    if isinstance(choice_item, dict):
-                        label = f"{chr(65 + i)}. {chem_latex(choice_item.get('text', str(choice_item)))}"
-                    else:
-                        label = f"{chr(65 + i)}. {chem_latex(str(choice_item))}"
-                    user_selection_key = f"user_selection_{q['number']}"
-                    is_selected = st.session_state.get(user_selection_key, [False]*len(shuffled_choices))[i]
-                    st.checkbox(label, value=is_selected, disabled=True, key=f"user_selection_{q['number']}_{i}")
-                
-                # 自己評価フォーム内での正解/不正解表示（復活）
-                is_correct = st.session_state.result_log.get(q["number"], False)
-                if is_correct:
-                    st.markdown("<span style='font-size:1.5em; color:green;'>✓ 正解！</span>", unsafe_allow_html=True)
-                    # 複数解答の場合はその旨を表示
-                    if "/" in answer_str or "／" in answer_str:
-                        st.markdown(f"<span style='color:green;'>複数解答問題でした - 正解: {'・'.join(correct_labels)} （いずれも正解）</span>", unsafe_allow_html=True)
-                else:
-                    st.markdown("<span style='font-size:1.5em; color:red;'>× 不正解</span>", unsafe_allow_html=True)
-                    # 複数解答の場合はその旨を表示
-                    if "/" in answer_str or "／" in answer_str:
-                        st.markdown(f"<span style='color:blue;'>正解: {'・'.join(correct_labels)} （複数解答問題 - いずれも正解）</span>", unsafe_allow_html=True)
-                    else:
-                        st.markdown(f"<span style='color:blue;'>正解: {'・'.join(correct_labels)}</span>", unsafe_allow_html=True)
-            else:
-                st.text_input("あなたの解答", value=st.session_state.get(f"free_input_{q['number']}", ""), disabled=True)
-                
-                # 自己評価フォーム内での正解/不正解表示（復活）
-                is_correct = st.session_state.result_log.get(q["number"], False)
-                if is_correct:
-                    st.markdown("<span style='font-size:1.5em; color:green;'>✓ 正解！</span>", unsafe_allow_html=True)
-                else:
-                    st.markdown("<span style='font-size:1.5em; color:red;'>× 不正解</span>", unsafe_allow_html=True)
-                    st.markdown(f"<span style='color:blue;'>正解: {q.get('answer', '')}</span>", unsafe_allow_html=True)
-        with st.form(key=f"eval_form_{group_id}"):
-            st.markdown("#### この問題グループの自己評価")
-            eval_map = {"もう一度": 1, "難しい": 2, "普通": 4, "簡単": 5}
-            
-            # グループ内の正解状況を判定してデフォルト選択を決定
-            group_all_correct = all(st.session_state.result_log.get(q_num, False) for q_num in current_q_group)
-            default_eval = "簡単" if group_all_correct else "もう一度"
-            
-            # デフォルト選択のindexを計算
-            eval_keys = list(eval_map.keys())
-            default_index = eval_keys.index(default_eval)
-            
-            selected_eval_label = st.radio("自己評価", eval_map.keys(), horizontal=True, label_visibility="collapsed", index=default_index)
-            if st.form_submit_button("次の問題へ", type="primary"):
-                # セッション維持：ユーザー活動検知
-                if not ensure_valid_session():
-                    st.warning("セッションが期限切れです。再度ログインしてください。")
-                    st.rerun()
-                    
-                with st.spinner('学習記録を保存中...'):
-                    quality = eval_map[selected_eval_label]
-                    uid = st.session_state.get("uid")
-                    
-                    # Cloud Functionに送信する学習データを作成
-                    for q_num_str in current_q_group:
-                        card_before = st.session_state.cards.get(q_num_str, {"level": 0})
-                        is_correct = st.session_state.result_log.get(q_num_str, False)
-                        
-                        # SM-2の計算はCloud Functionsに任せるので、Python側では行わない
-                        # 代わりに、カードのレベルがどう変わるかの差分だけを簡易的に計算する
-                        level_before = card_before.get("level", 0)
-                        # 仮のレベル計算（実際はSM-2に基づき、Functions側で計算）
-                        level_after = level_before + 1 if is_correct else max(0, level_before - 1)
-
-                        # Cloud Functionに送信するデータを作成
-                        log_payload = {
-                            "questionId": q_num_str,
-                            "isCorrect": is_correct,
-                            "isNewCard": card_before.get("n", 0) == 0,
-                            "quality": quality,
-                            "cardLevelChange": level_after - level_before,
-                        }
-                        
-                        # logStudyActivity Cloud Functionを呼び出す
-                        try:
-                            # logStudyActivity URLを構築
-                            logStudyActivity_url = "https://asia-northeast1-dent-ai-4d8d8.cloudfunctions.net/logStudyActivity"
-                            print(f"[DEBUG] logStudyActivity呼び出し開始: {q_num_str}, payload: {log_payload}")
-                            result = call_cloud_function_by_url(logStudyActivity_url, log_payload)
-                            print(f"[DEBUG] logStudyActivity結果: {result}")
-                            if result and result.get("success"):
-                                print(f"[INFO] Cloud Functionにログ送信成功: {q_num_str}")
-                            else:
-                                print(f"[WARNING] Cloud Functionログ送信失敗: {result}")
-                        except Exception as e:
-                            print(f"[ERROR] Cloud Function呼び出しエラー: {e}")
-                            import traceback
-                            print(f"[ERROR] スタックトレース: {traceback.format_exc()}")
-                            # エラーが発生してもアプリの動作は継続
-                    
-                    # --- Google Analytics イベント送信（既存のまま維持） ---
-                    if uid:
-                        # 問題グループの代表的なIDを取得（複数問題の場合は最初の問題ID）
-                        group_id = current_q_group[0] if current_q_group else "unknown"
-                        log_to_ga(
-                            event_name="submit_evaluation",
-                            user_id=uid,
-                            params={
-                                "quality": quality, # 1, 2, 4, 5など
-                                "question_id": group_id,
-                                "question_count": len(current_q_group)
-                            }
-                        )
-                    
-                    # 次の問題グループを取得
-                    next_group = get_next_q_group()
-                    st.session_state.current_q_group = next_group
-                        
-                for key in list(st.session_state.keys()):
-                    if key.startswith(("checked_", "user_selection_", "shuffled_", "free_input_", "order_input_")):
-                        del st.session_state[key]
-                st.rerun()
-
-    display_images = []
-    image_keys = ['image_urls', 'image_paths']
-
-    # case_data の画像処理
-    if case_data:
-        for key in image_keys:
-            image_list = case_data.get(key)
-            if image_list:  # 値がNoneや空リストでないことを確認
-                display_images.extend(image_list)
-
-    # first_q の画像処理
-    if first_q:
-        for key in image_keys:
-            image_list = first_q.get(key)
-            if image_list:  # 値がNoneや空リストでないことを確認
-                display_images.extend(image_list)
-
-    if display_images:
-        print(f"[DEBUG] 画像表示処理開始: {len(display_images)} 個の画像パス")
-        
-        # Firebase Storageのファイル構造を確認
-        print(f"[DEBUG] Firebase Storage構造確認開始")
-        list_storage_files("gakushi/", 20)
-        list_storage_files("", 20)  # ルートディレクトリ
-        
-        # 重複を除去して、万が一同じパスが複数あってもエラーを防ぐ
-        unique_images = list(dict.fromkeys(display_images))
-        print(f"[DEBUG] 重複除去後: {len(unique_images)} 個の画像パス")
-        for i, path in enumerate(unique_images):
-            print(f"[DEBUG] 画像パス {i+1}: {path}")
-        
-        secure_urls = []
-        for i, path in enumerate(unique_images):
-            if path:
-                url = get_secure_image_url(path)
-                if url:
-                    secure_urls.append(url)
-                    print(f"[DEBUG] URL生成成功 {i+1}: {url[:100]}...")
-                else:
-                    print(f"[DEBUG] URL生成失敗 {i+1}: {path}")
-        
-        print(f"[DEBUG] 署名付きURL生成完了: {len(secure_urls)} 個のURL")
-        
-        if secure_urls:
-            print(f"[DEBUG] st.image()呼び出し開始")
-            try:
-                # 各画像を個別に表示してエラーを特定
-                for i, url in enumerate(secure_urls):
-                    try:
-                        print(f"[DEBUG] 画像 {i+1} 表示開始: {url[:50]}...")
-                        
-                        # 方法1: 通常のst.image()
-                        try:
-                            st.image(url, use_container_width=True, width=400)
-                            print(f"[DEBUG] 画像 {i+1} st.image()表示成功")
-                        except Exception as st_img_err:
-                            print(f"[DEBUG] st.image()失敗、HTMLで試行: {st_img_err}")
-                            
-                            # 方法2: HTMLマークダウンで直接表示
-                            try:
-                                st.markdown(
-                                    f'<img src="{url}" style="max-width: 100%; height: auto;" alt="Question Image {i+1}">',
-                                    unsafe_allow_html=True
-                                )
-                                print(f"[DEBUG] 画像 {i+1} HTML表示成功")
-                            except Exception as html_err:
-                                print(f"[ERROR] HTML表示も失敗: {html_err}")
-                                st.error(f"画像 {i+1} 表示エラー (両方法失敗): st.image={st_img_err}, HTML={html_err}")
-                                continue
-                        
-                    except Exception as img_err:
-                        print(f"[ERROR] 画像 {i+1} 表示失敗: {img_err}")
-                        st.error(f"画像 {i+1} 表示エラー: {img_err}")
-                        # エラーが出ても続行して他の画像を試す
-                        continue
-                print(f"[DEBUG] st.image()呼び出し完了")
-            except Exception as e:
-                print(f"[ERROR] st.image()でエラー: {e}")
-                st.error(f"画像表示エラー: {e}")
-        else:
-            print(f"[DEBUG] 表示可能な画像URL無し")
-            st.warning("画像を読み込めませんでした")
-
-# --- メイン ---
-# 自動ログインを試行（高速化版・1回限り）
-if not st.session_state.get("user_logged_in") and not st.session_state.get("auto_login_attempted"):
-    import time
-    auto_login_start = time.time()
-    st.session_state.auto_login_attempted = True  # 重複実行防止
-    
-    if try_auto_login_from_cookie():
-        print(f"[DEBUG] 自動ログイン成功: {time.time() - auto_login_start:.3f}s")
-        st.rerun()
-    print(f"[DEBUG] 自動ログイン処理: {time.time() - auto_login_start:.3f}s")
-
-if not st.session_state.get("user_logged_in") or not ensure_valid_session():
-    # セッションが無効の場合はログイン情報をクリア
-    if not ensure_valid_session():
-        for k in ["user_logged_in", "id_token", "refresh_token", "name", "username", "email", "uid", "user_data_loaded", "token_timestamp"]:
-            if k in st.session_state:
-                del st.session_state[k]
-    
-    # ログイン画面でのみタイトル表示
-    st.title("🦷 歯科国家試験AI対策アプリ")
-    st.markdown("### 🔐 ログイン／新規登録")
-    tab_login, tab_signup, tab_reset = st.tabs(["ログイン", "新規登録", "パスワードリセット"])
-    with tab_login:
-        # Cookieから保存されたメールアドレスを取得（自動入力用）
+    def _render_login_tab(self):
+        """ログインタブの描画"""
+        # クッキーから保存されたメールアドレスを取得
         saved_email = ""
-        try:
-            cookies = get_cookies()
-            if cookies and cookies.ready:
-                saved_email = cookies.get("saved_email", "")
-        except Exception as e:
-            print(f"[DEBUG] Cookie読み込みエラー: {e}")
+        if self.cookie_manager.cookies:
+            try:
+                saved_email = self.cookie_manager.cookies.get("email", "")
+            except:
+                pass
         
-        login_email = st.text_input("メールアドレス", value=saved_email, key="login_email", autocomplete="email")
-        login_password = st.text_input("パスワード", type="password", key="login_password")
-        remember_me = st.checkbox("ログイン状態を保存する", value=True, help="このブラウザで次回から自動ログインします。")
+        email = st.text_input(
+            "メールアドレス", 
+            value=saved_email,
+            placeholder="your-email@example.com",
+            key="login_email"
+        )
+        password = st.text_input(
+            "パスワード", 
+            type="password",
+            key="login_password"
+        )
+        remember_me = st.checkbox(
+            "ログイン状態を保存する",
+            value=False,
+            key="login_remember"
+        )
         
-        # ログイン処理中の場合はボタンを無効化
-        login_disabled = st.session_state.get("login_in_progress", False)
-        if login_disabled:
-            st.info("ログイン処理中です。しばらくお待ちください...")
-        
-        if st.button("ログイン", key="login_btn", disabled=login_disabled):
-            import time
-            start_time = time.time()
-            print(f"[DEBUG] ログインボタンが押されました - Email: {login_email}")
-            
-            # 入力チェック
-            if not login_email or not login_password:
-                st.error("メールアドレスとパスワードを入力してください。")
-                st.stop()
-            
-            # Firebase認証（シンプル化）
-            with st.spinner('認証中...'):
-                result = firebase_signin(login_email, login_password)
-                auth_time = time.time() - start_time
-                print(f"[DEBUG] Firebase認証レスポンス取得: {auth_time:.2f}秒")
-            
-            # エラーチェック
-            if "error" in result:
-                st.error(f"ログインエラー: {result['error'].get('message', '認証に失敗しました')}")
-                st.stop()
-            
-            if "idToken" in result:
-                print(f"[DEBUG] 認証成功 - idToken取得")
-                # 高速セッション更新（emailベース管理）
-                st.session_state.update({
-                    "name": login_email.split("@")[0],
-                    "username": login_email,  # emailをプライマリIDとして使用
-                    "email": login_email,
-                    "uid": result.get("localId"),
-                    "id_token": result["idToken"],
-                    "refresh_token": result.get("refreshToken", ""),
-                    "token_timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                    "user_logged_in": login_email,  # emailをログイン状態の識別子として使用
-                    "login_in_progress": False  # ログイン完了
-                })
-                
-                # Cookie保存（remember me・emailベース・完全自動ログイン対応）
-                cookies = get_cookies()  # 安全にCookie取得
-                if remember_me and cookies is not None and result.get("refreshToken"):
-                    cookie_data = {
-                        "refresh_token": result["refreshToken"],
-                        "uid": result.get("localId"),
-                        "email": login_email,
-                        "saved_email": login_email,  # ログインフォーム用
-                        "auto_login_enabled": True  # 完全自動ログイン有効
-                    }
-                    if safe_save_cookies(cookies, cookie_data):
-                        print(f"[DEBUG] クッキー保存成功（完全自動ログイン有効）")
-                    else:
-                        print(f"[DEBUG] クッキー保存失敗")
-                
-                st.success("ログイン成功！")
-                print(f"[DEBUG] ログイン処理完了")
-                st.rerun()
+        if st.button("ログイン", type="primary", use_container_width=True):
+            if email and password:
+                self._handle_login(email, password, remember_me)
             else:
-                print(f"[DEBUG] 認証失敗 - レスポンス: {result}")
-                st.session_state["login_in_progress"] = False  # ログイン失敗時もフラグをクリア
-                st.error("ログインに失敗しました。メールアドレスまたはパスワードを確認してください。")
-                if "error" in result:
-                    error_msg = result['error'].get('message', 'Unknown error')
-                    st.error(f"エラー詳細: {error_msg}")
-                    # 具体的なエラーメッセージを表示
-                    if "INVALID_EMAIL" in error_msg:
-                        st.error("メールアドレスの形式が正しくありません。")
-                    elif "EMAIL_NOT_FOUND" in error_msg:
-                        st.error("このメールアドレスは登録されていません。")
-                    elif "INVALID_PASSWORD" in error_msg:
-                        st.error("パスワードが間違っています。")
-                    elif "USER_DISABLED" in error_msg:
-                        st.error("このアカウントは無効化されています。")
-    with tab_signup:
+                st.error("メールアドレスとパスワードを入力してください")
+    
+    def _render_signup_tab(self):
+        """新規登録タブの描画"""
         # 新規登録の一時停止フラグ（必要に応じて True に変更）
-        SIGNUP_TEMPORARILY_DISABLED = True
+        SIGNUP_TEMPORARILY_DISABLED = True  # ← ★この行が重要です
         
         if SIGNUP_TEMPORARILY_DISABLED:
             st.warning("🚧 新規登録は一時的に停止中です")
             st.info("既存のアカウントをお持ちの方は「ログイン」タブからログインしてください。")
         else:
-            signup_email = st.text_input("メールアドレス", key="signup_email")
-            signup_password = st.text_input("パスワード（6文字以上）", type="password", key="signup_password")
-            if st.button("新規登録", key="signup_btn"):
-                result = firebase_signup(signup_email, signup_password)
-                if "idToken" in result:
-                    st.success("新規登録に成功しました。ログインしてください。")
-                else:
-                    st.error("新規登録に失敗しました。メールアドレスが既に使われているか、パスワードが短すぎます。")
-        
-        # 以下はバックアップ用のコメントアウトコード（削除しないでください）
-        # st.warning("🚧 新規登録は一時的に停止中です")
-        # st.info("既存のアカウントをお持ちの方は「ログイン」タブからログインしてください。")
-        # signup_email = st.text_input("メールアドレス", key="signup_email")
-        # signup_password = st.text_input("パスワード（6文字以上）", type="password", key="signup_password")
-        # if st.button("新規登録", key="signup_btn"):
-        #     result = firebase_signup(signup_email, signup_password)
-        #     if "idToken" in result:
-        #         st.success("新規登録に成功しました。ログインしてください。")
-        #     else:
-        #         st.error("新規登録に失敗しました。メールアドレスが既に使われているか、パスワードが短すぎます。")
-    
-    with tab_reset:
-        st.markdown("#### 🔑 パスワードをリセット")
-        st.info("登録済みのメールアドレスを入力すると、パスワードリセット用のリンクをお送りします。")
-        
-        reset_email = st.text_input("メールアドレス", key="reset_email", autocomplete="email")
-        
-        # パスワードリセット処理中のフラグ
-        reset_disabled = st.session_state.get("reset_in_progress", False)
-        if reset_disabled:
-            st.info("パスワードリセットメールを送信中です。しばらくお待ちください...")
-        
-        if st.button("パスワードリセットメールを送信", key="reset_btn", disabled=reset_disabled, type="primary"):
-            if not reset_email:
-                st.error("メールアドレスを入力してください。")
-            else:
-                # リセット処理中フラグを設定
-                st.session_state["reset_in_progress"] = True
-                
-                with st.spinner('パスワードリセットメールを送信中...'):
-                    result = firebase_reset_password(reset_email)
-                
-                # 処理完了後フラグをクリア
-                st.session_state["reset_in_progress"] = False
-                
-                if result["success"]:
-                    st.success("✅ " + result["message"])
-                    st.info("📧 メールボックスをご確認ください。メールが届かない場合は、迷惑メールフォルダもご確認ください。")
-                else:
-                    st.error("❌ " + result["message"])
-        
-        st.markdown("---")
-        st.markdown("**💡 ヒント:**")
-        st.markdown("- パスワードリセット後は、新しいパスワードでログインしてください")
-        st.markdown("- メールが届かない場合は、迷惑メールフォルダを確認してください")
-        st.markdown("- アカウントに関する問題がある場合は、管理者にお問い合わせください")
-    
-    st.stop()
-else:
-    import time
-    main_start = time.time()
-    
-    # セッション維持機能：ユーザー活動検知による自動トークンリフレッシュ
-    if not ensure_valid_session():
-        st.warning("セッションが無効になりました。再度ログインしてください。")
-        # セッション情報をクリア
-        for k in ["user_logged_in", "id_token", "refresh_token", "name", "username", "email", "uid", "user_data_loaded", "token_timestamp"]:
-            if k in st.session_state:
-                del st.session_state[k]
-        st.rerun()
-    
-    name = st.session_state.get("name")
-    username = st.session_state.get("username")
-    uid = st.session_state.get("uid")  # ★ 追加
-    
-    init_check_time = time.time() - main_start
-    
-    if not name or not username:
-        st.warning("ログイン情報が見つかりません。再度ログインしてください。")
-        st.stop()
-        
-    if "user_data_loaded" not in st.session_state:
-        # ログイン直後は軽量版でクイックロード（UIDベース）
-        user_data_start = time.time()
-        uid = st.session_state.get("uid")  # UIDを主キーとして使用
-        user_data = load_user_data_minimal(uid)  # UIDを使用
-        user_data_time = time.time() - user_data_start
-        
-        session_update_start = time.time()
-        
-        # アプリバージョンチェックとキャッシュクリア
-        if st.session_state.get("app_version") != APP_VERSION:
-            print(f"[DEBUG] アプリバージョン更新検出: {st.session_state.get('app_version')} -> {APP_VERSION}")
-            # 古いバージョンのキャッシュをクリア
-            st.cache_data.clear()
-            st.session_state["app_version"] = APP_VERSION
-            print("[DEBUG] キャッシュクリア完了")
-        
-        # 最小限のデータでセッション初期化
-        # ▼ 修正：戻り値を反映（空で潰さない）
-        st.session_state.cards = user_data.get("cards", {})  # ← 修正
-        st.session_state.main_queue = []
-        st.session_state.short_term_review_queue = []
-        st.session_state.current_q_group = []
-        st.session_state.result_log = {}
-        if "new_cards_per_day" not in st.session_state:
-            st.session_state["new_cards_per_day"] = user_data.get("new_cards_per_day", 10)
-        
-        # 既存のカードデータに学習ログを統合（必要な場合のみ）
-        if st.session_state.cards and should_integrate_logs(uid):
-            st.session_state.cards = integrate_learning_logs_into_cards(st.session_state.cards, uid)
-        
-        st.session_state.user_data_loaded = True
-        session_update_time = time.time() - session_update_start
-        
-        total_init_time = time.time() - main_start
-        print(f"[DEBUG] メイン初期化(軽量) - 初期チェック: {init_check_time:.3f}s, 軽量データ読込: {user_data_time:.3f}s, セッション更新: {session_update_time:.3f}s, 合計: {total_init_time:.3f}s")
-        
-    if "result_log" not in st.session_state:
-        st.session_state.result_log = {}
-
-    # ---------- Sidebar ----------
-    with st.sidebar:
-        # セッション状態の表示
-        name = st.session_state.get("name", "ユーザー")
-        token_timestamp = st.session_state.get("token_timestamp")
-        if token_timestamp:
-            token_time = datetime.datetime.fromisoformat(token_timestamp)
-            elapsed = datetime.datetime.now(datetime.timezone.utc) - token_time
-            remaining_minutes = max(0, 30 - int(elapsed.total_seconds() / 60))
-            if remaining_minutes > 5:
-                st.success(f"{name} としてログイン中 (セッション: あと{remaining_minutes}分)")
-            else:
-                st.warning(f"{name} としてログイン中 (セッション: まもなく更新)")
-        else:
-            st.success(f"{name} としてログイン中")
-
-        # 前回セッション復帰選択UI
-        if st.session_state.get("has_previous_session") and not st.session_state.get("session_choice_made"):
-            st.divider()
-            st.markdown("### 🔄 前回の続きから")
-            previous_type = st.session_state.get("previous_session_type", "演習")
-            st.info(f"前回の {previous_type} セッションが見つかりました")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("続きから", key="continue_session", type="primary"):
-                    st.session_state["session_choice_made"] = True
-                    st.session_state["continue_previous"] = True
-                    st.rerun()
-            with col2:
-                if st.button("新規開始", key="new_session"):
-                    st.session_state["session_choice_made"] = True
-                    st.session_state["continue_previous"] = False
-                    # 前回のセッション情報をクリア
-                    st.session_state.pop("has_previous_session", None)
-                    st.session_state.pop("previous_session_type", None)
-                    # アクティブセッション状態もクリア
-                    st.session_state.pop("current_q_group", None)
-                    st.session_state.pop("main_queue", None)
-                    st.session_state.pop("current_question_index", None)
-                    st.session_state.pop("total_questions", None)
-                    print("[DEBUG] 新規セッション開始 - 前回の状態をクリア")
-                    st.rerun()
-
-        # ページ選択（完成版）
-        page = st.radio(
-            "ページ選択",
-            ["演習", "検索・進捗", "ランキング"],
-            index=0,
-            key="page_select"
-        )
-
-        st.divider()
-
-        # ページに応じてサイドバー内容を動的に変化
-        if page == "演習":
-            # --- 演習ページのサイドバー ---
-            st.markdown("### 🎓 学習ハブ")
-            
-            # 学習モード選択
-            learning_mode = st.radio(
-                "学習モード",
-                ['おまかせ学習（推奨）', '自由演習（分野・回数指定）'],
-                key="learning_mode"
+            # ここに新規登録フォームのコードが続く...
+            signup_email = st.text_input(
+                "メールアドレス", 
+                placeholder="your-email@example.com",
+                key="signup_email"
+            )
+            signup_password = st.text_input(
+                "パスワード（6文字以上）", 
+                type="password",
+                key="signup_password"
             )
             
-            st.divider()
-            
-            if learning_mode == 'おまかせ学習（推奨）':
-                # 学習セッション初期化中の場合の処理
-                if st.session_state.get("initializing_study", False):
-                    st.markdown("#### 📅 本日の学習目標")
-                    st.info("🔄 学習セッションを準備中...")
-                    # 初期化中は他の表示を全て停止
-                    st.stop()
+            if st.button("新規登録", type="primary", use_container_width=True, key="signup_btn"):
+                if signup_email and signup_password:
+                    if len(signup_password) < 6:
+                        st.error("パスワードは6文字以上で入力してください")
+                    else:
+                        self._handle_signup(signup_email, signup_password)
                 else:
-                    # Anki風の日次目標表示
-                    st.markdown("#### 📅 本日の学習目標")
-                    today = datetime.datetime.now(datetime.timezone.utc).date()
-                    today_str = today.strftime('%Y-%m-%d')
-                    
-                    # 本日の復習対象カード数を計算
-                    review_count = 0
-                    cards = st.session_state.get("cards", {})
-                    debug_review_cards = []  # デバッグ用
-                
-                    for q_num, card in cards.items():
-                        # next_reviewまたはdueフィールドで復習期日をチェック
-                        review_date_field = card.get('next_review') or card.get('due')
-                        if review_date_field:
-                            if isinstance(review_date_field, str):
-                                try:
-                                    review_date = datetime.datetime.fromisoformat(review_date_field.replace('Z', '+00:00')).date()
-                                    if review_date <= today:
-                                        review_count += 1
-                                        debug_review_cards.append((q_num, review_date, card.get('interval', 0)))
-                                except:
-                                    pass
-                            elif isinstance(review_date_field, datetime.datetime):
-                                if review_date_field.date() <= today:
-                                    review_count += 1
-                                    debug_review_cards.append((q_num, review_date_field.date(), card.get('interval', 0)))
-                            elif isinstance(review_date_field, datetime.date):
-                                if review_date_field <= today:
-                                    review_count += 1
-                                    debug_review_cards.append((q_num, review_date_field, card.get('interval', 0)))
-                    
-                    # デバッグ情報をコンソールに出力
-                    if debug_review_cards:
-                        print(f"[DEBUG] 復習対象カード数: {review_count}")
-                        print(f"[DEBUG] 復習対象例（最初の5件）: {debug_review_cards[:5]}")
-                    
-                    # 本日の学習完了数を計算（重複カウント防止強化版）
-                    today_reviews_done = 0
-                    today_new_done = 0
-                    processed_cards = set()  # 重複カウント防止
-                    
-                    try:
-                        for q_num, card in cards.items():
-                            if not isinstance(card, dict) or q_num in processed_cards:
-                                continue
-                                
-                            history = card.get('history', [])
-                            if not history:
-                                continue
-                            
-                            # 本日の学習履歴があるかチェック
-                            has_today_session = False
-                            for review in history:
-                                if isinstance(review, dict):
-                                    review_date = review.get('timestamp', '')
-                                    if isinstance(review_date, str) and review_date.startswith(today_str):
-                                        has_today_session = True
-                                        break
-                            
-                            if has_today_session:
-                                processed_cards.add(q_num)  # 処理済みマーク
-                                
-                                # 最初の学習が本日かどうかで新規/復習を判定
-                                first_review = history[0] if history else {}
-                                first_date = first_review.get('timestamp', '') if isinstance(first_review, dict) else ''
-                                
-                                if isinstance(first_date, str) and first_date.startswith(today_str):
-                                    # 本日初回学習（新規）
-                                    today_new_done += 1
-                                else:
-                                    # 復習
-                                    today_reviews_done += 1
-                    except Exception as e:
-                        # エラーが発生した場合は0で初期化
-                        today_reviews_done = 0
-                        today_new_done = 0
-                    
-                    # 新規学習目標数（安全な取得）
-                    new_target = st.session_state.get("new_cards_per_day", 10)
-                    if not isinstance(new_target, int):
-                        new_target = 10
-                    
-                    # 残り目標数を計算（安全な値チェック付き）
-                    review_remaining = max(0, review_count - today_reviews_done) if isinstance(review_count, int) and isinstance(today_reviews_done, int) else 0
-                    new_remaining = max(0, new_target - today_new_done) if isinstance(new_target, int) and isinstance(today_new_done, int) else 0
-                    
-                    # 本日の進捗サマリー
-                    total_done = today_reviews_done + today_new_done
-                    daily_goal = review_count + new_target
-                    progress_rate = min(100, (total_done / daily_goal * 100)) if daily_goal > 0 else 0
-                    
-                    # メイン進捗表示（縦並び）
-                    st.metric(
-                        label="本日の学習",
-                        value=f"{total_done}枚",
-                        help=f"目標: {daily_goal}枚 (達成率: {progress_rate:.0f}%)"
-                    )
-                    
-                    if total_done >= daily_goal:
-                        st.metric(
-                            label="達成率",
-                            value="100%",
-                            help="目標達成おめでとうございます！"
-                        )
-                    else:
-                        st.metric(
-                            label="達成率",
-                            value=f"{progress_rate:.0f}%",
-                            help=f"あと{daily_goal - total_done}枚で目標達成"
-                        )
-                    
-                    remaining_total = review_remaining + new_remaining
-                    if remaining_total > 0:
-                        st.metric(
-                            label="残り目標",
-                            value=f"{remaining_total}枚",
-                            help="本日の残り学習目標数"
-                        )
-                    else:
-                        st.metric(
-                            label="✅ 完了",
-                            value="目標達成",
-                            help="本日の学習目標をすべて達成しました"
-                        )
-                    
-                    st.markdown("---")
-                    
-                    # 詳細進捗表示（縦並び）
-                    if review_remaining > 0:
-                        st.metric(
-                            label="復習",
-                            value=f"{review_remaining}枚",
-                            help=f"復習対象: {review_count}枚 / 完了: {today_reviews_done}枚"
-                        )
-                    else:
-                        st.metric(
-                            label="復習",
-                            value="完了 ✅",
-                            help=f"本日の復習: {today_reviews_done}枚完了"
-                        )
-                    
-                    if new_remaining > 0:
-                        st.metric(
-                            label="新規",
-                            value=f"{new_remaining}枚",
-                            help=f"新規目標: {new_target}枚 / 完了: {today_new_done}枚"
-                        )
-                    else:
-                        st.metric(
-                            label="新規",
-                            value="完了 ✅",
-                            help=f"本日の新規学習: {today_new_done}枚完了"
-                        )
-                    
-                    # 学習開始ボタン
-                    if st.button("🚀 今日の学習を開始する", type="primary", key="start_today_study"):
-                        # セッション復帰時は既存キューを優先
-                        continue_previous = st.session_state.get("continue_previous")
-                        main_queue = st.session_state.get("main_queue")
-                        
-                        if continue_previous or main_queue:
-                            st.info("前回のセッションを継続します")
-                        else:
-                            # セッション維持：ユーザー活動検知
-                            session_valid = ensure_valid_session()
-                            if not session_valid:
-                                st.warning("セッションが期限切れです。再度ログインしてください。")
-                                st.rerun()
-                            
-                            # Cloud FunctionsのgetDailyQuizを呼び出して今日の学習を開始
-                            st.session_state["initializing_study"] = True
-                            try:
-                                with st.spinner("学習セッションを準備中..."):
-                                    uid = st.session_state.get("uid")
-                                    print(f"[DEBUG] getDailyQuiz呼び出し開始 - UID: {uid}")
-                                    
-                                    # getDailyQuiz Cloud Functionを呼び出し
-                                    result = call_cloud_function("getDailyQuiz", {"uid": uid})
-                                    print(f"[DEBUG] getDailyQuizレスポンス: {result}")
-                                    
-                                    if result and result.get("success"):
-                                        question_ids = result.get("questionIds", [])
-                                        review_count = result.get("reviewCount", 0)
-                                        new_count = result.get("newCount", 0)
-                                        
-                                        print(f"[DEBUG] 取得した問題ID数: {len(question_ids)}, 復習: {review_count}, 新規: {new_count}")
-                                        
-                                        if question_ids:
-                                            st.session_state.main_queue = [[qid] for qid in question_ids]
-                                            st.session_state.current_q_group = []  # 次のグループから開始
-                                            st.session_state.show_home = False
-                                            st.session_state.show_start_screen = False
-                                            st.session_state.show_practice = True
-                                            st.success(f"今日の学習を開始します！（復習: {review_count}問、新規: {new_count}問）")
-                                            st.rerun()
-                                        else:
-                                            st.warning("復習対象のカードがありません。")
-                                    else:
-                                        # Cloud Function呼び出しが失敗した場合のフォールバック
-                                        error_msg = result.get("error", "不明なエラー") if result else "Cloud Function呼び出し失敗"
-                                        st.warning(f"Cloud Functionでの学習準備に失敗しました。ローカルで問題を選択します。")
-                                        print(f"[WARNING] getDailyQuiz失敗（フォールバック実行）: {error_msg}")
-                                        print(f"[WARNING] レスポンス詳細: {result}")
-                                        
-                                        # フォールバック：ローカルで復習対象カードを選択
-                                        cards = st.session_state.get("cards", {})
-                                        today = datetime.datetime.now(datetime.timezone.utc).date()
-                                        
-                                        # 復習期限が来ているカードを取得
-                                        review_cards = []
-                                        for q_num, card in cards.items():
-                                            review_date_field = card.get('next_review') or card.get('due')
-                                            if review_date_field:
-                                                try:
-                                                    if isinstance(review_date_field, str):
-                                                        review_date = datetime.datetime.fromisoformat(review_date_field.replace('Z', '+00:00')).date()
-                                                    else:
-                                                        review_date = review_date_field.date() if isinstance(review_date_field, datetime.datetime) else review_date_field
-                                                    
-                                                    if review_date <= today:
-                                                        review_cards.append(q_num)
-                                                except:
-                                                    pass
-                                        
-                                        # 新規カード（まだ学習していないカード）
-                                        new_cards = []
-                                        new_cards_per_day = st.session_state.get("new_cards_per_day", 10)
-                                        all_question_numbers = set(q.get('number') for q in ALL_QUESTIONS if q.get('number'))
-                                        unstudied_cards = [q_num for q_num in all_question_numbers if q_num not in cards or cards[q_num].get('n', 0) == 0]
-                                        new_cards = unstudied_cards[:new_cards_per_day]
-                                        
-                                        # 学習対象問題を組み合わせ
-                                        all_questions = review_cards + new_cards
-                                        
-                                        if all_questions:
-                                            # 問題をシャッフル
-                                            import random
-                                            random.shuffle(all_questions)
-                                            
-                                            st.session_state.main_queue = [[qid] for qid in all_questions]
-                                            st.session_state.current_q_group = []
-                                            st.success(f"今日の学習を開始します！（復習: {len(review_cards)}問、新規: {len(new_cards)}問）")
-                                            st.rerun()
-                                        else:
-                                            st.info("今日学習する問題がありません。しばらく時間をおいてから再度お試しください。")
-                            except Exception as e:
-                                st.error(f"学習セッション準備エラー: {str(e)}")
-                                print(f"[ERROR] getDailyQuiz例外: {e}")
-                                import traceback
-                                print(f"[ERROR] トレースバック: {traceback.format_exc()}")
-                            finally:
-                                # 成功・失敗に関わらず初期化フラグをリセット
-                                st.session_state["initializing_study"] = False
+                    st.error("メールアドレスとパスワードを入力してください")
+    
+    def _render_reset_tab(self):
+        """パスワードリセットタブの描画"""
+        email = st.text_input(
+            "メールアドレス", 
+            placeholder="your-email@example.com",
+            key="reset_email"
+        )
+        
+        if st.button("パスワードリセットメールを送信", type="primary", use_container_width=True):
+            if email:
+                self._handle_password_reset(email)
             else:
-                # 自由演習モードのUI
-                st.markdown("#### 🎯 自由演習設定")
-                
-                # 以前の選択UIを復活
-                uid = st.session_state.get("uid")
-                has_gakushi_permission = check_gakushi_permission(uid)
-                mode_choices = ["回数別", "科目別", "必修問題のみ", "キーワード検索"]
-                mode = st.radio("出題形式を選択", mode_choices, key="free_mode_radio")
-
-                # 対象（国試/学士）セレクタ
-                if has_gakushi_permission:
-                    target_exam = st.radio("対象", ["国試", "学士"], key="free_target_exam", horizontal=True)
-                else:
-                    target_exam = "国試"
-                
-                questions_to_load = []
-
-                if mode == "回数別":
-                    if target_exam == "国試":
-                        selected_exam_num = st.selectbox("回数", ALL_EXAM_NUMBERS, key="free_exam_num")
-                        if selected_exam_num:
-                            available_sections = sorted([s[-1] for s in ALL_EXAM_SESSIONS if s.startswith(selected_exam_num)])
-                            selected_section_char = st.selectbox("領域", available_sections, key="free_section")
-                            if selected_section_char:
-                                selected_session = f"{selected_exam_num}{selected_section_char}"
-                                questions_to_load = [q for q in ALL_QUESTIONS if q.get("number", "").startswith(selected_session)]
-                    else:
-                        g_years, g_sessions_map, g_areas_map, _ = build_gakushi_indices_with_sessions(ALL_QUESTIONS)
-                        if g_years:
-                            g_year = st.selectbox("年度", g_years, key="free_g_year")
-                            if g_year:
-                                sessions = g_sessions_map.get(g_year, [])
-                                if sessions:
-                                    g_session = st.selectbox("回数", sessions, key="free_g_session")
-                                    if g_session:
-                                        areas = g_areas_map.get(g_year, {}).get(g_session, ["A", "B", "C", "D"])
-                                        g_area = st.selectbox("領域", areas, key="free_g_area")
-                        if g_area:
-                            questions_to_load = filter_gakushi_by_year_session_area(ALL_QUESTIONS, g_year, g_session, g_area)
-                            st.info(f"学士{g_year}年度-{g_session}-{g_area}領域: {len(questions_to_load)}問が見つかりました")
-
-                elif mode == "科目別":
-                    if target_exam == "国試":
-                        KISO_SUBJECTS = ["解剖学", "歯科理工学", "組織学", "生理学", "病理学", "薬理学", "微生物学・免疫学", "衛生学", "発生学・加齢老年学", "生化学"]
-                        RINSHOU_SUBJECTS = ["保存修復学", "歯周病学", "歯内治療学", "クラウンブリッジ学", "部分床義歯学", "全部床義歯学", "インプラント学", "口腔外科学", "歯科放射線学", "歯科麻酔学", "矯正歯科学", "小児歯科学"]
-                        group = st.radio("科目グループ", ["基礎系科目", "臨床系科目"], key="free_subject_group")
-                        subjects_to_display = KISO_SUBJECTS if group == "基礎系科目" else RINSHOU_SUBJECTS
-                        available_subjects = [s for s in ALL_SUBJECTS if s in subjects_to_display]
-                        selected_subject = st.selectbox("科目", available_subjects, key="free_subject")
-                        if selected_subject:
-                            questions_to_load = [q for q in ALL_QUESTIONS if q.get("subject") == selected_subject and not str(q.get("number","")).startswith("G")]
-                    else:
-                        _, _, _, g_subjects = build_gakushi_indices_with_sessions(ALL_QUESTIONS)
-                        if g_subjects:
-                            selected_subject = st.selectbox("科目", g_subjects, key="free_g_subject")
-                            if selected_subject:
-                                questions_to_load = [q for q in ALL_QUESTIONS if str(q.get("number","")).startswith("G") and (q.get("subject") == selected_subject)]
-                                st.info(f"学士試験-{selected_subject}: {len(questions_to_load)}問が見つかりました")
-
-                elif mode == "必修問題のみ":
-                    if target_exam == "国試":
-                        questions_to_load = [q for q in ALL_QUESTIONS if q.get("number") in HISSHU_Q_NUMBERS_SET]
-                        st.info(f"国試必修問題: {len(questions_to_load)}問が見つかりました")
-                    else:
-                        questions_to_load = [q for q in ALL_QUESTIONS if q.get("number") in GAKUSHI_HISSHU_Q_NUMBERS_SET]
-                        st.info(f"学士必修問題: {len(questions_to_load)}問が見つかりました")
-
-                elif mode == "キーワード検索":
-                    search_keyword = st.text_input("キーワード", placeholder="例: インプラント、根管治療", key="free_keyword")
-                    if search_keyword.strip():
-                        gakushi_only = (target_exam == "学士")
-                        keyword_results = search_questions_by_keyword(
-                            search_keyword.strip(),
-                            gakushi_only=gakushi_only,
-                            has_gakushi_permission=has_gakushi_permission
-                        )
-                        questions_to_load = keyword_results if keyword_results else []
-                        exam_type = "学士試験" if gakushi_only else "国試"
-                        st.info(f"{exam_type}キーワード検索「{search_keyword.strip()}」: {len(questions_to_load)}問が見つかりました")
-
-                # 出題順
-                order_mode = st.selectbox("出題順", ["順番通り", "シャッフル"], key="free_order")
-                if order_mode == "シャッフル" and questions_to_load:
-                    import random
-                    questions_to_load = questions_to_load.copy()
-                    random.shuffle(questions_to_load)
-                elif questions_to_load:
-                    try:
-                        questions_to_load = sorted(questions_to_load, key=get_natural_sort_key)
-                    except Exception:
-                        pass
-
-                # 学習開始ボタン
-                if st.button("🎯 この条件で演習を開始", type="primary", key="start_free_study"):
-                    # セッション維持：ユーザー活動検知
-                    if not ensure_valid_session():
-                        st.warning("セッションが期限切れです。再度ログインしてください。")
-                        st.rerun()
-                        
-                    if not questions_to_load:
-                        st.warning("該当する問題がありません。")
-                    else:
-                        # 権限フィルタリング
-                        filtered_questions = []
-                        for q in questions_to_load:
-                            question_number = q.get('number', '')
-                            if question_number.startswith("G") and not has_gakushi_permission:
-                                continue
-                            filtered_questions.append(q)
-                        
-                        if not filtered_questions:
-                            st.warning("権限のある問題が見つかりませんでした。")
-                        else:
-                            # グループ化
-                            grouped_queue = []
-                            processed_q_nums = set()
-                            for q in filtered_questions:
-                                q_num = str(q['number'])
-                                if q_num in processed_q_nums:
-                                    continue
-                                case_id = q.get('case_id')
-                                if case_id and case_id in CASES:
-                                    siblings = sorted([str(sq['number']) for sq in ALL_QUESTIONS if sq.get('case_id') == case_id])
-                                    if siblings not in grouped_queue:
-                                        grouped_queue.append(siblings)
-                                    processed_q_nums.update(siblings)
-                                else:
-                                    grouped_queue.append([q_num])
-                                    processed_q_nums.add(q_num)
-                            
-                            st.session_state.main_queue = grouped_queue
-                            st.session_state.short_term_review_queue = []
-                            st.session_state.current_q_group = []
-                            
-                            # セッション状態を保存（演習開始時）
-                            if st.session_state.get("user_logged_in") and st.session_state.get("uid"):
-                                try:
-                                    save_user_data(st.session_state.get("uid"), session_state=st.session_state)
-                                    print(f"[DEBUG] 演習開始時のセッション状態保存完了")
-                                except Exception as e:
-                                    print(f"[ERROR] 演習開始時のセッション状態保存失敗: {e}")
-                            
-                            # カード初期化
-                            if "cards" not in st.session_state:
-                                st.session_state.cards = {}
-                            for q in filtered_questions:
-                                if q['number'] not in st.session_state.cards:
-                                    st.session_state.cards[q['number']] = {}
-                            
-                            # 一時状態クリア
-                            for key in list(st.session_state.keys()):
-                                if key.startswith(("checked_", "user_selection_", "shuffled_", "free_input_", "order_input_")):
-                                    del st.session_state[key]
-                            
-                            save_user_data(st.session_state.get("uid"), session_state=st.session_state)
-                            st.success(f"演習を開始します！（{len(grouped_queue)}グループ）")
-                            st.rerun()
-
-            # 現在の学習キュー状況表示
-            st.divider()
-            st.markdown("#### 📋 学習キュー状況")
+                st.error("メールアドレスを入力してください")
+    
+    def _render_user_menu(self):
+        """ユーザーメニューの描画"""
+        uid = st.session_state.get("uid")
+        email = st.session_state.get("email", "")
+        
+        # ニックネームを取得（プライバシー配慮）
+        name = st.session_state.get("name", "")
+        if not name:
+            # シンプルなデフォルト名を生成してセッションに保存
+            name = f"学習者{uid[:8]}"
+            st.session_state["name"] = name
+        
+        st.success(f"👤 {name} としてログイン中")
+        
+        # ページ選択をラジオボタン形式に変更
+        page_options = ["練習", "検索・進捗", "ランキング"]
+        page_labels = ["📚 練習ページ", "📊 検索・進捗", "🏆 ランキング"]
+        
+        current_page = st.session_state.get("page", "練習")
+        current_index = 0
+        if current_page == "検索・進捗":
+            current_index = 1
+        elif current_page == "ランキング":
+            current_index = 2
+        
+        selected_page = st.radio(
+            "ページを選択",
+            page_labels,
+            index=current_index,
+            key="page_selector"
+        )
+        
+        # ページ切り替え時のイベント追跡
+        new_page = None
+        if selected_page == "📚 練習ページ":
+            new_page = "練習"
+        elif selected_page == "📊 検索・進捗":
+            new_page = "検索・進捗"
+        elif selected_page == "🏆 ランキング":
+            new_page = "ランキング"
+        
+        # ページが変更された場合はイベントを送信
+        if new_page and new_page != st.session_state.get("page"):
+            st.session_state["page"] = new_page
+            st.session_state["current_page"] = new_page  # _track_user_activityで使用
             
-            # 短期復習の「準備完了」件数を表示
-            now_utc = datetime.datetime.now(datetime.timezone.utc)
-            ready_short = 0
-            for item in st.session_state.get("short_term_review_queue", []):
-                ra = item.get("ready_at")
-                if isinstance(ra, str):
-                    try:
-                        ra = datetime.datetime.fromisoformat(ra)
-                    except Exception:
-                        ra = now_utc
-                if not ra or ra <= now_utc:
-                    ready_short += 1
+            if uid:
+                log_to_ga("page_change", uid, {
+                    "previous_page": current_page,
+                    "new_page": new_page,
+                    "navigation_method": "sidebar"
+                })
+        
+        st.divider()
+        
+        # 選択されたページに応じて異なるサイドバーコンテンツを表示
+        if st.session_state.get("page") == "ランキング":
+            st.info("🏆 ランキングページ表示中")
+            st.markdown("**週間ランキング**で他の学習者と競い合いましょう！")
+        elif st.session_state.get("page") == "検索・進捗":
+            st.info("📊 検索・進捗ページ表示中")
+            st.markdown("**学習データ分析**と**問題検索**で効率的に学習しましょう！")
             
-            # 長期復習対象カード数も表示
-            today = datetime.datetime.now(datetime.timezone.utc).date()
-            long_term_review_count = 0
-            cards = st.session_state.get("cards", {})
-            for card in cards.values():
-                review_date_field = card.get('next_review') or card.get('due')
-                if review_date_field:
-                    try:
-                        if isinstance(review_date_field, str):
-                            review_date = datetime.datetime.fromisoformat(review_date_field.replace('Z', '+00:00')).date()
-                        else:
-                            review_date = review_date_field.date() if isinstance(review_date_field, datetime.datetime) else review_date_field
-                        
-                        if review_date <= today:
-                            long_term_review_count += 1
-                    except:
-                        pass
-
-            st.write(f"メインキュー: **{len(st.session_state.get('main_queue', []))}** グループ")
-            st.write(f"短期復習: **{ready_short}** グループ準備完了")
-            st.write(f"長期復習: **{long_term_review_count}** カード復習期限到来")
-
-            # セッション初期化
-            if st.button("🔄 セッションを初期化", key="reset_session"):
-                st.session_state.current_q_group = []
-                for k in list(st.session_state.keys()):
-                    if k.startswith(("checked_", "user_selection_", "shuffled_", "free_input_", "order_input_")):
-                        del st.session_state[k]
-                st.info("セッションを初期化しました")
-                st.rerun()
-            # 学習記録セクション（演習ページでも表示）
-            st.divider()
-            st.markdown("#### 📈 学習記録")
+            # セクションヘッダー
+            st.markdown("### 📊 分析・検索ツール")
             
-            # 学習ログを統合してカードデータを最新化（必要な場合のみ）
-            uid = st.session_state.get("uid")
-            if uid and st.session_state.cards and should_integrate_logs(uid):
-                st.session_state.cards = integrate_learning_logs_into_cards(st.session_state.cards, uid)
+            # 学士試験権限の確認
+            has_gakushi_permission = check_gakushi_permission(uid) if uid else False
             
-            # カードデータの状態確認（デバッグ情報表示は削除）
-            
-            if st.session_state.cards and len(st.session_state.cards) > 0:
-                quality_to_mark = {1: "×", 2: "△", 4: "◯", 5: "◎"}
-                mark_to_label = {"◎": "簡単", "◯": "普通", "△": "難しい", "×": "もう一度"}
+            # 分析対象フィルター
+            if has_gakushi_permission:
+                # 分析対象変更時のコールバック
+                def on_analysis_target_change():
+                    # 科目リストを更新
+                    if 'available_subjects' in st.session_state:
+                        del st.session_state['available_subjects']
+                    if 'subject_filter' in st.session_state:
+                        del st.session_state['subject_filter']
+                    # 科目を再初期化
+                    self._initialize_available_subjects()
                 
-                # 統合されたhistoryから最新のqualityを取得
-                evaluated_marks = []
-                cards_with_history = 0
-                cards_without_history = 0
-                
-                for q_num, card in st.session_state.cards.items():
-                    # historyがある場合は最新のqualityを使用
-                    if card.get('history') and len(card['history']) > 0:
-                        cards_with_history += 1
-                        history = card['history']
-                        latest_entry = history[-1]
-                        latest_quality = latest_entry.get('quality')
-                        
-                        if latest_quality is not None:
-                            mark = quality_to_mark.get(latest_quality)
-                            if mark:
-                                evaluated_marks.append(mark)
-                    
-                    # historyがない場合はqualityフィールドを使用（後方互換性）
-                    elif card.get('quality'):
-                        cards_without_history += 1
-                        quality_value = card.get('quality')
-                        mark = quality_to_mark.get(quality_value)
-                        if mark:
-                            evaluated_marks.append(mark)
-                
-                total_evaluated = len(evaluated_marks)
-                counter = Counter(evaluated_marks)
-                
-                with st.expander("自己評価の分布", expanded=True):
-                    st.markdown(f"**合計評価数：{total_evaluated}問**")
-                    for mark, label in mark_to_label.items():
-                        count = counter.get(mark, 0)
-                        percent = int(round(count / total_evaluated * 100)) if total_evaluated else 0
-                        st.markdown(f"{mark} {label}：{count}問 ({percent}％)")
-                
-                with st.expander("最近の評価ログ", expanded=False):
-                    cards_with_history = [(q_num, card) for q_num, card in st.session_state.cards.items() if card.get('history')]
-                    
-                    if cards_with_history:
-                        sorted_cards = sorted(cards_with_history, key=safe_get_timestamp, reverse=True)
-                        
-                        for q_num, card in sorted_cards[:10]:
-                            last_history = card['history'][-1]
-                            last_eval_mark = quality_to_mark.get(last_history.get('quality'))
-                            
-                            # UTCからJSTに変換して表示
-                            try:
-                                parsed_time = safe_parse_timestamp(last_history['timestamp'])
-                                if parsed_time:
-                                    if parsed_time.tzinfo is None:
-                                        parsed_time = parsed_time.replace(tzinfo=pytz.UTC)
-                                    jst_time = parsed_time.astimezone(JST)
-                                    timestamp_str = jst_time.strftime('%Y-%m-%d %H:%M')
-                                else:
-                                    timestamp_str = "日付不明"
-                            except:
-                                timestamp_str = "日付不明"
-                            
-                            # 問題番号を緑色のボタンとして表示
-                            if st.button(q_num, key=f"jump_practice_{q_num}", type="secondary"):
-                                st.session_state.current_q_group = [q_num]
-                                for key in list(st.session_state.keys()):
-                                    if key.startswith("checked_") or key.startswith("user_selection_") or key.startswith("shuffled_") or key.startswith("free_input_") or key.startswith("order_input_"):
-                                        del st.session_state[key]
-                                st.rerun()
-                            
-                            # 評価情報を下に表示
-                            st.markdown(f"<span style='color: green'>{q_num}</span> : **{last_eval_mark}** ({timestamp_str} JST)", unsafe_allow_html=True)
-                    else:
-                        st.info("まだ評価された問題がありません。")
-            else:
-                st.info("まだ評価された問題がありません。")
-
-
-
-        else:
-            # --- 検索・進捗ページのサイドバー ---
-            if page == "検索・進捗":
-                st.markdown("### 📊 分析・検索ツール")
-                
-                # 検索・分析用のフィルター機能のみ
-                uid = st.session_state.get("uid")
-                has_gakushi_permission = check_gakushi_permission(uid)
-                
-                
-                # 対象範囲
-                if has_gakushi_permission:
-                    analysis_target = st.radio("分析対象", ["国試", "学士試験"], key="analysis_target")
-                else:
-                    analysis_target = "国試"
-                
-                # 学習レベルフィルター
-                level_filter = st.multiselect(
-                    "学習レベル",
-                    ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "レベル5", "習得済み"],
-                    default=["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "レベル5", "習得済み"],
-                    key="level_filter"
+                analysis_target = st.radio(
+                    "分析対象",
+                    ["国試", "学士試験"],
+                    key="analysis_target",
+                    on_change=on_analysis_target_change
                 )
-                
-                # 科目フィルター（動的に設定されるため、デフォルトは空）
-                if "available_subjects" in st.session_state:
-                    subject_filter = st.multiselect(
-                        "表示する科目",
-                        st.session_state.available_subjects,
-                        default=st.session_state.available_subjects,
-                        key="subject_filter"
-                    )
-                else:
-                    subject_filter = []
-            
-            elif page == "ランキング":
-                # --- ランキングページのサイドバー ---
-                st.markdown("### 🏆 ランキング情報")
-                
-                # ランキング参加設定
-                st.markdown("**プロフィール設定:**")
-                current_user_profile = get_user_profile_for_ranking()
-                
-                if current_user_profile:
-                    show_on_leaderboard = current_user_profile.get("showOnLeaderboard")
-                    nickname = current_user_profile.get("nickname", "")
-                    weekly_points = current_user_profile.get("weeklyPoints", 0)
-                    
-                    st.success(f"✅ プロフィール設定済み")
-                    st.caption(f"ニックネーム: {nickname}")
-                    
-                    # ランキング参加状況の表示
-                    if show_on_leaderboard is None:
-                        st.caption("ランキング参加: 自動参加中（既存ユーザー）")
-                    elif show_on_leaderboard:
-                        st.caption("ランキング参加: 参加中")
-                    else:
-                        st.caption("ランキング参加: 非参加")
-                    
-                    st.caption(f"週間ポイント: {weekly_points:,}")
-                else:
-                    st.info("💡 プロフィール未設定")
-                
-                # プロフィール設定フォーム
-                with st.expander("プロフィール設定"):
-                    with st.form("profile_form"):
-                        nickname = st.text_input(
-                            "ニックネーム",
-                            value=current_user_profile.get("nickname", "") if current_user_profile else "",
-                            placeholder="表示名を入力してください"
-                        )
-                        
-                        # ランキング参加設定
-                        current_setting = current_user_profile.get("showOnLeaderboard") if current_user_profile else True
-                        if current_setting is None:
-                            # 既存ユーザーの場合、デフォルトで参加とする
-                            current_setting = True
-                        
-                        show_on_leaderboard = st.checkbox(
-                            "ランキングに参加する",
-                            value=current_setting,
-                            help="チェックを外すとランキングに表示されません。既存ユーザーはデフォルトで参加状態です。"
-                        )
-                        
-                        st.info("💡 設定変更は即座にランキングに反映されます")
-                        
-                        submitted = st.form_submit_button("保存", use_container_width=True)
-                        
-                        if submitted:
-                            save_user_profile(nickname, show_on_leaderboard)
-                
-                st.divider()
-                
-                # 簡潔な説明
-                st.markdown("**ランキング更新:**")
-                st.caption("• 毎日午前3時に集計")
-                st.caption("• 週間ポイントは月曜日にリセット")
-                st.caption("• データは5分間キャッシュ")
-            
-            # 学習記録セクション（検索・進捗ページでも表示）
-            st.divider()
-            st.markdown("#### 📈 学習記録")
-            
-            # 学習ログを統合してカードデータを最新化（必要な場合のみ）
-            uid = st.session_state.get("uid")
-            if uid and st.session_state.cards and should_integrate_logs(uid):
-                st.session_state.cards = integrate_learning_logs_into_cards(st.session_state.cards, uid)
-            
-            if st.session_state.cards and len(st.session_state.cards) > 0:
-                quality_to_mark = {1: "×", 2: "△", 4: "◯", 5: "◎"}
-                mark_to_label = {"◎": "簡単", "◯": "普通", "△": "難しい", "×": "もう一度"}
-                
-                # 統合されたhistoryから最新のqualityを取得
-                evaluated_marks = []
-                for card in st.session_state.cards.values():
-                    # historyがある場合は最新のqualityを使用
-                    if card.get('history'):
-                        latest_quality = card['history'][-1].get('quality')
-                        if latest_quality:
-                            mark = quality_to_mark.get(latest_quality)
-                            if mark:
-                                evaluated_marks.append(mark)
-                    # historyがない場合はqualityフィールドを使用（後方互換性）
-                    elif card.get('quality'):
-                        mark = quality_to_mark.get(card.get('quality'))
-                        if mark:
-                            evaluated_marks.append(mark)
-                
-                total_evaluated = len(evaluated_marks)
-                counter = Counter(evaluated_marks)
-                
-                with st.expander("自己評価の分布", expanded=True):
-                    st.markdown(f"**合計評価数：{total_evaluated}問**")
-                    for mark, label in mark_to_label.items():
-                        count = counter.get(mark, 0)
-                        percent = int(round(count / total_evaluated * 100)) if total_evaluated else 0
-                        st.markdown(f"{mark} {label}：{count}問 ({percent}％)")
-                
-                with st.expander("最近の評価ログ", expanded=False):
-                    cards_with_history = [(q_num, card) for q_num, card in st.session_state.cards.items() if card.get('history')]
-                    
-                    if cards_with_history:
-                        sorted_cards = sorted(cards_with_history, key=safe_get_timestamp, reverse=True)
-                        
-                        for q_num, card in sorted_cards[:10]:
-                            last_history = card['history'][-1]
-                            last_eval_mark = quality_to_mark.get(last_history.get('quality'))
-                            
-                            # UTCからJSTに変換して表示
-                            try:
-                                parsed_time = safe_parse_timestamp(last_history['timestamp'])
-                                if parsed_time:
-                                    if parsed_time.tzinfo is None:
-                                        parsed_time = parsed_time.replace(tzinfo=pytz.UTC)
-                                    jst_time = parsed_time.astimezone(JST)
-                                    timestamp_str = jst_time.strftime('%Y-%m-%d %H:%M')
-                                else:
-                                    timestamp_str = "日付不明"
-                            except:
-                                timestamp_str = "日付不明"
-                            
-                            # 問題番号を緑色のボタンとして表示
-                            if st.button(q_num, key=f"jump_search_{q_num}", type="secondary"):
-                                # 演習ページに移動して該当問題を表示
-                                st.session_state.current_q_group = [q_num]
-                                # 問題関連のセッション状態をクリア
-                                for key in list(st.session_state.keys()):
-                                    if key.startswith(("checked_", "user_selection_", "shuffled_", "free_input_", "order_input_")):
-                                        del st.session_state[key]
-                                # セッション状態更新後にページ遷移
-                                st.session_state.page_select = "演習"
-                                st.rerun()
-                            
-                            # 評価情報を下に表示（日本時間表示）
-                            st.markdown(f"<span style='color: green'>{q_num}</span> : **{last_eval_mark}** ({timestamp_str} JST)", unsafe_allow_html=True)
-                    else:
-                        st.info("まだ評価された問題がありません。")
             else:
-                st.info("まだ評価された問題がありません。")
-
+                # 権限がない場合は自動的に国試に設定
+                analysis_target = "国試"
+                if 'analysis_target' not in st.session_state:
+                    st.session_state.analysis_target = "国試"
+            
+            # 学習レベルフィルター
+            level_options = ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "レベル5", "習得済み"]
+            level_filter = st.multiselect(
+                "学習レベル",
+                level_options,
+                default=level_options,  # 全ての選択肢をデフォルトで選択
+                key="level_filter"
+            )
+            
+            # 科目フィルター（動的UI）
+            if not hasattr(st.session_state, 'available_subjects') or not st.session_state.available_subjects:
+                # 科目が初期化されていない場合は再初期化
+                self._initialize_available_subjects()
+            
+            if hasattr(st.session_state, 'available_subjects') and st.session_state.available_subjects:
+                # 現在の科目フィルター値を取得（なければ全選択をデフォルト）
+                current_subject_filter = st.session_state.get('subject_filter', st.session_state.available_subjects)
+                # 利用可能な科目に含まれないものを除外
+                valid_subject_filter = [s for s in current_subject_filter if s in st.session_state.available_subjects]
+                if not valid_subject_filter:  # 有効な科目が1つもない場合は全選択
+                    valid_subject_filter = st.session_state.available_subjects
+                
+                subject_filter = st.multiselect(
+                    "表示する科目",
+                    st.session_state.available_subjects,
+                    default=valid_subject_filter,
+                    key="subject_filter",
+                    help=f"現在利用可能な科目: {len(st.session_state.available_subjects)}科目"
+                )
+            else:
+                st.warning("科目データを読み込み中...")
+            
+            # 必修問題フィルター
+            show_hisshu_only = st.checkbox(
+                "必修問題のみ表示",
+                value=st.session_state.get('show_hisshu_only', False),
+                key="show_hisshu_only"
+            )
+        else:
+            # 練習ページのサイドバー
+            from modules.practice_page import render_practice_sidebar
+            render_practice_sidebar()
+        
         # ログアウトボタン
         st.divider()
-        if st.button("ログアウト", key="logout_btn"):
+        if st.button("🚪 ログアウト", type="secondary", use_container_width=True):
+            self._handle_logout()
+    
+    def _handle_logout(self):
+        """🚀 2. 「おまかせ学習」モードのUI（個人データ対応）"""
+        try:
+            st.markdown("### 📊 本日の学習状況")
+            
             uid = st.session_state.get("uid")
-            # ログアウト時にセッション状態を保存
-            save_user_data(uid, session_state=st.session_state)
+            if not uid:
+                st.warning("ユーザーIDが見つかりません")
+                return
             
-            # 学士権限のキャッシュをクリア
-            check_gakushi_permission.clear()
+            # Firestoreから個人の学習データを取得
+            firestore_manager = get_firestore_manager()
+            try:
+                user_cards = firestore_manager.get_user_cards(uid)
+                session_cards = st.session_state.get("cards", {})
+                # セッションデータを優先して統合
+                cards = {**user_cards, **session_cards}
+            except Exception as e:
+                st.warning(f"学習データの取得に失敗: {str(e)}")
+                cards = st.session_state.get("cards", {})
             
-            for k in ["user_logged_in", "id_token", "refresh_token", "name", "username", "email", "uid", "user_data_loaded", "token_timestamp"]:
-                if k in st.session_state:
-                    del st.session_state[k]
-
-            cookies = get_cookies()
-            if cookies:
-                cookie_clear_data = {
-                    "refresh_token": "",
-                    "uid": "",
-                    "email": ""
-                }
-                safe_save_cookies(cookies, cookie_clear_data)
-                # 明示的な削除も試行
+            new_cards_per_day = st.session_state.get("new_cards_per_day", 10)
+            
+            # リアルタイム計算
+            today = datetime.datetime.now().strftime("%Y-%m-%d")
+            
+            # 復習カード数（期限切れ）
+            review_count = 0
+            # 新規カード数（今日学習予定）
+            new_count = 0
+            # 完了数（今日学習済み）
+            completed_count = 0
+            
+            for q_id, card in cards.items():
+                # 復習期限チェック
+                next_review = card.get("next_review", "")
+                if next_review and next_review <= today:
+                    review_count += 1
+                
+                # 今日の学習記録チェック
+                history = card.get("history", [])
+                today_studied = any(h.get("date", "").startswith(today) for h in history)
+                if today_studied:
+                    completed_count += 1
+                elif len(history) == 0:  # 未学習カード
+                    new_count += 1
+            
+            # 新規カード数を上限で制限
+            new_count = min(new_count, new_cards_per_day)
+            total_target = review_count + new_count
+            
+            # メトリクス表示
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("復習", f"{review_count}問", help="期限が来た復習問題")
+                st.metric("完了", f"{completed_count}問", help="今日学習済みの問題")
+            
+            with col2:
+                st.metric("新規", f"{new_count}問", help="今日の新規学習予定")
+                if total_target > 0:
+                    progress = min(completed_count / total_target, 1.0)
+                    st.metric("達成率", f"{progress:.1%}", help="本日の学習進捗")
+            
+            # 学習開始ボタン
+            if st.button("📚 今日の学習を開始する", type="primary", use_container_width=True):
+                self._start_auto_learning()
+                
+        except Exception as e:
+            st.error(f"おまかせ学習モードでエラー: {str(e)}")
+            st.exception(e)
+    
+    def _render_free_learning_mode(self, has_gakushi_permission: bool):
+        """🎯 3. 「自由演習」モードのUI"""
+        try:
+            st.markdown("### ⚙️ 演習条件設定")
+            
+            # 対象試験の選択
+            if has_gakushi_permission:
+                target_exam = st.radio(
+                    "対象試験",
+                    ["国試", "学士試験"],
+                    key="free_target_exam"
+                )
+            else:
+                target_exam = "国試"
+                st.info("📚 学士試験機能を利用するには権限が必要です")
+            
+            # 出題形式の選択
+            quiz_format = st.radio(
+                "出題形式",
+                ["回数別", "科目別", "必修問題のみ", "キーワード検索"],
+                key="free_quiz_format"
+            )
+            
+            # 詳細条件の選択（動的UI）
+            self._render_detailed_conditions(quiz_format, target_exam)
+            
+            # 出題順の選択
+            question_order = st.selectbox(
+                "出題順",
+                ["順番通り", "シャッフル"],
+                key="free_question_order"
+            )
+            
+            # 演習開始ボタン
+            if st.button("🎯 この条件で演習を開始", type="primary", use_container_width=True):
+                # デバッグ情報表示
+                st.info(f"選択条件: {quiz_format}, {target_exam}, {question_order}")
+                self._start_free_learning(quiz_format, target_exam, question_order)
+                
+        except Exception as e:
+            st.error(f"自由演習モードでエラー: {str(e)}")
+            st.exception(e)
+    
+    def _render_detailed_conditions(self, quiz_format: str, target_exam: str):
+        """詳細条件の動的UI表示"""
+        if quiz_format == "回数別":
+            if target_exam == "国試":
+                # 国試の回数選択（現実的な範囲）
+                kaisu_options = [f"{i}回" for i in range(95, 118)]  # 95回〜117回
+                selected_kaisu = st.selectbox("国試回数", kaisu_options, 
+                                            index=len(kaisu_options)-1, key="free_kaisu")
+                
+                # 領域選択
+                area_options = ["全領域", "A領域", "B領域", "C領域", "D領域"]
+                selected_area = st.selectbox("領域", area_options, key="free_area")
+            else:
+                # 学士試験の年度・回数選択
+                year_options = [f"{y}年度" for y in range(2020, 2025)]
+                selected_year = st.selectbox("年度", year_options, 
+                                           index=len(year_options)-1, key="free_gakushi_year")
+                
+                kaisu_options = ["1回", "2回"]
+                selected_kaisu = st.selectbox("回数", kaisu_options, key="free_gakushi_kaisu")
+                
+                area_options = ["全領域", "A領域", "B領域"]
+                selected_area = st.selectbox("領域", area_options, key="free_gakushi_area")
+        
+        elif quiz_format == "科目別":
+            # 科目グループ選択
+            group_options = ["基礎系", "臨床系"]
+            selected_group = st.selectbox("科目グループ", group_options, key="free_subject_group")
+            
+            # 具体的な科目選択（実際のデータから取得）
+            if selected_group == "基礎系":
+                subject_options = [
+                    "解剖学", "生理学", "生化学", "病理学", "微生物学・免疫学", 
+                    "薬理学", "歯科理工学", "組織学", "発生学・加齢老年学"
+                ]
+            else:
+                subject_options = [
+                    "保存修復学", "歯内治療学", "歯周病学", "クラウンブリッジ学", 
+                    "部分床義歯学", "全部床義歯学", "口腔外科学", "矯正歯科学", 
+                    "小児歯科学", "歯科麻酔学", "歯科放射線学", "衛生学", "インプラント学"
+                ]
+            
+            selected_subject = st.selectbox("科目", subject_options, key="free_subject")
+        
+        elif quiz_format == "キーワード検索":
+            keyword = st.text_input(
+                "検索キーワード",
+                placeholder="例：根管治療、インプラント、咬合",
+                key="free_keyword",
+                help="問題文に含まれるキーワードで検索します"
+            )
+    
+    def _render_session_status(self):
+        """📋 4. 共通のUI要素 - セッション状態表示"""
+        st.divider()
+        st.markdown("### 📋 セッション状況")
+        
+        # 学習キュー状況
+        main_queue = st.session_state.get("main_queue", [])
+        short_review_queue = st.session_state.get("short_review_queue", [])
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("メインキュー", f"{len(main_queue)}問")
+        with col2:
+            st.metric("短期復習", f"{len(short_review_queue)}問")
+        
+        # 最近の評価ログ
+        result_log = st.session_state.get("result_log", {})
+        if result_log:
+            st.markdown("### � 最近の評価")
+            recent_results = list(result_log.items())[-10:]  # 最新10件
+            
+            # 問題番号ボタンを3列で表示
+            cols = st.columns(3)
+            for i, (q_id, result) in enumerate(recent_results):
+                with cols[i % 3]:
+                    # 評価に応じたアイコン
+                    if result.get("rating") == "Easy":
+                        icon = "🟢"
+                    elif result.get("rating") == "Good":
+                        icon = "🔵"
+                    elif result.get("rating") == "Hard":
+                        icon = "🟡"
+                    else:
+                        icon = "🔴"
+                    
+                    if st.button(f"{icon} {q_id}", key=f"recent_{q_id}", use_container_width=True):
+                                                # 問題に直接ジャンプ
+                        self._jump_to_question(q_id)
+    
+    def _start_auto_learning(self):
+        """おまかせ学習の開始処理"""
+        uid = st.session_state.get("uid")
+        
+        with st.spinner("最適な問題を選択中..."):
+            # Cloud Function呼び出しを再有効化（URLを修正したため）
+            use_local_fallback = False
+            
+            if not use_local_fallback:
                 try:
-                    for ck in ["refresh_token", "uid", "email"]:
-                        cookies.delete(ck)
+                    # Cloud Function呼び出し
+                    result = call_cloud_function("getDailyQuiz", {
+                        "uid": uid,
+                        "target": st.session_state.get("analysis_target", "国試"),
+                        "new_cards_per_day": st.session_state.get("new_cards_per_day", 10)
+                    })
+                    
+                    if result and "questionIds" in result and len(result["questionIds"]) > 0:
+                        # Cloud Functionから問題リストを取得
+                        question_ids = result["questionIds"]
+                        # 問題IDから問題データを取得
+                        from data import load_data
+                        all_data = load_data()
+                        questions = [q for q in all_data["questions"] if q["number"] in question_ids]
+                        
+                        st.session_state["main_queue"] = questions
+                        st.session_state["session_mode"] = "auto_learning"
+                        st.session_state["session_choice_made"] = True
+                        st.session_state["session_type"] = "おまかせ演習"
+                        st.success(f"📚 {len(questions)}問の学習セッションを開始します")
+                        AnalyticsUtils.track_study_session_start("auto_learning", len(questions))
+                        
+                        # Firebase Analytics統合
+                        from firebase_analytics import FirebaseAnalytics
+                        FirebaseAnalytics.log_study_session_start(
+                            uid=uid,
+                            session_type="auto_learning",
+                            metadata={
+                                "target": st.session_state.get("analysis_target", "国試"),
+                                "question_count": len(questions),
+                                "source": "cloud_function"
+                            }
+                        )
+                    else:
+                        # Cloud Functionが失敗またはデータなし
+                        print("Cloud Function returned no valid questions, using fallback")
+                        self._fallback_auto_learning()
+                        
                 except Exception as e:
-                    print(f"[DEBUG] Cookie deletion error: {e}")
+                    print(f"Cloud Function error: {e}")
+                    # フォールバック処理
+                    self._fallback_auto_learning()
+            else:
+                # ローカル処理を直接使用
+                print("Using local fallback directly (Cloud Function disabled)")
+                self._fallback_auto_learning()
+            
+            # 学習画面に遷移
+            time.sleep(0.5)
             st.rerun()
-
-    # ---------- ページ本体 ----------
-    # 前回セッション復帰選択が未完了の場合、メッセージを表示
-    if st.session_state.get("has_previous_session") and not st.session_state.get("session_choice_made"):
-        st.info("👈 サイドバーで前回のセッションを続けるか選択してください")
-        st.stop()
     
-    # 検索ページから演習開始のフラグをチェック
-    # ページ分岐の修正
-    page = st.session_state.get("page_select", "演習")
+    def _fallback_auto_learning(self):
+        """クライアント側でのおまかせ学習フォールバック処理"""
+        cards = st.session_state.get("cards", {})
+        new_cards_per_day = st.session_state.get("new_cards_per_day", 10)
+        today = datetime.datetime.now().strftime("%Y-%m-%d")
+        
+        # 復習カードと新規カードを選択
+        review_questions = []
+        new_questions = []
+        
+        # カードが存在する場合の処理
+        if cards:
+            for q_id, card in cards.items():
+                next_review = card.get("next_review", "")
+                history = card.get("history", [])
+                
+                # 復習期限チェック
+                if next_review and next_review <= today:
+                    review_questions.append(q_id)
+                # 未学習カードチェック
+                elif len(history) == 0:
+                    new_questions.append(q_id)
+            
+            # 新規カードを制限
+            new_questions = new_questions[:new_cards_per_day]
+            all_questions = review_questions + new_questions
+        else:
+            # カードがない場合、全問題からランダムに選択
+            st.info("ユーザーカードが見つからないため、ランダムに問題を選択します。")
+            try:
+                # data.pyから問題データを取得
+                from data import ALL_QUESTIONS
+                if ALL_QUESTIONS:
+                    # 権限チェック
+                    uid = st.session_state.get("uid")
+                    if uid and check_gakushi_permission(uid):
+                        available_questions = [q.get("id") for q in ALL_QUESTIONS if q.get("id")]
+                    else:
+                        # 学士以外の問題のみ
+                        available_questions = [q.get("id") for q in ALL_QUESTIONS 
+                                             if q.get("id") and q.get("exam_type") != "学士"]
+                    
+                    # ランダムに選択
+                    import random
+                    all_questions = random.sample(available_questions, 
+                                                min(new_cards_per_day, len(available_questions)))
+                else:
+                    st.error("問題データが見つかりません。")
+                    return
+            except Exception as e:
+                st.error(f"問題選択エラー: {e}")
+                return
+        
+        # 問題が見つからない場合の処理
+        if not all_questions:
+            st.warning("復習対象の問題が見つかりません。新規問題からランダムに選択します。")
+            try:
+                from data import ALL_QUESTIONS
+                uid = st.session_state.get("uid")
+                if uid and check_gakushi_permission(uid):
+                    available_questions = [q.get("id") for q in ALL_QUESTIONS if q.get("id")]
+                else:
+                    available_questions = [q.get("id") for q in ALL_QUESTIONS 
+                                         if q.get("id") and q.get("exam_type") != "学士"]
+                
+                import random
+                all_questions = random.sample(available_questions, 
+                                            min(new_cards_per_day, len(available_questions)))
+            except Exception as e:
+                st.error(f"フォールバック問題選択エラー: {e}")
+                return
+        
+        # キューに設定
+        st.session_state["main_queue"] = all_questions
+        st.session_state["session_mode"] = "auto_learning"
+        st.session_state["session_choice_made"] = True
+        st.session_state["session_type"] = "おまかせ演習"
+        
+        # 分析ログの記録
+        AnalyticsUtils.track_study_session_start("auto_learning_fallback", len(all_questions))
+        
+        # Firebase Analytics統合
+        from firebase_analytics import FirebaseAnalytics
+        FirebaseAnalytics.log_study_session_start(
+            uid=st.session_state.get("uid"),
+            session_type="auto_learning_fallback",
+            metadata={
+                "target": st.session_state.get("analysis_target", "国試"),
+                "question_count": len(all_questions),
+                "source": "local_fallback",
+                "fallback_reason": "cloud_function_error"
+            }
+        )
+        st.info("📚 ローカル問題選択アルゴリズムを使用しています。")
+        st.success(f"📚 {len(all_questions)}問の学習セッションを開始します")
     
-    if st.session_state.get("start_practice_from_search", False):
-        # フラグをクリアして演習ページを表示
-        st.session_state.start_practice_from_search = False
-        render_practice_page()
-    elif page == "演習":
-        render_practice_page()
-    elif page == "ランキング":
-        render_ranking_page()
-    else:  # "検索・進捗" の場合
-        render_search_page()
+    def _start_free_learning(self, quiz_format: str, target_exam: str, question_order: str):
+        """自由演習の開始処理"""
+        with st.spinner("問題を準備中..."):
+            questions_to_load = self._generate_question_list(quiz_format, target_exam)
+            
+            if not questions_to_load:
+                st.error("条件に一致する問題が見つかりませんでした")
+                return
+            
+            # 出題順の決定（グループ化前にソート）
+            if question_order == "順番通り":
+                question_dict = {q.get("number", ""): q for q in ALL_QUESTIONS}
+                questions_to_load.sort(key=lambda x: get_natural_sort_key(question_dict.get(x, {})))
+            elif question_order == "シャッフル":
+                random.shuffle(questions_to_load)
+            
+            # グループ化処理（連問対応）
+            grouped_questions = self._group_case_questions(questions_to_load)
+            
+            # グループレベルでのシャッフル（必要に応じて）
+            if question_order == "シャッフル":
+                random.shuffle(grouped_questions)
+            
+            # キューに設定
+            st.session_state["main_queue"] = grouped_questions
+            total_questions = sum(len(group) for group in grouped_questions)
+            
+            # カスタム演習セッションの開始
+            st.session_state["session_choice_made"] = True
+            st.session_state["session_type"] = "カスタム演習"
+            st.session_state["custom_questions_selected"] = True
+            
+            # 最初の問題グループを設定
+            if grouped_questions:
+                st.session_state["current_q_group"] = grouped_questions[0]
+                st.session_state["current_question_index"] = 0
+                # main_queueから最初のグループを削除
+                st.session_state["main_queue"] = grouped_questions[1:]
+            
+            st.success(f"🎯 {len(grouped_questions)}グループ（計{total_questions}問）の演習を開始します")
+            
+            time.sleep(0.5)
+            st.rerun()
+    
+    def _generate_question_list(self, quiz_format: str, target_exam: str):
+        """条件に基づく問題リスト生成"""
+        questions_to_load = []
+        
+        if quiz_format == "回数別":
+            # 国試回数と領域の取得
+            if target_exam == "国試":
+                selected_kaisu = st.session_state.get("free_kaisu", "117回").replace("回", "")
+                selected_area = st.session_state.get("free_area", "全領域")
+                
+                for q in ALL_QUESTIONS:
+                    q_num = q.get("number", "")
+                    # 学士問題は除外
+                    if q_num.startswith("G"):
+                        continue
+                    
+                    # 回数フィルタ
+                    if not q_num.startswith(selected_kaisu):
+                        continue
+                    
+                    # 領域フィルタ
+                    if selected_area != "全領域":
+                        area_letter = selected_area.replace("領域", "")
+                        if not q_num.startswith(f"{selected_kaisu}{area_letter}"):
+                            continue
+                    
+                    questions_to_load.append(q_num)
+            
+            else:  # 学士試験
+                selected_year = st.session_state.get("free_gakushi_year", "2024年度").replace("年度", "")
+                selected_kaisu = st.session_state.get("free_gakushi_kaisu", "1回")
+                selected_area = st.session_state.get("free_gakushi_area", "全領域")
+                
+                for q in ALL_QUESTIONS:
+                    q_num = q.get("number", "")
+                    # 学士問題のみ
+                    if not q_num.startswith("G"):
+                        continue
+                    
+                    # 年度と回数フィルタ（例：G24-1-1）
+                    year_short = str(int(selected_year) - 2000)  # 2024 -> 24
+                    kaisu_num = selected_kaisu.replace("回", "")
+                    pattern = f"G{year_short}-{kaisu_num}"
+                    
+                    if not q_num.startswith(pattern):
+                        continue
+                    
+                    # 領域フィルタ
+                    if selected_area != "全領域":
+                        area_letter = selected_area.replace("領域", "")
+                        if f"-{area_letter}-" not in q_num:
+                            continue
+                    
+                    questions_to_load.append(q_num)
+        
+        elif quiz_format == "科目別":
+            selected_subject = st.session_state.get("free_subject", "解剖学")
+            
+            for q in ALL_QUESTIONS:
+                q_num = q.get("number", "")
+                q_subject = q.get("subject", "")
+                
+                # 対象試験のフィルタ
+                if target_exam == "国試" and q_num.startswith("G"):
+                    continue
+                elif target_exam == "学士試験" and not q_num.startswith("G"):
+                    continue
+                
+                # 科目フィルタ
+                if q_subject == selected_subject:
+                    questions_to_load.append(q_num)
+        
+        elif quiz_format == "必修問題のみ":
+            if target_exam == "国試":
+                questions_to_load = list(HISSHU_Q_NUMBERS_SET)
+            else:  # 学士試験
+                questions_to_load = list(GAKUSHI_HISSHU_Q_NUMBERS_SET)
+        
+        elif quiz_format == "キーワード検索":
+            keyword = st.session_state.get("free_keyword", "").strip()
+            if keyword:
+                for q in ALL_QUESTIONS:
+                    q_num = q.get("number", "")
+                    q_text = q.get("question", "")
+                    
+                    # 対象試験のフィルタ
+                    if target_exam == "国試" and q_num.startswith("G"):
+                        continue
+                    elif target_exam == "学士試験" and not q_num.startswith("G"):
+                        continue
+                    
+                    # キーワード検索
+                    if keyword.lower() in q_text.lower():
+                        questions_to_load.append(q_num)
+        
+        print(f"[DEBUG] 生成された問題リスト: {len(questions_to_load)}問")
+        return questions_to_load
+    
+    def _group_case_questions(self, questions):
+        """連問をグループ化"""
+        processed_case_ids = set()
+        grouped_questions = []
+        
+        # ALL_QUESTIONSから問題詳細を取得
+        question_dict = {q.get("number", ""): q for q in ALL_QUESTIONS}
+        
+        for q_num in questions:
+            if q_num in question_dict:
+                question = question_dict[q_num]
+                case_id = question.get("case_id")
+                
+                if case_id and case_id not in processed_case_ids:
+                    # 同じcase_idを持つ全ての問題を取得
+                    case_questions = []
+                    for check_q_num in questions:
+                        if check_q_num in question_dict:
+                            check_question = question_dict[check_q_num]
+                            if check_question.get("case_id") == case_id:
+                                case_questions.append(check_q_num)
+                    
+                    # 連問を自然順でソート
+                    case_questions.sort(key=lambda x: get_natural_sort_key(question_dict.get(x, {})))
+                    grouped_questions.append(case_questions)
+                    processed_case_ids.add(case_id)
+                
+                elif not case_id:
+                    # 単独問題
+                    grouped_questions.append([q_num])
+        
+        print(f"[DEBUG] グループ化結果: {len(grouped_questions)}グループ")
+        return grouped_questions
+    
+    def _jump_to_question(self, q_id: str):
+        """指定問題への直接ジャンプ"""
+        # 問題を最前面に持ってくる
+        current_queue = st.session_state.get("main_queue", [])
+        if q_id in current_queue:
+            current_queue.remove(q_id)
+        
+        # 最前面に追加
+        st.session_state["main_queue"] = [q_id] + current_queue
+        st.success(f"問題 {q_id} にジャンプします")
+        time.sleep(0.5)
+        st.rerun()
+    
+    def _render_other_page_settings(self):
+        """その他のページでの従来設定表示"""
+        uid = st.session_state.get("uid")
+        has_gakushi_permission = check_gakushi_permission(uid) if uid else False
+        
+        if not has_gakushi_permission:
+            st.info("📚 学士試験機能を利用するには権限が必要です")
+        
+        # 設定セクション
+        with st.expander("⚙️ 設定"):
+            self._render_settings(has_gakushi_permission)
+    
+    def _handle_logout(self):
+        """ログアウト処理"""
+        uid = st.session_state.get("uid")
+        if uid:
+            log_to_ga("logout", uid, {})
+        
+        self.auth_manager.logout()
+        st.success("ログアウトしました")
+        time.sleep(1)
+        st.rerun()
+    
+    def _render_settings(self, has_gakushi_permission: bool):
+        """設定の描画"""
+        # 分析対象選択
+        if has_gakushi_permission:
+            analysis_options = ["国試", "学士試験"]
+        else:
+            analysis_options = ["国試"]
+        
+        analysis_target = st.selectbox(
+            "分析対象",
+            analysis_options,
+            index=analysis_options.index(st.session_state.get("analysis_target", "国試"))
+            if st.session_state.get("analysis_target") in analysis_options else 0,
+            key="analysis_target_selector"
+        )
+        
+        if analysis_target != st.session_state.get("analysis_target"):
+            st.session_state["analysis_target"] = analysis_target
+        
+        # レベルフィルター
+        level_options = ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "レベル5", "習得済み"]
+        # デフォルトは学習済みデータ重視（未学習除外）
+        default_levels = ["レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "レベル5", "習得済み"]
+        level_filter = st.multiselect(
+            "表示レベル",
+            level_options,
+            default=st.session_state.get("level_filter", default_levels),
+            key="level_filter_selector"
+        )
+        
+        if level_filter != st.session_state.get("level_filter"):
+            st.session_state["level_filter"] = level_filter
+        
+        # 新規カード数設定
+        new_cards_per_day = st.slider(
+            "1日の新規カード数",
+            min_value=1,
+            max_value=50,
+            value=st.session_state.get("new_cards_per_day", 10),
+            key="new_cards_slider"
+        )
+        
+        if new_cards_per_day != st.session_state.get("new_cards_per_day"):
+            st.session_state["new_cards_per_day"] = new_cards_per_day
+            st.session_state["settings_changed"] = True
+    
+    def _render_main_content(self):
+        """メインコンテンツの描画（ページ選択対応）"""
+        current_page = st.session_state.get("page", "練習")
+        
+        if current_page == "ランキング":
+            render_ranking_page(self.auth_manager)
+        elif current_page == "検索・進捗":
+            from modules.search_page import render_search_page
+            render_search_page()
+        else:
+            render_practice_page(self.auth_manager)
+    
+    def _handle_login(self, email: str, password: str, remember_me: bool):
+        """ログイン処理"""
+        with st.spinner("ログイン中..."):
+            result = self.auth_manager.signin(email, password)
+            
+            if "error" in result:
+                # ❌ Failure: エラーメッセージを表示
+                error_message = result["error"]["message"]
+                if "INVALID_PASSWORD" in error_message:
+                    st.error("パスワードが正しくありません")
+                elif "EMAIL_NOT_FOUND" in error_message:
+                    st.error("このメールアドレスは登録されていません")
+                elif "INVALID_EMAIL" in error_message:
+                    st.error("メールアドレスの形式が正しくありません")
+                else:
+                    st.error(f"ログインエラー: {error_message}")
+            else:
+                # ✅ Success: ログイン成功
+                st.success("ログインしました！")
+                
+                # Cookie Saving: チェックボックスがオンの場合
+                if remember_me:
+                    cookie_data = {
+                        "refresh_token": result.get("refreshToken", ""),
+                        "uid": st.session_state.get("uid", ""),
+                        "email": email
+                    }
+                    self.cookie_manager.save_login_cookies(cookie_data)
+                
+                # Google Analytics イベント
+                uid = st.session_state.get("uid")
+                if uid:
+                    log_to_ga("login", uid, {"method": "email"})
+                
+                # 科目の初期化（ログイン後にユーザー権限を反映）
+                self._initialize_available_subjects()
+                
+                # Rerun: アプリをリロードしてメインインターフェースへ
+                time.sleep(0.5)
+                st.rerun()
+    
+    def _handle_signup(self, email: str, password: str):
+        """新規登録処理"""
+        with st.spinner("アカウント作成中..."):
+            result = self.auth_manager.signup(email, password)
+            
+            if "error" in result:
+                # ❌ Failure: エラーメッセージを表示
+                error_message = result["error"]["message"]
+                if "EMAIL_EXISTS" in error_message:
+                    st.error("このメールアドレスは既に登録されています")
+                elif "WEAK_PASSWORD" in error_message:
+                    st.error("パスワードが弱すぎます。6文字以上の強いパスワードを設定してください")
+                elif "INVALID_EMAIL" in error_message:
+                    st.error("メールアドレスの形式が正しくありません")
+                else:
+                    st.error(f"登録エラー: {error_message}")
+            else:
+                # ✅ Success: 成功メッセージを表示
+                st.success("🎉 アカウントを作成しました！「ログイン」タブからサインインしてください。")
+    
+    def _handle_password_reset(self, email: str):
+        """パスワードリセット処理"""
+        with st.spinner("リセットメール送信中..."):
+            result = self.auth_manager.reset_password(email)
+            
+            if result["success"]:
+                # ✅ Success: 成功メッセージを表示
+                st.success("📧 パスワードリセットメールを送信しました。メールをご確認ください。")
+            else:
+                # ❌ Failure: エラーメッセージを表示
+                error_message = result["message"]
+                if "EMAIL_NOT_FOUND" in error_message:
+                    st.error("このメールアドレスは登録されていません")
+                elif "INVALID_EMAIL" in error_message:
+                    st.error("メールアドレスの形式が正しくありません")
+                else:
+                    st.error(f"エラー: {error_message}")
 
-    # UI状態の変更監視による自動保存は廃止（書き込み頻度削減のため）
-    # 保存は自己評価フォーム送信時のみ実行
+
+def main():
+    """メイン関数"""
+    app = DentalApp()
+    app.run()
+
+
+if __name__ == "__main__":
+    main()

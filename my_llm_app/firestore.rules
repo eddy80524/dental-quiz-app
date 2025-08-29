@@ -1,0 +1,64 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ユーザーコレクション - uidベースのアクセス制御
+    match /users/{uid} {
+      // ユーザー自身のデータのみ読み書き可能
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+      
+      // ユーザーカードサブコレクション
+      match /userCards/{cardId} {
+        allow read, write: if request.auth != null && request.auth.uid == uid;
+      }
+      
+      // セッション状態サブコレクション
+      match /sessionState/{sessionId} {
+        allow read, write: if request.auth != null && request.auth.uid == uid;
+      }
+    }
+    
+    // ユーザー権限コレクション - 読み取り専用（管理者が設定）
+    match /user_permissions/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false; // 管理者のみがサーバー側で設定
+    }
+    
+    // 学習ログコレクション - 新しい構造では使用しない（レガシー対応）
+    match /learningLogs/{logId} {
+      allow read: if request.auth != null && 
+                     resource.data.userId == request.auth.uid;
+      allow write: if false; // 新構造では直接書き込み禁止
+    }
+    
+    // 移行バックアップコレクション - 読み取り専用
+    match /integration_backups/{backupId} {
+      allow read: if request.auth != null;
+      allow write: if false; // システムによる書き込みのみ
+    }
+    
+    // 移行ログコレクション - 読み取り専用
+    match /migration_logs/{logId} {
+      allow read: if request.auth != null;
+      allow write: if false; // システムによる書き込みのみ
+    }
+    
+    // ランキング用ビューコレクション（今後の拡張用）
+    match /ranking_cache/{rankingId} {
+      allow read: if request.auth != null;
+      allow write: if false; // システムによる更新のみ
+    }
+    
+    // 公開マスターデータ（問題データ等）- 認証済みユーザーのみ読み取り可能
+    match /master_data/{dataId} {
+      allow read: if request.auth != null;
+      allow write: if false; // 管理者のみがサーバー側で設定
+    }
+    
+    // その他のコレクションはデフォルトで拒否
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
