@@ -868,56 +868,87 @@ class DentalApp:
             st.session_state.subjects_cache_key = cache_key
     
     def _load_user_data(self):
-        """ユーザーの演習データを読み込み（最適化されたスキーマ対応）"""
+        """ユーザーの演習データを読み込み（最適化されたスキーマ対応・Streamlit Cloud対応）"""
         uid = st.session_state.get("uid")
         if not uid:
+            print("[DEBUG] _load_user_data: UIDがありません")
             return
         
+        # 既にデータが読み込まれている場合はスキップ（強化版）
+        if st.session_state.get("cards") and len(st.session_state.get("cards", {})) > 0:
+            print(f"[DEBUG] _load_user_data: データ既に読み込み済み - カード数: {len(st.session_state.get('cards', {}))}")
+            return
+        
+        print(f"[DEBUG] _load_user_data: {uid} のデータを読み込み開始...")
+        
         try:
-            # 最適化されたstudy_cardsコレクションからユーザーデータを読み込み
+            # Firestore接続の確認（Streamlit Cloud対応）
             firestore_manager = get_firestore_manager()
+            if not firestore_manager:
+                print("[ERROR] _load_user_data: Firestoreマネージャーの取得に失敗")
+                st.session_state["cards"] = {}
+                return
+                
             db = firestore_manager.db
+            if not db:
+                print("[ERROR] _load_user_data: Firestoreデータベース接続に失敗")
+                st.session_state["cards"] = {}
+                return
             
+            # 最適化されたstudy_cardsコレクションからユーザーデータを読み込み
             study_cards_ref = db.collection("study_cards")
             user_cards_query = study_cards_ref.where("uid", "==", uid)
             user_cards_docs = user_cards_query.get()
             
+            print(f"[DEBUG] _load_user_data: {len(user_cards_docs)}件のカードドキュメントを取得")
+            
             # カードデータを変換（既存の形式に合わせる）
             cards = {}
             for doc in user_cards_docs:
-                card_data = doc.to_dict()
-                question_id = doc.id.split('_')[-1] if '_' in doc.id else doc.id
-                
-                # 既存の形式に変換
-                card = {
-                    "q_id": question_id,
-                    "uid": card_data.get("uid", uid),
-                    "history": card_data.get("history", []),
-                    "sm2_data": card_data.get("sm2_data", {}),
-                    "performance": card_data.get("performance", {}),
-                    "metadata": card_data.get("metadata", {})
-                }
-                
-                # SM2データから既存の形式に変換
-                sm2_data = card_data.get("sm2_data", {})
-                if sm2_data:
-                    card.update({
-                        "n": sm2_data.get("n", 0),
-                        "EF": sm2_data.get("ef", 2.5),
-                        "interval": sm2_data.get("interval", 1),
-                        "next_review": sm2_data.get("next_review"),
-                        "last_review": sm2_data.get("last_review")
-                    })
-                
-                cards[question_id] = card
+                try:
+                    card_data = doc.to_dict()
+                    question_id = doc.id.split('_')[-1] if '_' in doc.id else doc.id
+                    
+                    # 既存の形式に変換
+                    card = {
+                        "q_id": question_id,
+                        "uid": card_data.get("uid", uid),
+                        "history": card_data.get("history", []),
+                        "sm2_data": card_data.get("sm2_data", {}),
+                        "performance": card_data.get("performance", {}),
+                        "metadata": card_data.get("metadata", {})
+                    }
+                    
+                    # SM2データから既存の形式に変換
+                    sm2_data = card_data.get("sm2_data", {})
+                    if sm2_data:
+                        card.update({
+                            "n": sm2_data.get("n", 0),
+                            "EF": sm2_data.get("ef", 2.5),
+                            "interval": sm2_data.get("interval", 1),
+                            "next_review": sm2_data.get("next_review"),
+                            "last_review": sm2_data.get("last_review")
+                        })
+                    
+                    cards[question_id] = card
+                    
+                except Exception as card_error:
+                    print(f"[WARNING] カードデータ処理エラー ({doc.id}): {card_error}")
+                    continue
             
             # セッション状態に保存
             st.session_state["cards"] = cards
             
             print(f"[DEBUG] ユーザーデータ読み込み完了: {len(cards)}枚のカード")
             
+            # 学習統計も計算（デバッグ用）
+            if cards:
+                studied_cards = sum(1 for card in cards.values() if card.get("history"))
+                print(f"[DEBUG] 学習済みカード数: {studied_cards}")
+            
         except Exception as e:
             print(f"[ERROR] ユーザーデータ読み込みエラー: {e}")
+            print(f"[ERROR] エラー詳細: {type(e).__name__}")
             st.session_state["cards"] = {}
     
     def run(self):
