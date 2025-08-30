@@ -44,6 +44,14 @@ from utils import (
 )
 from firestore_db import get_firestore_manager
 
+# ユーザーデータ抽出クラスをインポート
+sys.path.append('/Users/utsueito/kokushi-dx-poc/dental-DX-PoC')
+try:
+    from user_data_extractor import UserDataExtractor
+except ImportError:
+    # フォールバック：UserDataExtractorが利用できない場合
+    UserDataExtractor = None
+
 # 統一されたレベル色分け定義（新デザインシステム対応）
 LEVEL_COLORS = {
     "未学習": "#BDBDBD",
@@ -56,7 +64,7 @@ LEVEL_COLORS = {
     "習得済み": "#344A90"
 }
 
-# 統一されたレベル順序定義（レベル0を再導入）
+# 統一されたレベル順序定義（0-5レベルシステム）
 LEVEL_ORDER = ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "レベル5", "習得済み"]
 
 def check_gakushi_permission(uid: str) -> bool:
@@ -99,117 +107,407 @@ def calculate_card_level(card: Dict[str, Any]) -> str:
         return "習得済み"
     
     # 3. 「レベル1」から「レベル5」の判定 (演習回数に基づく)
-    if n >= 7: return "レベル5"
-    if n >= 5: return "レベル4"
-    if n >= 4: return "レベル3"
-    if n >= 3: return "レベル2"
-    if n >= 2: return "レベル1"
+    if n >= 7: return "レベル5"   # 最高レベル
+    if n >= 6: return "レベル4"   # 習得済み直前
+    if n >= 4: return "レベル3"   # 得意レベル
+    if n >= 3: return "レベル2"   # 普通レベル
+    if n >= 2: return "レベル1"   # 基礎レベル
     
     # 4. 上記のいずれでもないが、履歴は存在するカード (n=0または1) は「レベル0」
     return "レベル0"
 
-def calculate_progress_metrics(cards: Dict, base_df: pd.DataFrame) -> Dict:
+def calculate_progress_metrics(cards: Dict, base_df: pd.DataFrame, uid: str = None, analysis_target: str = "国試問題") -> Dict:
     """
-    学習進捗メトリクスと前日比・前週比を計算するヘルパー関数
+    学習進捗メトリクスと前日比・前週比を計算するヘルパー関数（UserDataExtractor強化版）
     """
     today = datetime.datetime.now().date()
     yesterday = today - datetime.timedelta(days=1)
     seven_days_ago = datetime.datetime.now() - datetime.timedelta(days=7)
     fourteen_days_ago = datetime.datetime.now() - datetime.timedelta(days=14)
     
-    # 今日・昨日・期間別の学習データを集計
+    # UserDataExtractorから詳細データを取得（可能な場合）
+    enhanced_data = {}
+    if uid and uid != "guest" and UserDataExtractor:
+        try:
+            extractor = UserDataExtractor()
+            
+            # analysis_targetに応じて試験種別フィルタを設定
+            exam_type_filter = None
+            if analysis_target == "学士試験問題":
+                exam_type_filter = "学士試験"
+            elif analysis_target == "国試問題":
+                exam_type_filter = "歯科国試"
+            
+            # analysis_targetでフィルタリングしたログを取得
+            evaluation_logs = extractor.extract_self_evaluation_logs(uid)
+            practice_data = extractor.extract_practice_logs(uid)
+            
+            # evaluation_logsをanalysis_targetでフィルタリング
+            if exam_type_filter and evaluation_logs:
+                # 各ログの問題IDから試験種別を判定してフィルタリング
+                filtered_logs = []
+                for log in evaluation_logs:
+                    question_id = log.get('question_id')  # problem_id → question_id に修正
+                    if question_id:
+                        # 問題IDから試験種別を判定
+                        if exam_type_filter == "学士試験" and ("G24" in question_id or "G25" in question_id):
+                            filtered_logs.append(log)
+                        elif exam_type_filter == "歯科国試" and not ("G24" in question_id or "G25" in question_id):
+                            filtered_logs.append(log)
+                        elif exam_type_filter is None:  # フィルタなしの場合
+                            filtered_logs.append(log)
+                evaluation_logs = filtered_logs
+                print(f"[INFO] {analysis_target}でフィルタリング: {len(filtered_logs)}件 (元: 総{len(evaluation_logs)}件)")
+            else:
+                print(f"[INFO] フィルタリングなし: {len(evaluation_logs)}件")
+            
+            # より正確な統計を計算
+            if evaluation_logs:
+                # 7日間の正解率を正確に計算（analysis_targetでフィルタリング済み）
+                recent_evaluations = [
+                    log for log in evaluation_logs 
+                    if log['timestamp'] >= seven_days_ago
+                ]
+                previous_evaluations = [
+                    log for log in evaluation_logs 
+                    if fourteen_days_ago <= log['timestamp'] < seven_days_ago
+                ]
+                
+                recent_correct = sum(1 for log in recent_evaluations if log.get('quality', 0) >= 3)
+                previous_correct = sum(1 for log in previous_evaluations if log.get('quality', 0) >= 3)
+                
+                # 必修問題の正解率も別途計算
+                recent_hisshu_evaluations = [log for log in recent_evaluations if log.get('is_hisshu', False)]
+                previous_hisshu_evaluations = [log for log in previous_evaluations if log.get('is_hisshu', False)]
+                
+                recent_hisshu_correct = sum(1 for log in recent_hisshu_evaluations if log.get('quality', 0) >= 3)
+                previous_hisshu_correct = sum(1 for log in previous_hisshu_evaluations if log.get('quality', 0) >= 3)
+                
+                enhanced_data['recent_accuracy'] = (recent_correct / len(recent_evaluations) * 100) if recent_evaluations else 0
+                enhanced_data['previous_accuracy'] = (previous_correct / len(previous_evaluations) * 100) if previous_evaluations else 0
+                enhanced_data['recent_total'] = len(recent_evaluations)
+                enhanced_data['previous_total'] = len(previous_evaluations)
+                
+                # 必修問題の正解率統計
+                enhanced_data['recent_hisshu_stats'] = {
+                    'correct': recent_hisshu_correct,
+                    'total': len(recent_hisshu_evaluations)
+                }
+                enhanced_data['previous_hisshu_stats'] = {
+                    'correct': previous_hisshu_correct,
+                    'total': len(previous_hisshu_evaluations)
+                }
+                
+                # 今日と昨日の学習数を正確に計算
+                today_logs = [
+                    log for log in evaluation_logs 
+                    if log['timestamp'].date() == today
+                ]
+                yesterday_logs = [
+                    log for log in evaluation_logs 
+                    if log['timestamp'].date() == yesterday
+                ]
+                
+                enhanced_data['today_study_count'] = len(today_logs)
+                enhanced_data['yesterday_study_count'] = len(yesterday_logs)
+                
+                print(f"[INFO] UserDataExtractor強化({analysis_target}): 今日{len(today_logs)}問, 昨日{len(yesterday_logs)}問, 直近7日{len(recent_evaluations)}問, 必修{len(recent_hisshu_evaluations)}問")
+        except Exception as e:
+            print(f"[WARNING] UserDataExtractor強化データ取得エラー: {e}")
+    
+    # 今日・昨日・期間別の学習データを集計（従来ロジック）
     today_studied_problems = set()
     yesterday_studied_problems = set()
     today_hisshu_problems = set()
     yesterday_hisshu_problems = set()
-    today_study_count = 0
-    yesterday_study_count = 0
-    recent_7days_stats = {'correct': 0, 'total': 0}
-    previous_7days_stats = {'correct': 0, 'total': 0}
+    today_study_count = enhanced_data.get('today_study_count', 0)  # 強化データを優先
+    yesterday_study_count = enhanced_data.get('yesterday_study_count', 0)  # 強化データを優先
+    recent_7days_stats = {'correct': 0, 'total': enhanced_data.get('recent_total', 0)}
+    previous_7days_stats = {'correct': 0, 'total': enhanced_data.get('previous_total', 0)}
     
-    for _, row in base_df.iterrows():
-        q_id = row['id']
-        is_hisshu = row['is_hisshu']
-        card = row['card_data']
-        history = card.get('history', [])
-        
-        if isinstance(history, list):
-            for entry in history:
-                if isinstance(entry, dict):
-                    timestamp = entry.get('timestamp')
-                    if timestamp:
-                        try:
-                            # タイムスタンプをパース - DatetimeWithNanoseconds対応
-                            if hasattr(timestamp, 'timestamp') and callable(getattr(timestamp, 'timestamp')):
-                                # DatetimeWithNanoseconds の場合
-                                entry_date = timestamp.date()
-                                entry_datetime = timestamp
-                            elif hasattr(timestamp, 'date') and callable(getattr(timestamp, 'date')):
-                                # datetime オブジェクトの場合
-                                entry_date = timestamp.date()
-                                entry_datetime = timestamp
-                            else:
-                                # 文字列の場合
-                                entry_date_str = str(timestamp)[:10]
-                                entry_date = datetime.datetime.fromisoformat(entry_date_str).date()
-                                entry_datetime = datetime.datetime.fromisoformat(str(timestamp)[:19])
-                            
-                            # 今日の学習問題を記録
-                            if entry_date == today:
-                                today_studied_problems.add(q_id)
-                                today_study_count += 1
-                                if is_hisshu:
-                                    today_hisshu_problems.add(q_id)
-                            
-                            # 昨日の学習問題を記録
-                            elif entry_date == yesterday:
-                                yesterday_studied_problems.add(q_id)
-                                yesterday_study_count += 1
-                                if is_hisshu:
-                                    yesterday_hisshu_problems.add(q_id)
-                            
-                            # 直近7日間の正解率統計
-                            if entry_datetime >= seven_days_ago:
-                                recent_7days_stats['total'] += 1
-                                quality = entry.get('quality', 0)
-                                if quality >= 3:
-                                    recent_7days_stats['correct'] += 1
-                            
-                            # 前の7日間（8-14日前）の正解率統計
-                            elif entry_datetime >= fourteen_days_ago:
-                                previous_7days_stats['total'] += 1
-                                quality = entry.get('quality', 0)
-                                if quality >= 3:
-                                    previous_7days_stats['correct'] += 1
-                        except Exception:
-                            # すべての例外をキャッチしてスキップ
-                            continue
+    # フォールバック：従来ロジックで補完（UserDataExtractorが利用できない場合）
+    if not enhanced_data:
+        for _, row in base_df.iterrows():
+            q_id = row['id']
+            is_hisshu = row['is_hisshu']
+            card = row['card_data']
+            history = card.get('history', [])
+            
+            if isinstance(history, list):
+                for entry in history:
+                    if isinstance(entry, dict):
+                        timestamp = entry.get('timestamp')
+                        if timestamp:
+                            try:
+                                # タイムスタンプをパース - DatetimeWithNanoseconds対応
+                                if hasattr(timestamp, 'timestamp') and callable(getattr(timestamp, 'timestamp')):
+                                    # DatetimeWithNanoseconds の場合
+                                    entry_date = timestamp.date()
+                                    entry_datetime = timestamp
+                                elif hasattr(timestamp, 'date') and callable(getattr(timestamp, 'date')):
+                                    # datetime オブジェクトの場合
+                                    entry_date = timestamp.date()
+                                    entry_datetime = timestamp
+                                else:
+                                    # 文字列の場合 - より安全なパース
+                                    try:
+                                        if 'T' in str(timestamp):
+                                            # ISO形式
+                                            timestamp_str = str(timestamp).split('.')[0] if '.' in str(timestamp) else str(timestamp)
+                                            entry_datetime = datetime.datetime.fromisoformat(timestamp_str)
+                                        else:
+                                            # 通常形式
+                                            entry_datetime = datetime.datetime.fromisoformat(str(timestamp)[:19])
+                                        entry_date = entry_datetime.date()
+                                    except Exception as e:
+                                        print(f"タイムスタンプパースエラー (search_page): {e}")
+                                        continue
+                                
+                                # 今日の学習問題を記録
+                                if entry_date == today:
+                                    today_studied_problems.add(q_id)
+                                    if not enhanced_data:  # 強化データがない場合のみカウント
+                                        today_study_count += 1
+                                    if is_hisshu:
+                                        today_hisshu_problems.add(q_id)
+                                
+                                # 昨日の学習問題を記録
+                                elif entry_date == yesterday:
+                                    yesterday_studied_problems.add(q_id)
+                                    if not enhanced_data:  # 強化データがない場合のみカウント
+                                        yesterday_study_count += 1
+                                    if is_hisshu:
+                                        yesterday_hisshu_problems.add(q_id)
+                                
+                                # 直近7日間の正解率統計（強化データがない場合のみ）
+                                if not enhanced_data and entry_datetime >= seven_days_ago:
+                                    recent_7days_stats['total'] += 1
+                                    quality = entry.get('quality', 0)
+                                    if quality >= 3:
+                                        recent_7days_stats['correct'] += 1
+                                
+                                # 前の7日間（8-14日前）の正解率統計（強化データがない場合のみ）
+                                elif not enhanced_data and entry_datetime >= fourteen_days_ago:
+                                    previous_7days_stats['total'] += 1
+                                    quality = entry.get('quality', 0)
+                                    if quality >= 3:
+                                        previous_7days_stats['correct'] += 1
+                            except Exception:
+                                # すべての例外をキャッチしてスキップ
+                                continue
     
     # 現在の総学習済み問題数を計算
     current_studied_count = 0
     current_hisshu_studied_count = 0
-    total_count = len(base_df)
-    hisshu_total_count = 0
     
-    for _, row in base_df.iterrows():
-        is_hisshu = row['is_hisshu']
-        if is_hisshu:
-            hisshu_total_count += 1
-        
-        card = row['card_data']
-        level = calculate_card_level(card)
-        if level != "未学習":
-            current_studied_count += 1
-            if is_hisshu:
-                current_hisshu_studied_count += 1
+    # analysis_targetに基づいて総問題数を決定（実際のデータから取得した正確な値）
+    if analysis_target == "学士試験問題":
+        # 学士試験問題の場合: 4,941問、必修1,100問
+        total_count = 4941
+        hisshu_total_count = 1100
+    else:
+        # 国試問題の場合: 8,576問、必修1,300問（デフォルト）
+        total_count = 8576
+        hisshu_total_count = 1300
+    
+    # UserDataExtractorから正確な学習済み数を取得（可能な場合）
+    if uid and uid != "guest" and UserDataExtractor:
+        try:
+            extractor = UserDataExtractor()
+            comprehensive_stats = extractor.get_user_comprehensive_stats(uid, analysis_target)
+            if comprehensive_stats and 'level_distribution' in comprehensive_stats:
+                # UserDataExtractorから正確な学習済み数を計算
+                level_dist = comprehensive_stats['level_distribution']
+                total_questions = sum(level_dist.values())
+                unstudied_count = level_dist.get('未学習', 0)
+                current_studied_count = total_questions - unstudied_count
+                
+                # 必修問題の学習済み数も正確に計算（analysis_targetでフィルタリングしたbase_dfから算出）
+                # UserDataExtractorでは必修問題の詳細判定ができないため、base_dfから再計算
+                for _, row in base_df.iterrows():
+                    # analysis_targetによるフィルタリング
+                    row_id = row['id']
+                    if analysis_target == "学士試験問題" and not ("G24" in row_id or "G25" in row_id):
+                        continue
+                    elif analysis_target == "国試問題" and ("G24" in row_id or "G25" in row_id):
+                        continue
+                    
+                    # 必修問題の判定（学士試験問題の場合は問題IDから判定）
+                    is_hisshu = row['is_hisshu']
+                    if analysis_target == "学士試験問題":
+                        # 学士試験問題: G24-2-A-1〜20, G24-2-B-1〜20などが必修
+                        import re
+                        match = re.search(r'G\d+-\d+-[A-Z]-(\d+)', row_id)
+                        if match:
+                            question_num = int(match.group(1))
+                            is_hisshu = (question_num <= 20)  # 1〜20番が必修
+                    
+                    if is_hisshu:
+                        card = row['card_data']
+                        level = calculate_card_level(card)
+                        if level != "未学習":
+                            current_hisshu_studied_count += 1
+                
+                print(f"[DEBUG] 必修学習済み数計算完了: {current_hisshu_studied_count}問 (analysis_target: {analysis_target})")
+            else:
+                # フォールバック: analysis_targetでフィルタリングしたbase_dfから計算
+                for _, row in base_df.iterrows():
+                    # analysis_targetによるフィルタリング
+                    row_id = row['id']
+                    if analysis_target == "学士試験問題" and not ("G24" in row_id or "G25" in row_id):
+                        continue
+                    elif analysis_target == "国試問題" and ("G24" in row_id or "G25" in row_id):
+                        continue
+                    
+                    # 必修問題の判定（学士試験問題の場合は問題IDから判定）
+                    is_hisshu = row['is_hisshu']
+                    if analysis_target == "学士試験問題":
+                        # 学士試験問題: G24-2-A-1〜20, G24-2-B-1〜20などが必修
+                        import re
+                        match = re.search(r'G\d+-\d+-[A-Z]-(\d+)', row_id)
+                        if match:
+                            question_num = int(match.group(1))
+                            is_hisshu = (question_num <= 20)  # 1〜20番が必修
+                    
+                    card = row['card_data']
+                    level = calculate_card_level(card)
+                    if level != "未学習":
+                        current_studied_count += 1
+                        if is_hisshu:
+                            current_hisshu_studied_count += 1
+        except Exception as e:
+            print(f"[WARNING] UserDataExtractor取得エラー: {e}")
+            # フォールバック: analysis_targetでフィルタリングしたbase_dfから計算
+            for _, row in base_df.iterrows():
+                # analysis_targetによるフィルタリング
+                row_id = row['id']
+                if analysis_target == "学士試験問題" and not ("G24" in row_id or "G25" in row_id):
+                    continue
+                elif analysis_target == "国試問題" and ("G24" in row_id or "G25" in row_id):
+                    continue
+                
+                # 必修問題の判定（学士試験問題の場合は問題IDから判定）
+                is_hisshu = row['is_hisshu']
+                if analysis_target == "学士試験問題":
+                    # 学士試験問題: G24-2-A-1〜20, G24-2-B-1〜20などが必修
+                    import re
+                    match = re.search(r'G\d+-\d+-[A-Z]-(\d+)', row_id)
+                    if match:
+                        question_num = int(match.group(1))
+                        is_hisshu = (question_num <= 20)  # 1〜20番が必修
+                
+                card = row['card_data']
+                level = calculate_card_level(card)
+                if level != "未学習":
+                    current_studied_count += 1
+                    if is_hisshu:
+                        current_hisshu_studied_count += 1
+    else:
+        # フォールバック: analysis_targetでフィルタリングしたbase_dfから計算
+        for _, row in base_df.iterrows():
+            # analysis_targetによるフィルタリング
+            row_id = row['id']
+            if analysis_target == "学士試験問題" and not ("G24" in row_id or "G25" in row_id):
+                continue
+            elif analysis_target == "国試問題" and ("G24" in row_id or "G25" in row_id):
+                continue
+            
+            # 必修問題の判定（学士試験問題の場合は問題IDから判定）
+            is_hisshu = row['is_hisshu']
+            if analysis_target == "学士試験問題":
+                # 学士試験問題: G24-2-A-1〜20, G24-2-B-1〜20などが必修
+                import re
+                match = re.search(r'G\d+-\d+-[A-Z]-(\d+)', row_id)
+                if match:
+                    question_num = int(match.group(1))
+                    is_hisshu = (question_num <= 20)  # 1〜20番が必修
+            
+            card = row['card_data']
+            level = calculate_card_level(card)
+            if level != "未学習":
+                current_studied_count += 1
+                if is_hisshu:
+                    current_hisshu_studied_count += 1
     
     # 昨日時点での学習済み問題数を推定（今日新規学習した問題を除く）
     yesterday_studied_count = current_studied_count - len(today_studied_problems)
     yesterday_hisshu_studied_count = current_hisshu_studied_count - len(today_hisshu_problems)
     
-    # 正解率計算
-    recent_accuracy = (recent_7days_stats['correct'] / recent_7days_stats['total'] * 100) if recent_7days_stats['total'] > 0 else 0
-    previous_accuracy = (previous_7days_stats['correct'] / previous_7days_stats['total'] * 100) if previous_7days_stats['total'] > 0 else 0
+    # 正解率計算（強化データを優先使用、analysis_targetでフィルタリング）
+    if enhanced_data:
+        recent_accuracy = enhanced_data['recent_accuracy']
+        previous_accuracy = enhanced_data['previous_accuracy']
+        # 強化データからの必修と全体の正解率も取得
+        recent_hisshu_stats = enhanced_data.get('recent_hisshu_stats', {'correct': 0, 'total': 0})
+        previous_hisshu_stats = enhanced_data.get('previous_hisshu_stats', {'correct': 0, 'total': 0})
+    else:
+        # フォールバック：base_dfから計算するが、analysis_targetでフィルタリング
+        recent_7days_stats_filtered = {'correct': 0, 'total': 0}
+        previous_7days_stats_filtered = {'correct': 0, 'total': 0}
+        recent_hisshu_stats = {'correct': 0, 'total': 0}
+        previous_hisshu_stats = {'correct': 0, 'total': 0}
+        
+        for _, row in base_df.iterrows():
+            q_id = row['id']
+            is_hisshu = row['is_hisshu']
+            card = row['card_data']
+            history = card.get('history', [])
+            
+            if isinstance(history, list):
+                for entry in history:
+                    if isinstance(entry, dict):
+                        timestamp = entry.get('timestamp')
+                        if timestamp:
+                            try:
+                                # タイムスタンプをパース
+                                if hasattr(timestamp, 'timestamp') and callable(getattr(timestamp, 'timestamp')):
+                                    entry_datetime = timestamp
+                                elif hasattr(timestamp, 'date') and callable(getattr(timestamp, 'date')):
+                                    entry_datetime = timestamp
+                                else:
+                                    try:
+                                        if 'T' in str(timestamp):
+                                            timestamp_str = str(timestamp).split('.')[0] if '.' in str(timestamp) else str(timestamp)
+                                            entry_datetime = datetime.datetime.fromisoformat(timestamp_str)
+                                        else:
+                                            entry_datetime = datetime.datetime.fromisoformat(str(timestamp)[:19])
+                                    except Exception:
+                                        continue
+                                
+                                quality = entry.get('quality', 0)
+                                
+                                # 直近7日間の正解率統計（analysis_targetでフィルタリング）
+                                if entry_datetime >= seven_days_ago:
+                                    recent_7days_stats_filtered['total'] += 1
+                                    if quality >= 3:
+                                        recent_7days_stats_filtered['correct'] += 1
+                                    
+                                    # 必修問題の場合
+                                    if is_hisshu:
+                                        recent_hisshu_stats['total'] += 1
+                                        if quality >= 3:
+                                            recent_hisshu_stats['correct'] += 1
+                                
+                                # 前の7日間（8-14日前）の正解率統計（analysis_targetでフィルタリング）
+                                elif entry_datetime >= fourteen_days_ago:
+                                    previous_7days_stats_filtered['total'] += 1
+                                    if quality >= 3:
+                                        previous_7days_stats_filtered['correct'] += 1
+                                    
+                                    # 必修問題の場合
+                                    if is_hisshu:
+                                        previous_hisshu_stats['total'] += 1
+                                        if quality >= 3:
+                                            previous_hisshu_stats['correct'] += 1
+                            except Exception:
+                                continue
+        
+        recent_accuracy = (recent_7days_stats_filtered['correct'] / recent_7days_stats_filtered['total'] * 100) if recent_7days_stats_filtered['total'] > 0 else 0
+        previous_accuracy = (previous_7days_stats_filtered['correct'] / previous_7days_stats_filtered['total'] * 100) if previous_7days_stats_filtered['total'] > 0 else 0
+    
+    # 必修問題の正解率を計算
+    recent_hisshu_accuracy = (recent_hisshu_stats['correct'] / recent_hisshu_stats['total'] * 100) if recent_hisshu_stats['total'] > 0 else 0
+    previous_hisshu_accuracy = (previous_hisshu_stats['correct'] / previous_hisshu_stats['total'] * 100) if previous_hisshu_stats['total'] > 0 else 0
     
     return {
         'current_studied_count': current_studied_count,
@@ -224,7 +522,12 @@ def calculate_progress_metrics(cards: Dict, base_df: pd.DataFrame) -> Dict:
         'yesterday_study_count': yesterday_study_count,
         'recent_accuracy': recent_accuracy,
         'previous_accuracy': previous_accuracy,
-        'accuracy_delta': recent_accuracy - previous_accuracy
+        'accuracy_delta': recent_accuracy - previous_accuracy,
+        'recent_hisshu_accuracy': recent_hisshu_accuracy,
+        'previous_hisshu_accuracy': previous_hisshu_accuracy,
+        'hisshu_accuracy_delta': recent_hisshu_accuracy - previous_hisshu_accuracy,
+        'recent_hisshu_stats': recent_hisshu_stats,
+        'previous_hisshu_stats': previous_hisshu_stats
     }
 
 def render_search_page():
@@ -236,7 +539,7 @@ def render_search_page():
     
     # ◆ サイドバー連携：analysis_target (国試/学士試験) の取得
     analysis_target = st.session_state.get("analysis_target", "国試")
-    level_filter = st.session_state.get("level_filter", ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "レベル5", "習得済み"])
+    level_filter = st.session_state.get("level_filter", ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "習得済み"])
     subject_filter = st.session_state.get("subject_filter", [])
     
     # 1. 概要と目的 - ページヘッダー
@@ -364,10 +667,25 @@ def render_search_page():
         if subject_filter:
             filtered_df = filtered_df[filtered_df['subject'].isin(subject_filter)]
     
-    # 6. サマリーメトリクスの計算と表示
+    # 6. サマリーメトリクスの計算と表示（UserDataExtractor強化版）
     if not filtered_df.empty:
         # 新しいactionableな指標の計算（前日比・前週比を含む）
-        metrics = calculate_progress_metrics(cards, base_df)
+        metrics = calculate_progress_metrics(cards, base_df, uid, analysis_target)
+        
+        # UserDataExtractorからの追加情報を取得
+        extractor_insights = {}
+        if uid != "guest" and UserDataExtractor:
+            try:
+                extractor = UserDataExtractor()
+                comprehensive_stats = extractor.get_user_comprehensive_stats(uid, analysis_target)
+                if comprehensive_stats:
+                    extractor_insights = {
+                        'weak_categories': comprehensive_stats.get('weak_categories', []),
+                        'learning_efficiency': comprehensive_stats.get('learning_efficiency', 0),
+                        'total_studied_cards': comprehensive_stats.get('total_studied_cards', 0)
+                    }
+            except Exception as e:
+                print(f"[WARNING] UserDataExtractor insights取得エラー: {e}")
         
         # st.columns(4)を使用して4つの新しい指標をst.metricで表示
         col1, col2, col3, col4 = st.columns(4)
@@ -380,6 +698,11 @@ def render_search_page():
                 f"{metrics['current_studied_count']} / {metrics['total_count']} 問",
                 delta=progress_delta_text
             )
+            
+            # 弱点分野のヒント表示
+            if extractor_insights.get('weak_categories'):
+                weak_hint = ", ".join(extractor_insights['weak_categories'][:2])
+                st.caption(f"💡 要復習: {weak_hint}")
         
         with col2:
             # 必修問題の進捗（前日比付き）
@@ -398,6 +721,11 @@ def render_search_page():
                 f"{metrics['today_study_count']} 問",
                 delta=today_delta_text
             )
+            
+            # 学習効率スコア表示
+            if extractor_insights.get('learning_efficiency', 0) > 0:
+                efficiency = extractor_insights['learning_efficiency']
+                st.caption(f"📈 学習効率: {efficiency:.1%}")
         
         with col4:
             # 直近7日間の正解率（前週比付き）
@@ -410,7 +738,7 @@ def render_search_page():
                 delta_color=delta_color
             )
     
-    # 7. タブコンテナ - プロンプト仕様通りの4つのタブ
+    # 7. タブコンテナ - 4つのタブ（詳細分析タブを削除して元の構成に戻す）
     tab1, tab2, tab3, tab4 = st.tabs(["概要", "グラフ分析", "問題リスト", "キーワード検索"])
     
     with tab1:
@@ -427,12 +755,31 @@ def render_search_page():
 
 def render_overview_tab_perfect(filtered_df: pd.DataFrame, ALL_QUESTIONS: list, analysis_target: str):
     """
-    概要タブ - プロンプト仕様通りの実装
+    概要タブ - UserDataExtractor強化版
     st.columns(2)で2分割レイアウト、習熟度分布と正解率表示
     """
     if filtered_df.empty:
         st.info("表示するデータがありません")
         return
+    
+    # UserDataExtractorからの追加洞察を取得
+    uid = st.session_state.get("uid", "guest")
+    insights_text = ""
+    if uid != "guest" and UserDataExtractor:
+        try:
+            extractor = UserDataExtractor()
+            comprehensive_stats = extractor.get_user_comprehensive_stats(uid)
+            if comprehensive_stats:
+                weak_areas = comprehensive_stats.get('weak_categories', [])
+                efficiency = comprehensive_stats.get('learning_efficiency', 0)
+                if weak_areas:
+                    insights_text = f"💡 推奨復習分野: {', '.join(weak_areas[:3])}"
+                if efficiency > 0.7:
+                    insights_text += " | 🚀 学習効率が良好です"
+                elif efficiency > 0.3:
+                    insights_text += " | 📈 学習ペースは順調です"
+        except Exception as e:
+            print(f"[WARNING] 概要タブ洞察取得エラー: {e}")
     
     # st.columns(2)を使用して2分割レイアウト
     col1, col2 = st.columns(2)
@@ -440,85 +787,204 @@ def render_overview_tab_perfect(filtered_df: pd.DataFrame, ALL_QUESTIONS: list, 
     with col1:
         st.markdown("##### カード習熟度分布")
         
-        # 3. プロンプト指示に基づく修正：各カードデータに対して最新のレベルを再計算
-        updated_levels = []
-        for _, row in filtered_df.iterrows():
-            card_data = row['card_data']
-            updated_level = calculate_card_level(card_data)
-            updated_levels.append(updated_level)
+        # UserDataExtractorからレベル分布を取得（優先）
+        level_distribution_source = "従来ロジック"
+        level_counts = None
         
-        # 更新されたレベルでカウント
-        level_counts = pd.Series(updated_levels).value_counts()
-        level_counts = level_counts.reindex(LEVEL_ORDER, fill_value=0)
+        if uid != "guest" and UserDataExtractor:
+            try:
+                extractor = UserDataExtractor()
+                enhanced_stats = extractor.get_user_comprehensive_stats(uid, analysis_target)
+                if enhanced_stats and 'level_distribution' in enhanced_stats:
+                    level_dist = enhanced_stats['level_distribution']
+                    print(f"[DEBUG] UserDataExtractor レベル分布: {level_dist}")
+                    
+                    # UserDataExtractorの結果を使用
+                    level_counts = pd.Series(level_dist)
+                    level_counts = level_counts.reindex(LEVEL_ORDER, fill_value=0)
+                    level_distribution_source = "UserDataExtractor"
+            except Exception as e:
+                print(f"[WARNING] UserDataExtractor レベル分布取得エラー: {e}")
         
-        # --- 修正部分：シンプルな表形式表示 ---
+        # フォールバック: 従来ロジック
+        if level_counts is None:
+            updated_levels = []
+            for _, row in filtered_df.iterrows():
+                card_data = row['card_data']
+                updated_level = calculate_card_level(card_data)
+                updated_levels.append(updated_level)
+            
+            level_counts = pd.Series(updated_levels).value_counts()
+            level_counts = level_counts.reindex(LEVEL_ORDER, fill_value=0)
         
-        # 1. 「レベル」と「問題数」のみのDataFrameを作成
+        # 表形式表示
         level_df = pd.DataFrame({
             'レベル': level_counts.index,
             '問題数': level_counts.values
         })
         
-        # 2. st.dataframeで表形式で表示（すべてのレベルを表示）
         st.dataframe(
             level_df,
             use_container_width=True,
             hide_index=True
         )
+        
+        # データソース表示（デバッグ用）
+        st.caption(f"データソース: {level_distribution_source}")
+        
+        # AI洞察を表示
+        if insights_text:
+            st.info(insights_text)
     
     with col2:
         st.markdown("##### 正解率 (True Retention)")
         
-        # 正解率計算
-        total_correct = 0
-        total_attempts = 0
-        hisshu_correct = 0
-        hisshu_attempts = 0
+        # UserDataExtractorからより正確な正解率を取得
+        uid = st.session_state.get("uid", "guest")
+        enhanced_accuracy = None
+        if uid != "guest" and UserDataExtractor:
+            try:
+                extractor = UserDataExtractor()
+                evaluation_logs = extractor.extract_self_evaluation_logs(uid)
+                if evaluation_logs:
+                    # analysis_targetによるフィルタリング
+                    filtered_logs = []
+                    for log in evaluation_logs:
+                        q_id = log.get('question_id', '')
+                        if analysis_target == "学士試験":
+                            # 学士試験問題のみ（G24, G25で始まる）
+                            if q_id.startswith('G24') or q_id.startswith('G25'):
+                                filtered_logs.append(log)
+                        else:
+                            # 国試問題のみ（G24, G25で始まらない）
+                            if not (q_id.startswith('G24') or q_id.startswith('G25')):
+                                filtered_logs.append(log)
+                    
+                    print(f"[INFO] {analysis_target}でフィルタリング: {len(filtered_logs)}件 (元: 総{len(evaluation_logs)}件)")
+                    
+                    # フィルタリング後のログで正解率計算
+                    if filtered_logs:
+                        # 全体正解率
+                        total_correct = sum(1 for log in filtered_logs if log.get('quality', 0) >= 3)
+                        total_attempts = len(filtered_logs)
+                        overall_rate = (total_correct / total_attempts * 100) if total_attempts > 0 else 0
+                        
+                        # 必修問題正解率
+                        hisshu_correct = 0
+                        hisshu_attempts = 0
+                        
+                        # 学士試験問題の場合は問題番号で必修判定、国試問題の場合は従来通り
+                        for log in filtered_logs:
+                            q_id = log.get('question_id', '')
+                            is_hisshu = False
+                            
+                            if analysis_target == "学士試験":
+                                # 学士試験問題: G24-2-A-1〜20, G24-2-B-1〜20などが必修
+                                import re
+                                match = re.search(r'G\d+-\d+-[A-Z]-(\d+)', q_id)
+                                if match:
+                                    question_num = int(match.group(1))
+                                    is_hisshu = (question_num <= 20)  # 1〜20番が必修
+                            else:
+                                # 国試問題: 従来のHISSHU_Q_NUMBERS_SETを使用
+                                is_hisshu = q_id in HISSHU_Q_NUMBERS_SET
+                            
+                            if is_hisshu:
+                                hisshu_attempts += 1
+                                if log.get('quality', 0) >= 3:
+                                    hisshu_correct += 1
+                        
+                        hisshu_rate = (hisshu_correct / hisshu_attempts * 100) if hisshu_attempts > 0 else 0
+                        
+                        enhanced_accuracy = {
+                            'overall_rate': overall_rate,
+                            'overall_attempts': total_attempts,
+                            'overall_correct': total_correct,
+                            'hisshu_rate': hisshu_rate,
+                            'hisshu_attempts': hisshu_attempts,
+                            'hisshu_correct': hisshu_correct
+                        }
+                        print(f"[INFO] 概要タブ強化: 全体正解率{overall_rate:.1f}%, 必修正解率{hisshu_rate:.1f}%")
+            except Exception as e:
+                print(f"[WARNING] 概要タブ正解率強化エラー: {e}")
         
-        for _, row in filtered_df.iterrows():
-            history = row.get('history', [])
-            is_hisshu = row.get('is_hisshu', False)
+        # 強化データまたはフォールバック処理
+        if enhanced_accuracy:
+            # UserDataExtractorからの高精度データを使用
+            st.metric(
+                label="選択範囲の正解率",
+                value=f"{enhanced_accuracy['overall_rate']:.1f}%",
+                delta=f"{enhanced_accuracy['overall_correct']} / {enhanced_accuracy['overall_attempts']} 回"
+            )
+            st.metric(
+                label="【必修問題】の正解率",
+                value=f"{enhanced_accuracy['hisshu_rate']:.1f}%",
+                delta=f"{enhanced_accuracy['hisshu_correct']} / {enhanced_accuracy['hisshu_attempts']} 回"
+            )
+        else:
+            # フォールバック: 従来ロジック
+            total_correct = 0
+            total_attempts = 0
+            hisshu_correct = 0
+            hisshu_attempts = 0
             
-            if isinstance(history, list):
-                for entry in history:
-                    if isinstance(entry, dict):
-                        # quality値による正解判定（quality >= 3で正解）
-                        quality = entry.get('quality', 0)
-                        is_correct = quality >= 3
-                        
-                        total_attempts += 1
-                        if is_correct:
-                            total_correct += 1
-                        
-                        if is_hisshu:
-                            hisshu_attempts += 1
+            for _, row in filtered_df.iterrows():
+                history = row.get('history', [])
+                is_hisshu = row.get('is_hisshu', False)
+                
+                if isinstance(history, list):
+                    for entry in history:
+                        if isinstance(entry, dict):
+                            # quality値による正解判定（quality >= 3で正解）
+                            quality = entry.get('quality', 0)
+                            is_correct = quality >= 3
+                            
+                            total_attempts += 1
                             if is_correct:
-                                hisshu_correct += 1
-        
-        # 正解率計算
-        overall_rate = (total_correct / total_attempts * 100) if total_attempts > 0 else 0
-        hisshu_rate = (hisshu_correct / hisshu_attempts * 100) if hisshu_attempts > 0 else 0
-        
-        # st.metricを2つ使用（delta引数で内訳を表示）
-        st.metric(
-            label="選択範囲の正解率",
-            value=f"{overall_rate:.1f}%",
-            delta=f"{total_correct} / {total_attempts} 回"
-        )
-        st.metric(
-            label="【必修問題】の正解率",
-            value=f"{hisshu_rate:.1f}%",
-            delta=f"{hisshu_correct} / {hisshu_attempts} 回"
-        )
+                                total_correct += 1
+                            
+                            if is_hisshu:
+                                hisshu_attempts += 1
+                                if is_correct:
+                                    hisshu_correct += 1
+            
+            # 正解率計算
+            overall_rate = (total_correct / total_attempts * 100) if total_attempts > 0 else 0
+            hisshu_rate = (hisshu_correct / hisshu_attempts * 100) if hisshu_attempts > 0 else 0
+            
+            # st.metricを2つ使用（delta引数で内訳を表示）
+            st.metric(
+                label="選択範囲の正解率",
+                value=f"{overall_rate:.1f}%",
+                delta=f"{total_correct} / {total_attempts} 回"
+            )
+            st.metric(
+                label="【必修問題】の正解率",
+                value=f"{hisshu_rate:.1f}%",
+                delta=f"{hisshu_correct} / {hisshu_attempts} 回"
+            )
 
 def render_graph_analysis_tab_perfect(filtered_df: pd.DataFrame):
     """
-    グラフ分析タブ - プロンプト仕様通りの実装
+    グラフ分析タブ - UserDataExtractor強化版
     科目別進捗、学習記録、レベル別分布をPlotlyで表示
     """
     if filtered_df.empty:
         st.info("表示するデータがありません")
         return
+    
+    # UserDataExtractorからの詳細データを取得
+    uid = st.session_state.get("uid", "guest")
+    enhanced_analytics = {}
+    if uid != "guest" and UserDataExtractor:
+        try:
+            extractor = UserDataExtractor()
+            evaluation_logs = extractor.extract_self_evaluation_logs(uid)
+            if evaluation_logs:
+                enhanced_analytics['evaluation_logs'] = evaluation_logs
+                print(f"[INFO] グラフ分析強化: {len(evaluation_logs)}件の評価ログを取得")
+        except Exception as e:
+            print(f"[WARNING] グラフ分析強化データ取得エラー: {e}")
     
     # 科目別進捗
     st.markdown("##### 科目別進捗状況")
@@ -630,79 +1096,192 @@ def render_graph_analysis_tab_perfect(filtered_df: pd.DataFrame):
         st.bar_chart(subject_counts)
         st.error(f"グラフ表示エラー: {e}")
     
-    # 学習記録
+    # 学習記録 - UserDataExtractor強化版
     st.markdown("##### 学習の記録")
     
-    # 1. 日々の「合計」学習数のみを集計するシンプルなロジック
-    daily_study = defaultdict(int)
-    today = datetime.datetime.now()
-    ninety_days_ago = today - datetime.timedelta(days=90)
+    # UserDataExtractorの詳細データを使用（可能な場合）
+    if enhanced_analytics.get('evaluation_logs'):
+        evaluation_logs = enhanced_analytics['evaluation_logs']
+        
+        # 高精度な日別学習データを作成
+        daily_study = defaultdict(lambda: {'count': 0, 'correct': 0, 'avg_quality': 0})
+        today = datetime.datetime.now()
+        ninety_days_ago = today - datetime.timedelta(days=90)
+        
+        quality_sum = defaultdict(int)
+        
+        for log in evaluation_logs:
+            try:
+                # より安全なタイムスタンプパース
+                timestamp = log['timestamp']
+                if isinstance(timestamp, str):
+                    if 'T' in timestamp:
+                        # ISO形式
+                        timestamp_str = timestamp.split('.')[0] if '.' in timestamp else timestamp
+                        log_datetime = datetime.datetime.fromisoformat(timestamp_str)
+                    else:
+                        # 通常形式
+                        log_datetime = datetime.datetime.fromisoformat(timestamp[:19])
+                else:
+                    # datetime オブジェクトの場合
+                    log_datetime = timestamp
+                    
+                if log_datetime >= ninety_days_ago:
+                    date_str = log_datetime.date().isoformat()
+                    daily_study[date_str]['count'] += 1
+                    quality = log.get('quality', 0)
+                    quality_sum[date_str] += quality
+                    if quality >= 3:
+                        daily_study[date_str]['correct'] += 1
+            except:
+                continue
+        
+        # 平均評価を計算
+        for date_str in daily_study:
+            if daily_study[date_str]['count'] > 0:
+                daily_study[date_str]['avg_quality'] = quality_sum[date_str] / daily_study[date_str]['count']
+        
+        if daily_study:
+            study_df = pd.DataFrame([
+                {
+                    '日付': date_str,
+                    '学習回数': data['count'],
+                    '正解数': data['correct'],
+                    '正解率': (data['correct'] / data['count'] * 100) if data['count'] > 0 else 0,
+                    '平均評価': data['avg_quality']
+                }
+                for date_str, data in daily_study.items()
+            ])
+            study_df['日付'] = pd.to_datetime(study_df['日付'])
+            study_df = study_df.sort_values('日付')
+            
+            # 2つのグラフを作成
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # 学習回数グラフ
+                fig1 = px.bar(
+                    study_df, 
+                    x='日付', 
+                    y='学習回数',
+                    title='学習回数推移（過去90日）',
+                    color='学習回数',
+                    color_continuous_scale='Blues'
+                )
+                fig1.update_traces(hovertemplate='<b>%{x|%Y-%m-%d}</b><br>学習回数: %{y}問<extra></extra>')
+                fig1.update_layout(coloraxis_showscale=False, height=300)
+                st.plotly_chart(fig1, use_container_width=True)
+            
+            with col2:
+                # 正解率グラフ
+                fig2 = px.line(
+                    study_df, 
+                    x='日付', 
+                    y='正解率',
+                    title='正解率推移（過去90日）',
+                    line_shape='spline'
+                )
+                fig2.update_traces(hovertemplate='<b>%{x|%Y-%m-%d}</b><br>正解率: %{y:.1f}%<extra></extra>')
+                fig2.update_layout(height=300)
+                fig2.update_traces(line_color='#FF6B6B')
+                st.plotly_chart(fig2, use_container_width=True)
+            
+            # 強化された統計メトリクス
+            col1, col2, col3, col4 = st.columns(4)
+            total_days = len(study_df)
+            total_sessions = study_df['学習回数'].sum()
+            avg_daily = study_df['学習回数'].mean()
+            avg_accuracy = study_df['正解率'].mean()
 
-    for _, row in filtered_df.iterrows():
-        history = row.get('history', [])
-        if isinstance(history, list):
-            for entry in history:
-                if isinstance(entry, dict) and 'timestamp' in entry:
-                    try:
-                        # タイムスタンプのパース処理
-                        timestamp = entry['timestamp']
-                        if hasattr(timestamp, 'date'):
-                            entry_datetime = timestamp
-                        else:
-                            entry_datetime = datetime.datetime.fromisoformat(str(timestamp)[:19])
-                        
-                        # 90日以内のデータのみ集計
-                        if entry_datetime >= ninety_days_ago:
-                            date_str = entry_datetime.date().isoformat()
-                            daily_study[date_str] += 1
-                    except:
-                        continue
-
-    if daily_study:
-        study_df = pd.DataFrame(list(daily_study.items()), columns=['日付', '学習回数'])
-        study_df['日付'] = pd.to_datetime(study_df['日付'])
-        study_df = study_df.sort_values('日付')
-        
-        # 2. 暖色系のシンプルな棒グラフを作成
-        fig = px.bar(
-            study_df, 
-            x='日付', 
-            y='学習回数',
-            title='過去90日間の学習記録',
-            color='学習回数',  # 学習回数に応じて色を変化させる
-            color_continuous_scale='OrRd'  # オレンジ〜赤の暖色系グラデーション
-        )
-        
-        # 3. シンプルなツールチップに設定
-        fig.update_traces(hovertemplate='<b>%{x|%Y-%m-%d}</b><br>学習回数: %{y}問<extra></extra>')
-        
-        fig.update_layout(
-            xaxis_title='日付',
-            yaxis_title='学習回数',
-            coloraxis_showscale=False,  # カラーバーは非表示
-            height=400
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
+            with col1:
+                st.metric("学習日数", f"{total_days}日", help="過去90日間の実績")
+            with col2:
+                st.metric("総学習回数", f"{total_sessions}回", help="過去90日間の実績")
+            with col3:
+                st.metric("1日平均", f"{avg_daily:.1f}回", help="過去90日間の学習日平均")
+            with col4:
+                st.metric("平均正解率", f"{avg_accuracy:.1f}%", help="過去90日間の平均")
+        else:
+            st.info("学習記録データがありません")
     else:
-        study_df = pd.DataFrame()
-        st.info("学習記録データがありません")
+        # フォールバック: 従来のロジック
+        daily_study = defaultdict(int)
+        today = datetime.datetime.now()
+        ninety_days_ago = today - datetime.timedelta(days=90)
 
-    # 4. 下部のメトリクス表示を調整
-    col1, col2, col3, col4 = st.columns(4)
-    total_days = len(study_df) if not study_df.empty else 0
-    total_sessions = study_df['学習回数'].sum() if not study_df.empty else 0
-    avg_daily = study_df['学習回数'].mean() if not study_df.empty else 0
-    max_daily = study_df['学習回数'].max() if not study_df.empty else 0
+        for _, row in filtered_df.iterrows():
+            history = row.get('history', [])
+            if isinstance(history, list):
+                for entry in history:
+                    if isinstance(entry, dict) and 'timestamp' in entry:
+                        try:
+                            # タイムスタンプのパース処理
+                            timestamp = entry['timestamp']
+                            if hasattr(timestamp, 'date'):
+                                entry_datetime = timestamp
+                            else:
+                                # より安全なタイムスタンプパース
+                                try:
+                                    if 'T' in str(timestamp):
+                                        # ISO形式
+                                        timestamp_str = str(timestamp).split('.')[0] if '.' in str(timestamp) else str(timestamp)
+                                        entry_datetime = datetime.datetime.fromisoformat(timestamp_str)
+                                    else:
+                                        # 通常形式
+                                        entry_datetime = datetime.datetime.fromisoformat(str(timestamp)[:19])
+                                except Exception as e:
+                                    print(f"タイムスタンプパースエラー (search_page line 939): {e}")
+                                    continue
+                            
+                            # 90日以内のデータのみ集計
+                            if entry_datetime >= ninety_days_ago:
+                                date_str = entry_datetime.date().isoformat()
+                                daily_study[date_str] += 1
+                        except:
+                            continue
 
-    with col1:
-        st.metric("学習日数", f"{total_days}日", help="過去90日間の実績")
-    with col2:
-        st.metric("総学習回数", f"{total_sessions}回", help="過去90日間の実績")
-    with col3:
-        st.metric("1日平均", f"{avg_daily:.1f}回", help="過去90日間の学習日平均")
-    with col4:
-        st.metric("最大学習回数", f"{max_daily}回", help="過去90日間の最大値")
+        if daily_study:
+            study_df = pd.DataFrame(list(daily_study.items()), columns=['日付', '学習回数'])
+            study_df['日付'] = pd.to_datetime(study_df['日付'])
+            study_df = study_df.sort_values('日付')
+            
+            # シンプルな棒グラフを作成
+            fig = px.bar(
+                study_df, 
+                x='日付', 
+                y='学習回数',
+                title='過去90日間の学習記録',
+                color='学習回数',
+                color_continuous_scale='OrRd'
+            )
+            
+            fig.update_traces(hovertemplate='<b>%{x|%Y-%m-%d}</b><br>学習回数: %{y}問<extra></extra>')
+            fig.update_layout(
+                xaxis_title='日付',
+                yaxis_title='学習回数',
+                coloraxis_showscale=False,
+                height=400
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # 基本統計
+            col1, col2, col3, col4 = st.columns(4)
+            total_days = len(study_df)
+            total_sessions = study_df['学習回数'].sum()
+            avg_daily = study_df['学習回数'].mean()
+            max_daily = study_df['学習回数'].max()
+
+            with col1:
+                st.metric("学習日数", f"{total_days}日", help="過去90日間の実績")
+            with col2:
+                st.metric("総学習回数", f"{total_sessions}回", help="過去90日間の実績")
+            with col3:
+                st.metric("1日平均", f"{avg_daily:.1f}回", help="過去90日間の学習日平均")
+            with col4:
+                st.metric("最大学習回数", f"{max_daily}回", help="過去90日間の最大値")
+        else:
+            st.info("学習記録データがありません")
     
     # レベル別分布
     st.markdown("##### 学習レベル別分布")
@@ -979,7 +1558,17 @@ def render_keyword_search_tab_perfect(analysis_target: str):
                                     if hasattr(timestamp, 'strftime'):
                                         time_str = timestamp.strftime('%Y-%m-%d %H:%M')
                                     else:
-                                        time_str = str(timestamp)[:16]
+                                        # より安全な文字列処理
+                                        try:
+                                            if 'T' in str(timestamp):
+                                                # ISO形式
+                                                timestamp_str = str(timestamp).split('.')[0] if '.' in str(timestamp) else str(timestamp)
+                                                parsed_time = datetime.datetime.fromisoformat(timestamp_str)
+                                                time_str = parsed_time.strftime('%Y-%m-%d %H:%M')
+                                            else:
+                                                time_str = str(timestamp)[:16]
+                                        except:
+                                            time_str = "不明"
                                     st.markdown(f"　最新: {time_str} (評価: {quality})")
                                 except:
                                     st.markdown(f"　最新: (評価: {quality})")

@@ -1,0 +1,30 @@
+{
+  "user_id": "wLAvgm5MPZRnNwTZgFrl9iydUR33",
+  "report_period": {
+    "start": "2025-07-30",
+    "end": "2025-08-29",
+    "days": 30
+  },
+  "summary": {
+    "total_problems_solved": 0,
+    "total_sessions": 0,
+    "accuracy_rate": 0.0,
+    "total_cards": 0,
+    "mastered_cards": 0,
+    "due_cards": 0
+  },
+  "evaluation_logs": [],
+  "practice_analytics": {
+    "daily_stats": {},
+    "total_sessions": 0,
+    "total_problems": 0,
+    "accuracy_rate": 0.0,
+    "quality_distribution": {},
+    "subject_stats": {}
+  },
+  "card_levels": {
+    "cards": [],
+    "stats": {}
+  },
+  "generated_at": "2025-08-29T19:11:15.974836"
+}

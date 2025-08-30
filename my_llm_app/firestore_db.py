@@ -201,20 +201,27 @@ class FirestoreManager:
             }
     
     def get_user_cards(self, uid: str) -> Dict[str, Any]:
-        """ユーザーの学習カードデータを取得（uid統一版）"""
+        """ユーザーの学習カードデータを取得（最適化後構造対応版）"""
         start = time.time()
         
         if not uid:
             return {}
         
         try:
-            cards_collection = self.db.collection("users").document(uid).collection("userCards")
-            cards_docs = cards_collection.get(timeout=10)
+            # 最適化後のstudy_cardsコレクションから取得
+            cards_query = self.db.collection("study_cards").where("uid", "==", uid)
+            cards_docs = cards_query.get(timeout=10)
             
             cards = {}
             for doc in cards_docs:
                 if doc.exists:
-                    cards[doc.id] = self._to_dict(doc.to_dict())
+                    card_data = self._to_dict(doc.to_dict())
+                    question_id = card_data.get("question_id")
+                    
+                    if question_id:
+                        # 最適化後のデータ構造を旧形式に変換
+                        converted_card = self._convert_optimized_card_to_legacy(card_data)
+                        cards[question_id] = converted_card
             
             # 学習データの統計を計算
             learned_cards = len([card for card in cards.values() if card.get("level", -1) >= 0])
@@ -225,19 +232,132 @@ class FirestoreManager:
             
         except Exception as e:
             print(f"[ERROR] ユーザーカード取得エラー: {e}")
+            # フォールバック：旧構造も試行
+            return self._get_user_cards_legacy(uid)
+    
+    def _convert_optimized_card_to_legacy(self, optimized_card: Dict[str, Any]) -> Dict[str, Any]:
+        """最適化後のカードデータを旧形式に変換"""
+        legacy_card = {}
+        
+        # 基本情報
+        legacy_card["question_id"] = optimized_card.get("question_id")
+        
+        # レベル情報（metadata.original_levelから取得）
+        metadata = optimized_card.get("metadata", {})
+        legacy_card["level"] = metadata.get("original_level", -1)
+        
+        # SM2データ（sm2_dataからsm2に変換）
+        sm2_data = optimized_card.get("sm2_data", {})
+        legacy_card["sm2"] = {
+            "n": sm2_data.get("n", 0),
+            "ef": sm2_data.get("ef", 2.5),
+            "interval": sm2_data.get("interval", 1),
+            "due_date": sm2_data.get("due_date"),
+            "last_studied": sm2_data.get("last_studied")
+        }
+        
+        # パフォーマンスデータ
+        performance = optimized_card.get("performance", {})
+        legacy_card["performance"] = {
+            "correct_attempts": performance.get("correct_attempts", 0),
+            "total_attempts": performance.get("total_attempts", 0),
+            "avg_quality": performance.get("avg_quality", 0),
+            "last_quality": performance.get("last_quality", 0)
+        }
+        
+        # 履歴データ
+        legacy_card["history"] = optimized_card.get("history", [])
+        
+        # メタデータ
+        legacy_card["difficulty"] = metadata.get("difficulty")
+        legacy_card["subject"] = metadata.get("subject")
+        legacy_card["updated_at"] = metadata.get("updated_at")
+        legacy_card["created_at"] = metadata.get("created_at")
+        
+        return legacy_card
+    
+    def _get_user_cards_legacy(self, uid: str) -> Dict[str, Any]:
+        """旧構造からの学習カードデータ取得（フォールバック用）"""
+        try:
+            cards_collection = self.db.collection("users").document(uid).collection("userCards")
+            cards_docs = cards_collection.get(timeout=10)
+            
+            cards = {}
+            for doc in cards_docs:
+                if doc.exists:
+                    cards[doc.id] = self._to_dict(doc.to_dict())
+            
+            print(f"[DEBUG] レガシー構造から学習データ取得: {len(cards)}問")
+            return cards
+            
+        except Exception as e:
+            print(f"[ERROR] レガシー構造からの取得も失敗: {e}")
             return {}
     
+    def get_cards(self, uid: str) -> Dict[str, Any]:
+        """ユーザーの学習カードデータを取得（get_user_cardsのエイリアス）"""
+        return self.get_user_cards(uid)
+    
     def save_user_card(self, uid: str, question_id: str, card_data: Dict[str, Any]):
-        """単一カードデータを保存（uid統一版）"""
+        """単一カードデータを保存（最適化後構造対応版）"""
         if not uid or not question_id:
             return
         
         try:
-            card_ref = self.db.collection("users").document(uid).collection("userCards").document(question_id)
-            card_ref.set(card_data, merge=True)
+            # 旧形式のcard_dataを最適化後の構造に変換
+            optimized_card = self._convert_legacy_card_to_optimized(uid, question_id, card_data)
+            
+            # study_cardsコレクションに保存
+            card_ref = self.db.collection("study_cards").document(f"{uid}_{question_id}")
+            card_ref.set(optimized_card, merge=True)
             print(f"[DEBUG] カード保存完了: {question_id}")
         except Exception as e:
             print(f"[ERROR] カード保存エラー: {e}")
+    
+    def _convert_legacy_card_to_optimized(self, uid: str, question_id: str, legacy_card: Dict[str, Any]) -> Dict[str, Any]:
+        """旧形式のカードデータを最適化後の構造に変換"""
+        optimized_card = {
+            "uid": uid,
+            "question_id": question_id,
+            "metadata": {
+                "original_level": legacy_card.get("level", -1),
+                "difficulty": legacy_card.get("difficulty"),
+                "subject": legacy_card.get("subject"),
+                "updated_at": legacy_card.get("updated_at"),
+                "created_at": legacy_card.get("created_at", firestore.SERVER_TIMESTAMP)
+            },
+            "sm2_data": {},
+            "performance": {
+                "correct_attempts": 0,
+                "total_attempts": 0,
+                "avg_quality": 0,
+                "last_quality": 0
+            },
+            "history": legacy_card.get("history", [])
+        }
+        
+        # SM2データの変換
+        sm2_data = legacy_card.get("sm2", {})
+        if sm2_data:
+            optimized_card["sm2_data"] = {
+                "n": sm2_data.get("n", 0),
+                "ef": sm2_data.get("ef", 2.5),
+                "interval": sm2_data.get("interval", 1),
+                "due_date": sm2_data.get("due_date"),
+                "last_studied": sm2_data.get("last_studied")
+            }
+        
+        # パフォーマンスデータの変換
+        performance_data = legacy_card.get("performance", {})
+        if performance_data:
+            optimized_card["performance"] = {
+                "correct_attempts": performance_data.get("correct_attempts", 0),
+                "total_attempts": performance_data.get("total_attempts", 0),
+                "avg_quality": performance_data.get("avg_quality", 0),
+                "last_quality": performance_data.get("last_quality", 0)
+            }
+        
+        return optimized_card
     
     def save_session_state(self, uid: str, session_data: Dict[str, Any]):
         """セッション状態を保存（uid統一版）"""
@@ -281,57 +401,139 @@ class FirestoreManager:
             print(f"[ERROR] ユーザー設定更新エラー: {e}")
     
     def check_user_permission(self, uid: str, permission_key: str) -> bool:
-        """ユーザー権限をチェック（uid統一版）"""
+        """ユーザー権限をチェック（user_permissions コレクション使用）"""
         if not uid:
             return False
         
         try:
+            # user_permissions コレクションから権限を取得
             doc_ref = self.db.collection("user_permissions").document(uid)
             doc = doc_ref.get()
             
             if doc.exists:
                 data = doc.to_dict()
                 result = bool(data.get(permission_key, False))
-                print(f"[DEBUG] 権限チェック({permission_key}): {result}")
+                print(f"[DEBUG] 権限チェック({permission_key}): {result} (user_permissions)")
                 return result
             else:
+                print(f"[DEBUG] 権限チェック({permission_key}): False (権限ドキュメントなし)")
                 return False
                 
         except Exception as e:
             print(f"[ERROR] 権限チェックエラー: {e}")
             return False
     
-    def fetch_ranking_data(self, limit: int = 100) -> List[Dict[str, Any]]:
-        """ランキングデータを効率的に取得（実際のポイント計算）"""
+    def grant_user_permission(self, uid: str, permission_key: str, value: bool = True):
+        """ユーザーに権限を付与または剥奪"""
+        if not uid:
+            return False
+        
         try:
-            # 最新の週間ランキングデータを探す（週間ポイントがあるものを優先）
-            ranking_refs = self.db.collection("weekly_rankings").order_by("week_start", direction=firestore.Query.DESCENDING).limit(10)
-            ranking_docs = ranking_refs.stream()
+            doc_ref = self.db.collection("user_permissions").document(uid)
+            doc_ref.set({permission_key: value}, merge=True)
+            print(f"[DEBUG] 権限設定完了: {uid} - {permission_key}: {value}")
+            return True
+        except Exception as e:
+            print(f"[ERROR] 権限設定エラー: {e}")
+            return False
+    
+    def get_user_permissions(self, uid: str) -> Dict[str, bool]:
+        """ユーザーの全権限を取得"""
+        if not uid:
+            return {}
+        
+        try:
+            doc_ref = self.db.collection("user_permissions").document(uid)
+            doc = doc_ref.get()
             
-            # 週間ポイントがあるランキングを優先して選択
-            for doc in ranking_docs:
-                ranking_data = doc.to_dict().get("rankings", [])
-                if ranking_data:
-                    # 週間ポイントがあるユーザーが存在するかチェック
-                    has_weekly_activity = any(user.get("weekly_points", 0) > 0 for user in ranking_data)
-                    if has_weekly_activity:
-                        week_id = doc.id
-                        print(f"[DEBUG] アクティブな週間ランキング使用: {week_id} ({len(ranking_data)}件)")
-                        return ranking_data
+            if doc.exists:
+                return doc.to_dict() or {}
+            else:
+                return {}
+        except Exception as e:
+            print(f"[ERROR] 権限取得エラー: {e}")
+            return {}
+    
+    def list_all_user_permissions(self) -> Dict[str, Dict[str, bool]]:
+        """全ユーザーの権限一覧を取得"""
+        try:
+            permissions_ref = self.db.collection("user_permissions")
+            permissions_docs = list(permissions_ref.stream())
             
-            # 週間ポイントがない場合は最新のランキングを使用
-            ranking_refs = self.db.collection("weekly_rankings").order_by("week_start", direction=firestore.Query.DESCENDING).limit(1)
-            ranking_docs = ranking_refs.stream()
+            result = {}
+            for doc in permissions_docs:
+                result[doc.id] = doc.to_dict() or {}
             
-            for doc in ranking_docs:
-                ranking_data = doc.to_dict().get("rankings", [])
-                if ranking_data:
-                    week_id = doc.id
-                    print(f"[DEBUG] 最新週間ランキング使用: {week_id} ({len(ranking_data)}件)")
-                    return ranking_data
+            return result
+        except Exception as e:
+            print(f"[ERROR] 全権限取得エラー: {e}")
+            return {}
+    
+    def fetch_ranking_data_optimized(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """最適化されたランキングデータ取得（統計データ使用）"""
+        try:
+            print("[OPTIMIZED] 統計データからランキング取得開始")
             
-            # 保存されたランキングがない場合は今週のリアルタイム計算
-            print("[DEBUG] リアルタイムでランキング計算中...")
+            # 統計データから直接取得（1回のクエリ）
+            users_ref = self.db.collection("users").limit(limit)
+            users_docs = users_ref.stream()
+            
+            ranking_data = []
+            
+            for doc in users_docs:
+                user_data = doc.to_dict()
+                stats = user_data.get("stats", {})
+                
+                # 統計データが存在しない場合はスキップ
+                if not stats:
+                    continue
+                
+                # 習熟度計算
+                total_cards = stats.get("total_cards", 0)
+                mastered_cards = stats.get("mastered_cards", 0)
+                mastery_rate = mastered_cards / total_cards * 100 if total_cards > 0 else 0
+                
+                ranking_data.append({
+                    "uid": doc.id,
+                    "nickname": user_data.get("nickname", f"学習者{doc.id[:8]}"),
+                    "weekly_points": stats.get("weekly_points", 0),
+                    "total_points": stats.get("total_points", 0),
+                    "mastery_rate": mastery_rate,
+                    "total_cards": total_cards,
+                    "mastered_cards": mastered_cards,
+                    "last_updated": stats.get("last_updated")
+                })
+            
+            # 週間ポイントでソート
+            ranking_data.sort(key=lambda x: x["weekly_points"], reverse=True)
+            
+            print(f"[OPTIMIZED] 最適化ランキング取得完了: {len(ranking_data)}件")
+            return ranking_data
+            
+        except Exception as e:
+            print(f"[ERROR] 最適化ランキング取得エラー: {e}")
+            return []
+
+    def fetch_ranking_data(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """ランキングデータ取得（最適化版を優先使用）"""
+        try:
+            # まず最適化版を試行
+            optimized_data = self.fetch_ranking_data_optimized(limit)
+            if optimized_data:
+                return optimized_data
+            
+            # フォールバック：リアルタイム計算
+            print("[FALLBACK] 統計データが不完全なため、リアルタイム計算実行")
+            return self.fetch_ranking_data_realtime(limit)
+            
+        except Exception as e:
+            print(f"[ERROR] ランキングデータ取得エラー: {e}")
+            return []
+
+    def fetch_ranking_data_realtime(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """リアルタイムランキング計算（フォールバック用）"""
+        try:
+            print("[REALTIME] リアルタイムでランキング計算中...")
             today = datetime.datetime.now(datetime.timezone.utc)
             week_start = today - datetime.timedelta(days=today.weekday())
             week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -377,10 +579,14 @@ class FirestoreManager:
                             except (ValueError, TypeError):
                                 continue
                     
-                    # 習熟度計算
+                    # 習熟度計算（全期間の学習データから）
                     total_cards = len(cards)
-                    mastered_cards = sum(1 for card in cards.values() if card.get("level", 0) >= 4)
-                    mastery_rate = mastered_cards / total_cards * 100 if total_cards > 0 else 0
+                    if total_cards > 0:
+                        # レベル4以上を習得済みとして計算
+                        mastered_cards = sum(1 for card in cards.values() if card.get("level", 0) >= 4)
+                        mastery_rate = mastered_cards / total_cards * 100
+                    else:
+                        mastery_rate = 0.0
                     
                     ranking_data.append({
                         "uid": doc.id,
@@ -388,6 +594,8 @@ class FirestoreManager:
                         "total_points": total_points,
                         "mastery_rate": mastery_rate
                     })
+                    
+                    print(f"[DEBUG] ユーザー {doc.id[:8]}: 習熟度={mastery_rate:.2f}%, カード数={total_cards}, 習得済み={sum(1 for card in cards.values() if card.get('level', 0) >= 4)}")
                 
                 except Exception as e:
                     print(f"[ERROR] ユーザー {doc.id} のポイント計算エラー: {e}")
@@ -400,7 +608,7 @@ class FirestoreManager:
             return ranking_data
             
         except Exception as e:
-            print(f"[ERROR] ランキングデータ取得エラー: {e}")
+            print(f"[ERROR] リアルタイムランキング計算エラー: {e}")
             return []
     
     def get_secure_image_url(self, image_path: str, expires_in: int = 3600) -> Optional[str]:
@@ -508,6 +716,26 @@ def check_gakushi_permission(uid: str) -> bool:
     return manager.check_user_permission(uid, "can_access_gakushi")
 
 
+def grant_gakushi_permission(uid: str, granted: bool = True) -> bool:
+    """学士試験権限を付与または剥奪"""
+    manager = get_firestore_manager()
+    return manager.grant_user_permission(uid, "can_access_gakushi", granted)
+
+
+def get_user_permissions(uid: str) -> Dict[str, bool]:
+    """ユーザーの全権限を取得"""
+    manager = get_firestore_manager()
+    return manager.get_user_permissions(uid)
+
+
+def list_all_permissions() -> Dict[str, Dict[str, bool]]:
+    """全ユーザーの権限一覧を取得"""
+    manager = get_firestore_manager()
+    return manager.list_all_user_permissions()
+    manager = get_firestore_manager()
+    return manager.check_user_permission(uid, "can_access_gakushi")
+
+
 def fetch_ranking_data(limit: int = 100) -> List[Dict[str, Any]]:
     """ランキングデータを取得（最適化版）"""
     manager = get_firestore_manager()
@@ -544,6 +772,70 @@ def get_user_profile_for_ranking(uid: str) -> Optional[Dict[str, Any]]:
     except Exception as e:
         print(f"[ERROR] プロファイル取得エラー: {e}")
         return None
+
+
+def get_user_profiles_bulk(uids: List[str]) -> Dict[str, Dict[str, Any]]:
+    """複数のユーザープロファイルを一括取得（N+1問題対策）"""
+    if not uids:
+        return {}
+    
+    try:
+        manager = get_firestore_manager()
+        profiles = {}
+        
+        # Firestoreのバッチ読み取りを使用（最大500件まで）
+        batch_size = 100  # 安全のため100件ずつ処理
+        
+        for i in range(0, len(uids), batch_size):
+            batch_uids = uids[i:i + batch_size]
+            
+            # バッチ読み取りを作成
+            batch = manager.db.batch()
+            doc_refs = [manager.db.collection("users").document(uid) for uid in batch_uids]
+            
+            # ドキュメントを一括取得
+            docs = manager.db.get_all(doc_refs)
+            
+            for doc in docs:
+                if doc.exists:
+                    data = doc.to_dict()
+                    profiles[doc.id] = {
+                        "nickname": data.get("nickname", data.get("email", "").split("@")[0] if data.get("email") else f"学習者{doc.id[:8]}"),
+                        "show_on_leaderboard": data.get("show_on_leaderboard", True),  # デフォルトTrue
+                        "email": data.get("email", ""),
+                        "lastUpdated": data.get("lastUpdated")
+                    }
+                else:
+                    # ドキュメントが存在しない場合のデフォルト値
+                    profiles[doc.id] = {
+                        "nickname": f"学習者{doc.id[:8]}",
+                        "show_on_leaderboard": True,  # デフォルトTrue
+                        "email": "",
+                        "lastUpdated": None
+                    }
+        
+        # 見つからなかったuidに対してはデフォルト値を設定
+        for uid in uids:
+            if uid not in profiles:
+                profiles[uid] = {
+                    "nickname": f"学習者{uid[:8]}",
+                    "show_on_leaderboard": True,
+                    "email": "",
+                    "lastUpdated": None
+                }
+        
+        print(f"[DEBUG] プロファイル一括取得完了: {len(profiles)}件")
+        return profiles
+        
+    except Exception as e:
+        print(f"[ERROR] 一括プロファイル取得エラー: {e}")
+        # エラー時はデフォルト値を返す
+        return {uid: {
+            "nickname": f"学習者{uid[:8]}",
+            "show_on_leaderboard": True,
+            "email": "",
+            "lastUpdated": None
+        } for uid in uids}
 
 
 def save_user_profile(uid: str, nickname: str, show_on_leaderboard: bool) -> bool:

@@ -38,13 +38,17 @@ class AuthManager:
         self.password_reset_url = None
         
         # Streamlitコンテキストが利用可能な場合のみAPIキーを設定
-        self._initialize_urls()
+        try:
+            self._initialize_urls()
+        except Exception:
+            # インポート時はStreamlitコンテキストが利用できない可能性があるため、エラーを無視
+            pass
     
     def _initialize_urls(self):
         """URLを初期化"""
         try:
             # Streamlitコンテキストが利用可能かチェック
-            if hasattr(st, 'secrets'):
+            if hasattr(st, 'secrets') and hasattr(st, 'session_state'):
                 try:
                     self.api_key = st.secrets.get("firebase_api_key")
                     if self.api_key:
@@ -55,7 +59,8 @@ class AuthManager:
                 except Exception:
                     pass  # secrets にアクセスできない場合は無視
         except Exception as e:
-            print(f"Warning: Firebase API key not available during init: {e}")
+            # インポート時はエラーを無視
+            pass
     
     def _ensure_api_key(self):
         """APIキーが設定されているかチェック"""
@@ -77,7 +82,7 @@ class AuthManager:
     def _get_http_session(self) -> requests.Session:
         """HTTPセッションを取得"""
         try:
-            if hasattr(st.session_state, 'auth_http_session'):
+            if hasattr(st, 'session_state') and hasattr(st.session_state, 'auth_http_session'):
                 return st.session_state.auth_http_session
             else:
                 session = requests.Session()
@@ -87,7 +92,8 @@ class AuthManager:
                     'Accept-Encoding': 'gzip, deflate',
                     'Connection': 'keep-alive'
                 })
-                st.session_state.auth_http_session = session
+                if hasattr(st, 'session_state'):
+                    st.session_state.auth_http_session = session
                 return session
         except Exception:
             # Streamlitコンテキストが利用できない場合は新しいセッションを作成

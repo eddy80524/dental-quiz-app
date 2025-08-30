@@ -11,7 +11,7 @@ import streamlit as st
 import pandas as pd
 from typing import Dict, Any, List, Optional
 
-from firestore_db import fetch_ranking_data, get_user_profile_for_ranking
+from firestore_db import fetch_ranking_data, get_user_profile_for_ranking, get_user_profiles_bulk
 
 def _render_weekly_active_ranking(ranking_data: pd.DataFrame, user_profile: dict):
     st.subheader("🏆 週間アクティブランキング")
@@ -86,9 +86,11 @@ def _render_mastery_ranking(ranking_data: pd.DataFrame, user_profile: dict):
     st.subheader("🎯 習熟度ランキング")
     st.caption("学習した問題の知識定着度に基づいたランキングです。")
 
-    # mastery_rateが0より大きいデータのみを対象
-    valid_mastery_data = ranking_data[ranking_data['mastery_rate'] > 0]
-    sorted_by_mastery = valid_mastery_data.sort_values(by='mastery_rate', ascending=False).reset_index(drop=True)
+    # 習熟度で降順ソートし、習熟度が同じ場合は総合ポイントで順位付け
+    sorted_by_mastery = ranking_data.sort_values(
+        by=['mastery_rate', 'total_points'], 
+        ascending=[False, False]
+    ).reset_index(drop=True)
 
     if sorted_by_mastery.empty:
         st.info("まだ習熟度データが計算されたユーザーがいません。")
@@ -101,14 +103,19 @@ def _render_mastery_ranking(ranking_data: pd.DataFrame, user_profile: dict):
             rank = user_rank_info.index[0] + 1
             score = float(user_rank_info['mastery_rate'].iloc[0])
             st.warning(f"あなたの習熟度順位: **{rank}位** ({score:.1f} %)")
+        else:
+            st.info("あなたはまだランキングに登場していません。学習を始めてみましょう！")
 
+    # 習熟度スコアを数値表示とプログレスバーの両方で表示
+    display_data = sorted_by_mastery[['nickname', 'mastery_rate']].head(20).copy()
+    
     st.dataframe(
-        sorted_by_mastery[['nickname', 'mastery_rate']].head(20),
+        display_data,
         column_config={
             "nickname": st.column_config.TextColumn("ニックネーム", width="large"),
-            "mastery_rate": st.column_config.ProgressColumn(
-                "習熟度スコア",
-                format="%.1f %%",
+            "mastery_rate": st.column_config.NumberColumn(
+                "習熟度スコア (%)",
+                format="%.2f",
                 min_value=0,
                 max_value=100,
             ),
@@ -126,7 +133,10 @@ def render_ranking_page(auth_manager=None):
         return
 
     if st.button("🔄 データ更新", use_container_width=True):
+        # 全てのキャッシュをクリア
         st.cache_data.clear()
+        st.cache_resource.clear()
+        print("[DEBUG] 全キャッシュクリア完了")
         st.rerun()
 
     # データ取得
@@ -140,23 +150,21 @@ def render_ranking_page(auth_manager=None):
 
     df = pd.DataFrame(ranking_data)
 
-    # nickname列を動的に追加
+    # nickname列を動的に追加（N+1問題対策のため一括取得を使用）
     if not df.empty and 'uid' in df.columns:
-        # パフォーマンス注意: 本来はN+1問題を避けるため、複数のuidからプロフィール情報を
-        # 一括取得する関数を実装するのが望ましい
-        def get_nickname(user_uid: str) -> str:
-            """uidからニックネームを取得し、取得できなければデフォルト値を返す"""
-            try:
-                profile = get_user_profile_for_ranking(user_uid)
-                if profile and profile.get('nickname'):
-                    return profile['nickname']
-            except Exception as e:
-                print(f"[ERROR] ニックネーム取得中にエラー (uid: {user_uid}): {e}")
-            
-            # フォールバック処理
-            return f"学習者{user_uid[:8]}"
+        # 全ユーザーのプロフィールを一括取得
+        unique_uids = df['uid'].unique().tolist()
+        profiles = get_user_profiles_bulk(unique_uids)
         
-        df['nickname'] = df['uid'].apply(get_nickname)
+        # ニックネームをマッピング
+        df['nickname'] = df['uid'].map(lambda uid: profiles.get(uid, {}).get('nickname', f"学習者{uid[:8]}"))
+        
+        # デバッグ情報の出力
+        print(f"[DEBUG] ランキングデータ処理: {len(df)}件のユーザー")
+        print(f"[DEBUG] プロファイル取得: {len(profiles)}件")
+        
+        # ランキング参加は強制（全ユーザーが表示される）
+        print(f"[DEBUG] 全ユーザーをランキングに表示: {len(df)}件")
     else:
         st.warning("ランキングデータが空か、表示に必要な'uid'列がありません。")
         return

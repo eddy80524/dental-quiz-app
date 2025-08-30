@@ -27,6 +27,89 @@ from utils import (
 )
 from modules.practice_page import render_practice_page, render_practice_sidebar
 from modules.ranking_page import render_ranking_page
+# from enhanced_analytics import enhanced_ga, EnhancedGoogleAnalytics
+
+# 最適化モジュールのインポート
+from enhanced_firestore_optimizer import get_cached_firestore_optimizer
+from optimized_weekly_ranking import OptimizedWeeklyRankingSystem
+from complete_migration_system import CompleteMigrationSystem
+
+
+def apply_sidebar_button_styles():
+    """
+    サイドバーのボタンにスタイリッシュなデザインを適用する関数
+    """
+    st.markdown("""
+    <style>
+    /* サイドバーのプライマリボタンのスタイル */
+    .stSidebar .stButton > button[kind="primary"] {
+        background-color: #0066cc !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 8px !important;
+        font-weight: 600 !important;
+        padding: 0.5rem 1rem !important;
+        transition: all 0.3s ease !important;
+        box-shadow: 0 2px 4px rgba(0, 102, 204, 0.2) !important;
+    }
+
+    /* プライマリボタンのホバー効果 */
+    .stSidebar .stButton > button[kind="primary"]:hover {
+        background-color: #0052a3 !important;
+        color: white !important;
+        transform: translateY(-1px) !important;
+        box-shadow: 0 4px 8px rgba(0, 82, 163, 0.3) !important;
+    }
+
+    /* セカンダリボタンのスタイル */
+    .stSidebar .stButton > button[kind="secondary"] {
+        background-color: #f8f9fa !important;
+        color: #0066cc !important;
+        border: 2px solid #0066cc !important;
+        border-radius: 8px !important;
+        font-weight: 600 !important;
+        padding: 0.5rem 1rem !important;
+        transition: all 0.3s ease !important;
+    }
+
+    /* セカンダリボタンのホバー効果 */
+    .stSidebar .stButton > button[kind="secondary"]:hover {
+        background-color: #0066cc !important;
+        color: white !important;
+        border-color: #0052a3 !important;
+        transform: translateY(-1px) !important;
+        box-shadow: 0 4px 8px rgba(0, 102, 204, 0.2) !important;
+    }
+
+    /* 通常ボタンのスタイル */
+    .stSidebar .stButton > button {
+        background-color: #6c757d !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 8px !important;
+        font-weight: 500 !important;
+        padding: 0.5rem 1rem !important;
+        transition: all 0.3s ease !important;
+        width: auto !important;
+        min-width: 120px !important;
+        max-width: 200px !important;
+    }
+
+    /* 通常ボタンのホバー効果 */
+    .stSidebar .stButton > button:hover {
+        background-color: #5a6268 !important;
+        color: white !important;
+        transform: translateY(-1px) !important;
+        box-shadow: 0 4px 8px rgba(108, 117, 125, 0.2) !important;
+    }
+
+    /* フォーカス時のアウトライン除去 */
+    .stSidebar .stButton > button:focus {
+        outline: none !important;
+        box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.3) !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
 
 def get_natural_sort_key(q_dict):
@@ -82,49 +165,487 @@ st.set_page_config(
 # スタイル設定
 st.markdown("""
 <style>
+/* カラーパレット定義 */
+:root {
+    --primary-color: #1c83e1;     /* 明るい青 (Streamlitのアクセント色に近い) */
+    --primary-hover: #1a73c7;     /* 少し暗い青 */
+    --primary-light: rgba(28, 131, 225, 0.1);  /* 淡い青背景 */
+    --secondary-color: #4caf50;   /* 緑（正解表示等に使用） */
+    --danger-color: #f44336;      /* 赤（エラー表示等に使用） */
+    --warning-color: #ff9800;     /* オレンジ（警告表示等に使用） */
+    --background-light: #f8f9fa;  /* 明るいグレー背景 */
+    --border-color: #e0e0e0;      /* ボーダーカラー */
+    --text-primary: #2c3e50;      /* 濃いグレー文字 */
+    --text-secondary: #6c757d;    /* セカンダリ文字 */
+}
+
 /* ライトモード固定設定 */
 .stApp {
     background-color: #ffffff;
-    color: #000000;
+    color: var(--text-primary);
 }
 
 .stSidebar {
-    background-color: #f0f2f6;
+    background-color: var(--background-light);
 }
 
-/* サイドバーのボタン色を統一 */
-.stSidebar .stButton > button[kind="primary"] {
-    background-color: #0066cc !important;
+/* プライマリボタンのスタイル統一 */
+.stButton > button[kind="primary"] {
+    background-color: var(--primary-color) !important;
     color: white !important;
     border: none !important;
+    border-radius: 8px !important;
+    font-weight: 500 !important;
+    transition: all 0.2s ease !important;
+    box-shadow: 0 2px 4px rgba(28, 131, 225, 0.2) !important;
 }
 
-.stSidebar .stButton > button[kind="primary"]:hover {
-    background-color: #0052a3 !important;
+.stButton > button[kind="primary"]:hover {
+    background-color: var(--primary-hover) !important;
     color: white !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 8px rgba(28, 131, 225, 0.3) !important;
 }
 
-.stSidebar .stButton > button[kind="primary"]:focus {
-    background-color: #0066cc !important;
+.stButton > button[kind="primary"]:focus {
+    background-color: var(--primary-color) !important;
     color: white !important;
-    box-shadow: 0 0 0 0.2rem rgba(0, 102, 204, 0.25) !important;
+    box-shadow: 0 0 0 0.2rem rgba(28, 131, 225, 0.25) !important;
+}
+
+/* セカンダリボタンのスタイル */
+.stButton > button[kind="secondary"] {
+    background-color: transparent !important;
+    color: var(--primary-color) !important;
+    border: 2px solid var(--primary-color) !important;
+    border-radius: 8px !important;
+    font-weight: 500 !important;
+    transition: all 0.2s ease !important;
+}
+
+.stButton > button[kind="secondary"]:hover {
+    background-color: var(--primary-light) !important;
+    color: var(--primary-hover) !important;
+    border-color: var(--primary-hover) !important;
+}
+
+/* セレクトボックスのスタイル改善 */
+.stSelectbox > div > div {
+    border-radius: 8px !important;
+    border-color: var(--border-color) !important;
+}
+
+.stSelectbox > div > div:focus-within {
+    border-color: var(--primary-color) !important;
+    box-shadow: 0 0 0 0.2rem rgba(28, 131, 225, 0.25) !important;
+}
+
+/* マルチセレクトのスタイル改善 */
+.stMultiSelect > div > div {
+    border-radius: 8px !important;
+    border-color: var(--border-color) !important;
+}
+
+.stMultiSelect > div > div:focus-within {
+    border-color: var(--primary-color) !important;
+    box-shadow: 0 0 0 0.2rem rgba(28, 131, 225, 0.25) !important;
+}
+
+/* アラートのスタイル統一 */
+.stAlert {
+    border-radius: 8px !important;
+    border: 1px solid var(--border-color) !important;
+}
+
+/* 情報アラート */
+.stAlert[data-baseweb="notification"] {
+    background-color: var(--primary-light) !important;
+    border-color: var(--primary-color) !important;
 }
 
 /* 問題カードのスタイル */
 .question-card {
-    background-color: #f8f9fa;
-    border: 1px solid #dee2e6;
-    border-radius: 8px;
-    padding: 20px;
-    margin: 10px 0;
+    background-color: var(--background-light);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 24px;
+    margin: 16px 0;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    transition: all 0.2s ease;
+}
+
+.question-card:hover {
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+    transform: translateY(-2px);
 }
 
 /* メトリクスのスタイル */
 .metric-container {
-    background-color: #f8f9fa;
-    padding: 15px;
-    border-radius: 8px;
-    border-left: 4px solid #0066cc;
+    background-color: var(--background-light);
+    padding: 20px;
+    border-radius: 12px;
+    border-left: 4px solid var(--primary-color);
+    margin: 12px 0;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+/* 正解・不正解の色 */
+.correct-answer {
+    color: var(--secondary-color) !important;
+    font-weight: 600 !important;
+}
+
+.incorrect-answer {
+    color: var(--danger-color) !important;
+    font-weight: 600 !important;
+}
+
+/* プログレスバーのスタイル */
+.stProgress > div > div > div > div {
+    background-color: var(--primary-color) !important;
+}
+
+/* タブのスタイル改善 - シンプルなデザイン */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 0px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.stTabs [data-baseweb="tab"] {
+    border-radius: 0px !important;
+    padding: 12px 20px !important;
+    background-color: transparent !important;
+    color: var(--text-secondary) !important;
+    border: none !important;
+    border-bottom: 2px solid transparent !important;
+    transition: all 0.2s ease !important;
+    font-weight: 400 !important;
+}
+
+.stTabs [data-baseweb="tab"]:hover {
+    background-color: transparent !important;
+    color: var(--primary-color) !important;
+    border-bottom: 2px solid var(--primary-color) !important;
+}
+
+.stTabs [aria-selected="true"] {
+    background-color: transparent !important;
+    color: var(--primary-color) !important;
+    border-bottom: 2px solid var(--primary-color) !important;
+    font-weight: 600 !important;
+}
+
+/* タブハイライト要素を非表示にして重複下線を除去 */
+.stTabs [data-baseweb="tab-highlight"] {
+    display: none !important;
+}
+
+/* 代替案: ハイライト要素の高さを0にして非表示 */
+.stTabs .st-c2.st-cz {
+    height: 0 !important;
+    opacity: 0 !important;
+    visibility: hidden !important;
+}
+
+/* シンプルなデフォルトラジオボタン */
+.stRadio {
+    /* デフォルトのStreamlitラジオボタンを使用 */
+}
+
+/* シンプルなボタンスタイル */
+.stButton > button {
+    background-color: #1c83e1 !important;
+    color: white !important;
+    border-radius: 4px !important;
+}
+
+
+/* チェックボックスのスタイル統一 */
+.stCheckbox > div > label {
+    display: flex !important;
+    align-items: center !important;
+    gap: 12px !important;
+    padding: 8px 12px !important;
+    border-radius: 8px !important;
+    border: 2px solid transparent !important;
+    background-color: transparent !important;
+    transition: all 0.2s ease !important;
+    cursor: default !important;
+    margin: 4px 0 !important;
+    pointer-events: none !important; /* ラベル全体のクリックを無効化 */
+}
+
+/* チェックボックス本体のスタイル（クリック可能な部分のみ） */
+.stCheckbox > div > label > div:first-child {
+    width: 24px !important;
+    height: 24px !important;
+    border: 2px solid var(--border-color) !important;
+    border-radius: 6px !important;
+    background-color: white !important;
+    transition: all 0.2s ease !important;
+    cursor: pointer !important;
+    flex-shrink: 0 !important;
+    position: relative !important;
+    pointer-events: auto !important; /* チェックボックス本体のみクリック可能 */
+}
+
+.stCheckbox > div > label > div:first-child:hover {
+    border-color: var(--primary-hover) !important;
+    background-color: var(--primary-light) !important;
+}
+
+/* チェックマーク表示 */
+.stCheckbox > div > label[data-checked="true"] > div:first-child {
+    border-color: var(--primary-color) !important;
+    background-color: var(--primary-color) !important;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 16 16' fill='white' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M13.854 3.646a.5.5 0 0 1 0 .708l-7 7a.5.5 0 0 1-.708 0l-3.5-3.5a.5.5 0 1 1 .708-.708L6.5 10.293l6.646-6.647a.5.5 0 0 1 .708 0z'/%3E%3C/svg%3E") !important;
+    background-repeat: no-repeat !important;
+    background-position: center !important;
+    background-size: 16px 16px !important;
+}
+
+/* テキスト部分は非クリック可能 */
+.stCheckbox > div > label > span {
+    cursor: text !important;
+    pointer-events: none !important;
+    user-select: text !important; /* テキスト選択可能 */
+}
+
+/* 選択状態のラベル全体の背景削除 */
+.stCheckbox > div > label[data-checked="true"] {
+    border-color: transparent !important;
+    background-color: transparent !important;
+}
+
+
+}
+
+/* ヘッダーのスタイル */
+h1 {
+    color: var(--text-primary) !important;
+    font-weight: 700 !important;
+}
+
+h2, h3 {
+    color: var(--text-primary) !important;
+    font-weight: 600 !important;
+}
+
+/* サイドバー専用のスタイル */
+.stSidebar .stButton > button[kind="primary"] {
+    width: 100% !important;
+    margin: 4px 0 !important;
+}
+
+.stSidebar h1, .stSidebar h2, .stSidebar h3 {
+    color: var(--text-primary) !important;
+}
+
+/* カスタムコンポーネントのスタイル */
+.case-info-box {
+    background-color: var(--primary-light) !important;
+    padding: 16px 20px !important;
+    border-radius: 12px !important;
+    border-left: 4px solid var(--primary-color) !important;
+    margin-bottom: 20px !important;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05) !important;
+}
+
+.case-info-box strong,
+.case-info-box span {
+    color: var(--text-primary) !important;
+}
+
+/* 選択肢ボタンのスタイル */
+.choice-button {
+    margin: 4px 0 !important;
+    width: 100% !important;
+}
+
+.choice-button button {
+    text-align: left !important;
+    padding: 12px 16px !important;
+    border-radius: 8px !important;
+}
+
+/* 結果表示のスタイル */
+.result-correct {
+    background-color: rgba(76, 175, 80, 0.1) !important;
+    border: 2px solid var(--secondary-color) !important;
+    border-radius: 8px !important;
+    padding: 16px !important;
+    margin: 12px 0 !important;
+}
+
+.result-incorrect {
+    background-color: rgba(244, 67, 54, 0.1) !important;
+    border: 2px solid var(--danger-color) !important;
+    border-radius: 8px !important;
+    padding: 16px !important;
+    margin: 12px 0 !important;
+}
+
+/* 統計カードのスタイル */
+.stats-card {
+    background: linear-gradient(135deg, var(--primary-light), rgba(255, 255, 255, 0.8)) !important;
+    border-radius: 12px !important;
+    padding: 20px !important;
+    margin: 12px 0 !important;
+    border: 1px solid var(--border-color) !important;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1) !important;
+}
+
+/* ダークモード防止 */
+@media (prefers-color-scheme: dark) {
+    .stApp {
+        background-color: #ffffff !important;
+        color: var(--text-primary) !important;
+    }
+}
+
+
+
+/* 余白を最小限に - さらなる最適化 */
+.st-emotion-cache-zy6yx3 {
+    padding: 0.5rem 0.5rem 0.5rem !important;
+}
+
+.st-emotion-cache-4rsbii {
+    padding-top: 0.5rem !important;
+}
+
+.st-emotion-cache-1u02ojh {
+    gap: 0.25rem !important;
+    row-gap: 0.25rem !important;
+    column-gap: 0.25rem !important;
+}
+
+[data-testid="stElementContainer"] {
+    margin-top: 0 !important;
+    margin-bottom: 0.25rem !important;
+}
+
+/* 新規問題表示と問題表示の間の余白を削除 */
+.st-emotion-cache-r44huj {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+}
+
+/* Markdownコンテナの余白調整 */
+.stMarkdown {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+}
+
+/* 情報ボックス（st.info）の余白調整 */
+.stAlert {
+    margin-top: 0 !important;
+    margin-bottom: 0.5rem !important;
+}
+
+/* アラートボックス内のテキストを中央揃え */
+.stAlert .st-emotion-cache-r44huj {
+    text-align: center !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+/* アラートコンテナ全体を中央揃え */
+.stAlert [data-testid="stMarkdownContainer"] {
+    text-align: center !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+/* アラートボックスのコンテンツ中央揃え */
+.stAlert [data-testid="stAlertContainer"] {
+    text-align: center !important;
+}
+
+/* アラートボックス内のpタグも中央揃え */
+.stAlert p {
+    text-align: center !important;
+    margin: 0 !important;
+}
+
+.st-emotion-cache-13gev4o {
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+/* 新規問題表示のコンテナスタイル調整 */
+div[style*="background-color: rgb(250, 250, 250)"] {
+    margin-top: 0 !important;
+    padding-top: 12px !important;
+}
+
+/* 問題表示エリアの余白調整 */
+.stContainer {
+    margin-top: 0 !important;
+    padding-top: 0 !important;
+}
+
+/* アプリ全体の高さ調整 */
+.st-emotion-cache-6px8kg {
+    min-height: auto !important;
+    height: auto !important;
+}
+
+/* メインコンテナの調整 */
+.element-container {
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+/* iframeコンテナの調整 */
+.stIFrame {
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+/* 連続する要素間の余白を最小化 */
+.stElementContainer + .stElementContainer {
+    margin-top: 0 !important;
+}
+
+/* 情報ボックスの直後の要素の余白を削除 */
+.stAlert + .stElementContainer {
+    margin-top: 0 !important;
+}
+
+/* 新規問題/復習問題表示の直後の余白を削除 */
+.stAlert + .stMarkdown {
+    margin-top: 0 !important;
+}
+
+/* ログイン後のメインコンテンツエリアの上部マージン追加 */
+.stVerticalBlock.st-emotion-cache-1u02ojh {
+    margin-top: 1rem !important;
+    padding-top: 0.5rem !important;
+}
+
+/* メインコンテンツエリアのヘッダー調整 */
+.stMarkdown h1, .stMarkdown h2, .stMarkdown h3 {
+    margin-top: 0.5rem !important;
+    padding-top: 0.25rem !important;
+}
+
+/* アラートコンテナの上部マージン */
+.stAlert {
+    margin-top: 0.5rem !important;
+}
+</style>""", unsafe_allow_html=True)
+
+# 最小限のスタイル
+st.markdown("""
+<style>
+/* 基本設定のみ */
+.stApp {
+    background-color: #ffffff;
 }
 </style>""", unsafe_allow_html=True)
 
@@ -137,8 +658,14 @@ class DentalApp:
         self.cookie_manager = CookieManager()
         self.firestore_manager = get_firestore_manager()
         
+        # 強化されたGoogle Analytics統合
+        # self.analytics = enhanced_ga
+        
         # セッション状態の初期化
         self._initialize_session_state()
+        
+        # ユーザー行動追跡の初期化
+        self._initialize_user_tracking()
     
     def _initialize_session_state(self):
         """セッション状態の初期化"""
@@ -150,56 +677,132 @@ class DentalApp:
             "page": "練習",  # デフォルトを演習ページに
             "cards": {},
             "analysis_target": "国試",
-            "level_filter": ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "レベル5", "習得済み"],  # 全レベルをデフォルトで表示
+            "level_filter": ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "習得済み"],  # レベル0-4に修正
             "new_cards_per_day": 10,
             "result_log": {},
-            "auto_login_attempted": False  # 自動ログイン試行フラグを追加
+            "auto_login_attempted": False,  # 自動ログイン試行フラグを追加
+            "session_start_time": time.time(),  # セッション開始時間
+            "page_interactions": 0,  # ページ相互作用数
+            "study_sessions": []  # 学習セッション履歴
         }
         
         for key, value in default_values.items():
             if key not in st.session_state:
                 st.session_state[key] = value
+    
+    def _initialize_user_tracking(self):
+        """ユーザー追跡の初期化"""
+        if 'tracking_initialized' not in st.session_state:
+            st.session_state['tracking_initialized'] = True
+            st.session_state['session_start_time'] = time.time()
+            st.session_state['page_interactions'] = 0
+            
+            # セッション開始イベント
+            # self.analytics.track_user_engagement(
+            #     engagement_type='session_start',
+            #     interaction_count=0
+            # )
+    
+    def track_page_navigation(self, page_name: str):
+        """ページナビゲーション追跡"""
+        # ページビュー追跡
+        # self.analytics.track_page_view(
+        #     page_name=page_name,
+        #     page_title=f"歯科国試アプリ - {page_name}",
+        #     additional_params={
+        #         'previous_page': st.session_state.get('current_page', 'unknown'),
+        #         'session_duration': time.time() - st.session_state.get('session_start_time', time.time())
+        #     }
+        # )
+        
+        # 現在のページを記録
+        st.session_state['current_page'] = page_name
+        
+        # 相互作用数増加
+        st.session_state['page_interactions'] += 1
+    
+    def track_user_login_success(self, user_info: dict):
+        """ログイン成功追跡"""
+        user_properties = {
+            'user_type': 'registered' if user_info.get('uid') else 'anonymous',
+            'login_timestamp': datetime.datetime.now().isoformat(),
+            'has_gakushi_permission': user_info.get('has_gakushi_permission', False)
+        }
+        
+        # self.analytics.track_user_login(
+        #     login_method='firebase',
+        #     user_properties=user_properties
+        # )
+        
+        # ユーザープロパティ更新
+        # self.analytics.user_id = user_info.get('uid', 'anonymous')
+    
+    def track_study_activity(self, activity_type: str, details: dict = None):
+        """学習活動追跡"""
+        base_params = {
+            'activity_type': activity_type,
+            'timestamp': datetime.datetime.now().isoformat(),
+            'session_duration': time.time() - st.session_state.get('session_start_time', time.time())
+        }
+        
+        if details:
+            base_params.update(details)
+        
+        # self.analytics._send_event('study_activity', base_params)
+    
+    def track_feature_interaction(self, feature: str, action: str, context: dict = None):
+        """機能相互作用追跡"""
+        # self.analytics.track_feature_usage(
+        #     feature_name=feature,
+        #     action=action,
+        #     context=context or {}
+        # )
+        pass
         
         # 科目の初期化
         self._initialize_available_subjects()
     
     def _initialize_available_subjects(self):
         """利用可能な科目を初期化"""
-        if 'available_subjects' not in st.session_state:
-            uid = st.session_state.get("uid")
-            has_gakushi_permission = check_gakushi_permission(uid) if uid else False
-            analysis_target = st.session_state.get("analysis_target", "国試")
+        uid = st.session_state.get("uid")
+        has_gakushi_permission = check_gakushi_permission(uid) if uid else False
+        analysis_target = st.session_state.get("analysis_target", "国試問題")
+        
+        # 分析対象に応じて科目を取得
+        subjects_set = set()
+        for q in ALL_QUESTIONS:
+            q_num = q.get("number", "")
             
-            # 分析対象に応じて科目を取得
-            subjects_set = set()
-            for q in ALL_QUESTIONS:
-                q_num = q.get("number", "")
-                
-                # 権限チェック
-                if q_num.startswith("G") and not has_gakushi_permission:
+            # 権限チェック
+            if q_num.startswith("G") and not has_gakushi_permission:
+                continue
+            
+            # 分析対象フィルタ
+            if analysis_target == "学士試験問題":
+                if not q_num.startswith("G"):
                     continue
-                
-                # 分析対象フィルタ
-                if analysis_target == "学士試験":
-                    if not q_num.startswith("G"):
-                        continue
-                elif analysis_target == "国試":
-                    if q_num.startswith("G"):
-                        continue
-                
-                subject = q.get("subject", "未分類")
-                if subject:
-                    subjects_set.add(subject)
+            elif analysis_target == "国試問題":
+                if q_num.startswith("G"):
+                    continue
             
-            available_subjects = sorted(list(subjects_set))
-            st.session_state.available_subjects = available_subjects
-            
-            # 科目フィルターのデフォルト設定
-            if 'subject_filter' not in st.session_state:
-                st.session_state.subject_filter = available_subjects
+            subject = q.get("subject", "未分類")
+            if subject:
+                subjects_set.add(subject)
+        
+        available_subjects = sorted(list(subjects_set))
+        st.session_state.available_subjects = available_subjects
+        
+        # 科目フィルターのデフォルト設定
+        if 'subject_filter' not in st.session_state:
+            st.session_state.subject_filter = available_subjects
     
     def run(self):
         """アプリケーションのメイン実行"""
+        # CSSスタイルを適用（ページ読み込み時に一度だけ実行）
+        if not st.session_state.get("styles_applied"):
+            apply_sidebar_button_styles()
+            st.session_state["styles_applied"] = True
+        
         # Google Analytics初期化（ページ読み込み時に一度だけ実行）
         if not st.session_state.get("ga_initialized"):
             AnalyticsUtils.inject_ga_script()
@@ -216,6 +819,15 @@ class DentalApp:
             if self.cookie_manager.try_auto_login():
                 # 自動ログイン成功時に科目を初期化
                 self._initialize_available_subjects()
+                
+                # ログイン成功追跡
+                user_info = {
+                    'uid': st.session_state.get('uid'),
+                    'email': st.session_state.get('email'),
+                    'has_gakushi_permission': check_gakushi_permission(st.session_state.get('uid'))
+                }
+                self.track_user_login_success(user_info)
+                
                 st.rerun()
         
         # ログイン状態をチェック
@@ -223,7 +835,9 @@ class DentalApp:
             # ログイン画面ではサイドバーを非表示
             self._hide_sidebar()
             self._render_login_page()
-            AnalyticsUtils.track_page_view("Login Page")
+            
+            # ログインページビュー追跡
+            self.track_page_navigation("login")
         else:
             # ログイン済みの場合はサイドバーとメインコンテンツを表示
             # 科目が初期化されていない場合は初期化
@@ -234,8 +848,8 @@ class DentalApp:
             self._render_main_content()
             
             # ログイン後のページビュー追跡
-            current_page = st.session_state.get("current_page", "演習")
-            AnalyticsUtils.track_page_view(f"Main App - {current_page}")
+            current_page = st.session_state.get("page", "練習")
+            self.track_page_navigation(current_page)
     
     def _track_user_activity(self):
         """ユーザーアクティビティの追跡"""
@@ -287,6 +901,50 @@ class DentalApp:
         /* サイドバートグルボタンも非表示 */
         .css-1v0mbdj {display: none !important}
         button[kind="header"] {display: none !important}
+        
+        /* ログイン画面の余白を詰める */
+        .st-emotion-cache-zy6yx3 {
+            padding: 1rem 1rem 1rem !important;
+        }
+        
+        /* メインコンテナの余白調整 */
+        .st-emotion-cache-4rsbii {
+            padding-top: 1rem !important;
+            justify-content: flex-start !important;
+        }
+        
+        /* 全体の高さ調整 */
+        .st-emotion-cache-6px8kg {
+            min-height: auto !important;
+            height: auto !important;
+        }
+        
+        /* ログイン画面のコンテナ全体 */
+        .st-emotion-cache-1u02ojh {
+            gap: 0.5rem !important;
+            margin-top: 0 !important;
+            padding-top: 0 !important;
+        }
+        
+        /* 追加の余白削除 */
+        [data-testid="stElementContainer"] {
+            margin-top: 0 !important;
+            margin-bottom: 0.5rem !important;
+        }
+        
+        /* タイトルや見出しの余白削除 */
+        .st-emotion-cache-1u02ojh h1,
+        .st-emotion-cache-1u02ojh h2,
+        .st-emotion-cache-1u02ojh h3 {
+            margin-top: 0 !important;
+            margin-bottom: 0.5rem !important;
+        }
+        
+        /* iframeの余白も削除 */
+        .st-emotion-cache-13gev4o {
+            margin: 0 !important;
+            padding: 0 !important;
+        }
         </style>
         """, unsafe_allow_html=True)
     
@@ -431,17 +1089,33 @@ class DentalApp:
         
         # ページが変更された場合はイベントを送信
         if new_page and new_page != st.session_state.get("page"):
+            old_page = st.session_state.get("page", "unknown")
             st.session_state["page"] = new_page
             st.session_state["current_page"] = new_page  # _track_user_activityで使用
             
+            # 包括的なページ変更追跡
+            self.track_page_navigation(new_page)
+            
+            # 機能使用追跡
+            self.track_feature_interaction(
+                feature="page_navigation",
+                action="page_change",
+                context={
+                    "from_page": old_page,
+                    "to_page": new_page,
+                    "navigation_method": "sidebar"
+                }
+            )
+            
             if uid:
                 log_to_ga("page_change", uid, {
-                    "previous_page": current_page,
+                    "previous_page": old_page,
                     "new_page": new_page,
                     "navigation_method": "sidebar"
                 })
-        
-        st.divider()
+            
+            # ページ切り替え時に強制リロード
+            st.rerun()
         
         # 選択されたページに応じて異なるサイドバーコンテンツを表示
         if st.session_state.get("page") == "ランキング":
@@ -461,34 +1135,26 @@ class DentalApp:
             if has_gakushi_permission:
                 # 分析対象変更時のコールバック
                 def on_analysis_target_change():
-                    # 科目リストを更新
+                    # 科目リストを強制再初期化
                     if 'available_subjects' in st.session_state:
                         del st.session_state['available_subjects']
                     if 'subject_filter' in st.session_state:
                         del st.session_state['subject_filter']
-                    # 科目を再初期化
+                    # 科目を即座に再初期化
                     self._initialize_available_subjects()
+                    print(f"[DEBUG] 分析対象変更: {st.session_state.get('analysis_target')}, 利用可能科目数: {len(st.session_state.get('available_subjects', []))}")
                 
                 analysis_target = st.radio(
-                    "分析対象",
-                    ["国試", "学士試験"],
+                    "分析対象試験",
+                    options=["国試問題", "学士試験問題"],
+                    index=0,  # 常に国試問題をデフォルトに設定
                     key="analysis_target",
-                    on_change=on_analysis_target_change
+                    on_change=on_analysis_target_change,
+                    help="分析や検索を行う試験の種類を選択してください"
                 )
             else:
-                # 権限がない場合は自動的に国試に設定
-                analysis_target = "国試"
-                if 'analysis_target' not in st.session_state:
-                    st.session_state.analysis_target = "国試"
-            
-            # 学習レベルフィルター
-            level_options = ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "レベル5", "習得済み"]
-            level_filter = st.multiselect(
-                "学習レベル",
-                level_options,
-                default=level_options,  # 全ての選択肢をデフォルトで選択
-                key="level_filter"
-            )
+                st.session_state["analysis_target"] = "国試問題"
+                st.info("💡 現在は国試問題のみ利用可能です")
             
             # 科目フィルター（動的UI）
             if not hasattr(st.session_state, 'available_subjects') or not st.session_state.available_subjects:
@@ -519,87 +1185,32 @@ class DentalApp:
                 value=st.session_state.get('show_hisshu_only', False),
                 key="show_hisshu_only"
             )
+            
+            # レベルフィルター
+            st.markdown("### 📈 習熟度フィルター")
+            
+            level_options = ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "レベル5", "習得済み"]
+            default_levels = st.session_state.get('level_filter', level_options)
+            
+            level_filter = st.multiselect(
+                "表示する習熟度レベル",
+                level_options,
+                default=default_levels,
+                key="level_filter",
+                help="表示したい習熟度レベルを選択してください"
+            )
+            
         else:
             # 練習ページのサイドバー
+            print("[DEBUG] app.py: 練習ページのサイドバーを呼び出し中...")
             from modules.practice_page import render_practice_sidebar
             render_practice_sidebar()
         
         # ログアウトボタン
         st.divider()
         if st.button("🚪 ログアウト", type="secondary", use_container_width=True):
-            self._handle_logout()
-    
-    def _handle_logout(self):
-        """🚀 2. 「おまかせ学習」モードのUI（個人データ対応）"""
-        try:
-            st.markdown("### 📊 本日の学習状況")
-            
-            uid = st.session_state.get("uid")
-            if not uid:
-                st.warning("ユーザーIDが見つかりません")
-                return
-            
-            # Firestoreから個人の学習データを取得
-            firestore_manager = get_firestore_manager()
-            try:
-                user_cards = firestore_manager.get_user_cards(uid)
-                session_cards = st.session_state.get("cards", {})
-                # セッションデータを優先して統合
-                cards = {**user_cards, **session_cards}
-            except Exception as e:
-                st.warning(f"学習データの取得に失敗: {str(e)}")
-                cards = st.session_state.get("cards", {})
-            
-            new_cards_per_day = st.session_state.get("new_cards_per_day", 10)
-            
-            # リアルタイム計算
-            today = datetime.datetime.now().strftime("%Y-%m-%d")
-            
-            # 復習カード数（期限切れ）
-            review_count = 0
-            # 新規カード数（今日学習予定）
-            new_count = 0
-            # 完了数（今日学習済み）
-            completed_count = 0
-            
-            for q_id, card in cards.items():
-                # 復習期限チェック
-                next_review = card.get("next_review", "")
-                if next_review and next_review <= today:
-                    review_count += 1
-                
-                # 今日の学習記録チェック
-                history = card.get("history", [])
-                today_studied = any(h.get("date", "").startswith(today) for h in history)
-                if today_studied:
-                    completed_count += 1
-                elif len(history) == 0:  # 未学習カード
-                    new_count += 1
-            
-            # 新規カード数を上限で制限
-            new_count = min(new_count, new_cards_per_day)
-            total_target = review_count + new_count
-            
-            # メトリクス表示
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("復習", f"{review_count}問", help="期限が来た復習問題")
-                st.metric("完了", f"{completed_count}問", help="今日学習済みの問題")
-            
-            with col2:
-                st.metric("新規", f"{new_count}問", help="今日の新規学習予定")
-                if total_target > 0:
-                    progress = min(completed_count / total_target, 1.0)
-                    st.metric("達成率", f"{progress:.1%}", help="本日の学習進捗")
-            
-            # 学習開始ボタン
-            if st.button("📚 今日の学習を開始する", type="primary", use_container_width=True):
-                self._start_auto_learning()
-                
-        except Exception as e:
-            st.error(f"おまかせ学習モードでエラー: {str(e)}")
-            st.exception(e)
-    
+            self._handle_logout_real()
+
     def _render_free_learning_mode(self, has_gakushi_permission: bool):
         """🎯 3. 「自由演習」モードのUI"""
         try:
@@ -648,7 +1259,7 @@ class DentalApp:
         if quiz_format == "回数別":
             if target_exam == "国試":
                 # 国試の回数選択（現実的な範囲）
-                kaisu_options = [f"{i}回" for i in range(95, 118)]  # 95回〜117回
+                kaisu_options = [f"{i}回" for i in range(95, 119)]  # 95回〜118回
                 selected_kaisu = st.selectbox("国試回数", kaisu_options, 
                                             index=len(kaisu_options)-1, key="free_kaisu")
                 
@@ -657,11 +1268,12 @@ class DentalApp:
                 selected_area = st.selectbox("領域", area_options, key="free_area")
             else:
                 # 学士試験の年度・回数選択
-                year_options = [f"{y}年度" for y in range(2020, 2025)]
+                year_options = [f"{y}年度" for y in range(2022, 2026)]  # 2022-2025年度
                 selected_year = st.selectbox("年度", year_options, 
                                            index=len(year_options)-1, key="free_gakushi_year")
                 
-                kaisu_options = ["1回", "2回"]
+                # 回数選択（実際のデータに基づく：1-1, 1-2, 1-3, 1再, 2, 2再）
+                kaisu_options = ["1-1", "1-2", "1-3", "1再", "2", "2再"]
                 selected_kaisu = st.selectbox("回数", kaisu_options, key="free_gakushi_kaisu")
                 
                 area_options = ["全領域", "A領域", "B領域"]
@@ -731,69 +1343,66 @@ class DentalApp:
                         icon = "🔴"
                     
                     if st.button(f"{icon} {q_id}", key=f"recent_{q_id}", use_container_width=True):
-                                                # 問題に直接ジャンプ
+                        # 問題に直接ジャンプ
                         self._jump_to_question(q_id)
-    
+
     def _start_auto_learning(self):
         """おまかせ学習の開始処理"""
         uid = st.session_state.get("uid")
-        
-        with st.spinner("最適な問題を選択中..."):
-            # Cloud Function呼び出しを再有効化（URLを修正したため）
-            use_local_fallback = False
+        use_local_fallback = True  # Cloud Functionを無効化
             
-            if not use_local_fallback:
-                try:
-                    # Cloud Function呼び出し
-                    result = call_cloud_function("getDailyQuiz", {
-                        "uid": uid,
-                        "target": st.session_state.get("analysis_target", "国試"),
-                        "new_cards_per_day": st.session_state.get("new_cards_per_day", 10)
-                    })
+        if not use_local_fallback:
+            try:
+                # Cloud Function呼び出し
+                result = call_cloud_function("getDailyQuiz", {
+                    "uid": uid,
+                    "target": st.session_state.get("analysis_target", "国試"),
+                    "new_cards_per_day": st.session_state.get("new_cards_per_day", 10)
+                })
+                
+                if result and "questionIds" in result and len(result["questionIds"]) > 0:
+                    # Cloud Functionから問題リストを取得
+                    question_ids = result["questionIds"]
+                    # 問題IDから問題データを取得
+                    from data import load_data
+                    all_data = load_data()
+                    questions = [q for q in all_data["questions"] if q["number"] in question_ids]
                     
-                    if result and "questionIds" in result and len(result["questionIds"]) > 0:
-                        # Cloud Functionから問題リストを取得
-                        question_ids = result["questionIds"]
-                        # 問題IDから問題データを取得
-                        from data import load_data
-                        all_data = load_data()
-                        questions = [q for q in all_data["questions"] if q["number"] in question_ids]
-                        
-                        st.session_state["main_queue"] = questions
-                        st.session_state["session_mode"] = "auto_learning"
-                        st.session_state["session_choice_made"] = True
-                        st.session_state["session_type"] = "おまかせ演習"
-                        st.success(f"📚 {len(questions)}問の学習セッションを開始します")
-                        AnalyticsUtils.track_study_session_start("auto_learning", len(questions))
-                        
-                        # Firebase Analytics統合
-                        from firebase_analytics import FirebaseAnalytics
-                        FirebaseAnalytics.log_study_session_start(
-                            uid=uid,
-                            session_type="auto_learning",
-                            metadata={
-                                "target": st.session_state.get("analysis_target", "国試"),
-                                "question_count": len(questions),
-                                "source": "cloud_function"
-                            }
-                        )
-                    else:
-                        # Cloud Functionが失敗またはデータなし
-                        print("Cloud Function returned no valid questions, using fallback")
-                        self._fallback_auto_learning()
-                        
-                except Exception as e:
-                    print(f"Cloud Function error: {e}")
-                    # フォールバック処理
+                    st.session_state["main_queue"] = questions
+                    st.session_state["session_mode"] = "auto_learning"
+                    st.session_state["session_choice_made"] = True
+                    st.session_state["session_type"] = "おまかせ演習"
+                    st.success(f"📚 {len(questions)}問の学習セッションを開始します")
+                    AnalyticsUtils.track_study_session_start("auto_learning", len(questions))
+                    
+                    # Firebase Analytics統合
+                    from firebase_analytics import FirebaseAnalytics
+                    FirebaseAnalytics.log_study_session_start(
+                        uid=uid,
+                        session_type="auto_learning",
+                        metadata={
+                            "target": st.session_state.get("analysis_target", "国試"),
+                            "question_count": len(questions),
+                            "source": "cloud_function"
+                        }
+                    )
+                else:
+                    # Cloud Functionが失敗またはデータなし
+                    print("Cloud Function returned no valid questions, using fallback")
                     self._fallback_auto_learning()
-            else:
-                # ローカル処理を直接使用
-                print("Using local fallback directly (Cloud Function disabled)")
+                    
+            except Exception as e:
+                print(f"Cloud Function error: {e}")
+                # フォールバック処理
                 self._fallback_auto_learning()
-            
-            # 学習画面に遷移
-            time.sleep(0.5)
-            st.rerun()
+        else:
+            # ローカル処理を直接使用
+            print("Using local fallback directly (Cloud Function disabled)")
+            self._fallback_auto_learning()
+        
+        # 学習画面に遷移
+        time.sleep(0.5)
+        st.rerun()
     
     def _fallback_auto_learning(self):
         """クライアント側でのおまかせ学習フォールバック処理"""
@@ -808,12 +1417,28 @@ class DentalApp:
         # カードが存在する場合の処理
         if cards:
             for q_id, card in cards.items():
-                next_review = card.get("next_review", "")
+                # SM2データから復習期限を取得
+                sm2_data = card.get("sm2", {})
+                due_date = sm2_data.get("due_date")
                 history = card.get("history", [])
                 
                 # 復習期限チェック
-                if next_review and next_review <= today:
-                    review_questions.append(q_id)
+                if due_date:
+                    try:
+                        # FirebaseのDatetimeWithNanosecondsオブジェクトの場合
+                        if hasattr(due_date, 'strftime'):
+                            due_date_str = due_date.strftime("%Y-%m-%d")
+                        # 文字列の場合
+                        elif isinstance(due_date, str):
+                            due_date_str = due_date[:10] if len(due_date) >= 10 else due_date
+                        else:
+                            due_date_str = str(due_date)[:10]
+                        
+                        if due_date_str <= today:
+                            review_questions.append(q_id)
+                    except Exception as e:
+                        print(f"[DEBUG] 日付変換エラー: {due_date}, エラー: {e}")
+                        continue
                 # 未学習カードチェック
                 elif len(history) == 0:
                     new_questions.append(q_id)
@@ -964,8 +1589,8 @@ class DentalApp:
                     questions_to_load.append(q_num)
             
             else:  # 学士試験
-                selected_year = st.session_state.get("free_gakushi_year", "2024年度").replace("年度", "")
-                selected_kaisu = st.session_state.get("free_gakushi_kaisu", "1回")
+                selected_year = st.session_state.get("free_gakushi_year", "2025年度").replace("年度", "")
+                selected_kaisu = st.session_state.get("free_gakushi_kaisu", "1-1")
                 selected_area = st.session_state.get("free_gakushi_area", "全領域")
                 
                 for q in ALL_QUESTIONS:
@@ -974,10 +1599,9 @@ class DentalApp:
                     if not q_num.startswith("G"):
                         continue
                     
-                    # 年度と回数フィルタ（例：G24-1-1）
+                    # 年度と回数フィルタ（例：G24-1-1、G24-1-2、G24-1-3、G24-1再、G24-2、G24-2再）
                     year_short = str(int(selected_year) - 2000)  # 2024 -> 24
-                    kaisu_num = selected_kaisu.replace("回", "")
-                    pattern = f"G{year_short}-{kaisu_num}"
+                    pattern = f"G{year_short}-{selected_kaisu}"
                     
                     if not q_num.startswith(pattern):
                         continue
@@ -1092,7 +1716,7 @@ class DentalApp:
         with st.expander("⚙️ 設定"):
             self._render_settings(has_gakushi_permission)
     
-    def _handle_logout(self):
+    def _handle_logout_real(self):
         """ログアウト処理"""
         uid = st.session_state.get("uid")
         if uid:
@@ -1123,9 +1747,9 @@ class DentalApp:
             st.session_state["analysis_target"] = analysis_target
         
         # レベルフィルター
-        level_options = ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "レベル5", "習得済み"]
+        level_options = ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "習得済み"]
         # デフォルトは学習済みデータ重視（未学習除外）
-        default_levels = ["レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "レベル5", "習得済み"]
+        default_levels = ["レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "習得済み"]
         level_filter = st.multiselect(
             "表示レベル",
             level_options,
@@ -1243,6 +1867,11 @@ class DentalApp:
 
 def main():
     """メイン関数"""
+    # 強化されたGoogle Analytics初期化
+    # if enhanced_ga.initialize_ga():
+    #     # 初回初期化時にページビューを追跡
+    #     enhanced_ga.track_page_view('main_app', '歯科国家試験対策アプリ')
+    
     app = DentalApp()
     app.run()
 
