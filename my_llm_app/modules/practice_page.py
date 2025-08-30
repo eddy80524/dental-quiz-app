@@ -496,6 +496,7 @@ class AnswerModeComponent:
                         # セッション状態に選択肢の順序とマッピングを保存
                         shuffle_key = f"shuffled_choices_{qid}_{group_id}"
                         mapping_key = f"label_mapping_{qid}_{group_id}"
+                        answer_checked_key = f"answer_checked_{qid}_{group_id}"
                         
                         if shuffle_key not in st.session_state:
                             shuffled_choices, label_mapping = QuestionComponent.shuffle_choices_with_mapping(choices)
@@ -506,20 +507,49 @@ class AnswerModeComponent:
                         
                         selected_choices = []
                         
+                        # 回答チェック済みかどうかを確認
+                        is_answer_checked = st.session_state.get(answer_checked_key, False)
+                        
                         # 選択肢表示
                         for choice_index, choice in enumerate(shuffled_choices):
                             label = QuestionComponent.get_choice_label(choice_index)
                             
-                            # チェックボックスのスタイル改善
+                            # チェックボックスのスタイル改善（回答チェック後は無効化）
                             is_selected = st.checkbox(
                                 f"{label}. {choice}",
-                                key=f"choice_{qid}_{choice_index}_{group_id}"
+                                key=f"choice_{qid}_{choice_index}_{group_id}",
+                                disabled=is_answer_checked  # 回答チェック後は無効化
                             )
                             
                             if is_selected:
                                 selected_choices.append(label)  # ラベルを保存（例：A, B, C）
                         
                         user_selections[qid] = selected_choices
+                        
+                        # 回答チェック後に正解/不正解のアラートを表示
+                        if is_answer_checked:
+                            # セッション状態から結果データを取得
+                            result_data = st.session_state.get(f"result_{group_id}", {})
+                            question_result = result_data.get(qid, {})
+                            
+                            correct_answer = question_result.get('correct_answer', question.get('answer', ''))
+                            is_correct = question_result.get('is_correct', False)
+                            
+                            # 正解選択肢のテキストを取得（安全に）
+                            correct_choice_text = ""
+                            try:
+                                if correct_answer and ord(correct_answer) - ord('A') < len(shuffled_choices):
+                                    correct_choice_text = shuffled_choices[ord(correct_answer) - ord('A')]
+                                else:
+                                    correct_choice_text = "不明"
+                            except:
+                                correct_choice_text = "不明"
+                            
+                            # 正解/不正解のアラート表示
+                            if is_correct:
+                                st.success(f"✅ 正解！（正答：{correct_answer}. {correct_choice_text}）")
+                            else:
+                                st.error(f"❌ 不正解！（正答：{correct_answer}. {correct_choice_text}）")
                     
                     # 問題間の区切り
                     if q_index < len(questions) - 1:
@@ -1293,6 +1323,12 @@ def _process_group_answer_improved(q_objects: List[Dict], user_selections: Dict,
     # 結果をセッションに保存
     st.session_state[f"result_{group_id}"] = result_data
     st.session_state[f"checked_{group_id}"] = True
+    
+    # 各問題の回答チェック済みフラグを設定
+    for question in q_objects:
+        qid = question.get('number', '')
+        answer_checked_key = f"answer_checked_{qid}_{group_id}"
+        st.session_state[answer_checked_key] = True
     
     # 軽量化：最小限のログのみ（バックグラウンド処理へ移行）
     session_type = st.session_state.get("session_type", "unknown")
