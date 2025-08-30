@@ -256,6 +256,24 @@ class QuestionComponent:
     @staticmethod
     def render_question_display(questions: List[Dict], case_data: Dict = None):
         """問題表示コンポーネント"""
+        # CSSで余白を削除
+        st.markdown("""
+        <style>
+        .st-emotion-cache-r44huj {
+            margin-bottom: 0 !important;
+            padding-bottom: 0 !important;
+        }
+        div[style*="background-color: rgb(250, 250, 250)"] {
+            margin-top: 0 !important;
+            padding-top: 12px !important;
+        }
+        [data-testid="stElementContainer"] {
+            margin-top: 0 !important;
+            margin-bottom: 0.25rem !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        
         # 問題タイプ表示
         if questions:
             first_question_id = questions[0].get('number', '')
@@ -365,6 +383,24 @@ class AnswerModeComponent:
     def render(questions: List[Dict], group_id: str, case_data: Dict = None) -> Dict[str, Any]:
         """解答モード画面の描画（問題表示も含む）"""
         user_selections = {}
+        
+        # CSSで余白を削除
+        st.markdown("""
+        <style>
+        .st-emotion-cache-r44huj {
+            margin-bottom: 0 !important;
+            padding-bottom: 0 !important;
+        }
+        div[style*="background-color: rgb(250, 250, 250)"] {
+            margin-top: 0 !important;
+            padding-top: 12px !important;
+        }
+        [data-testid="stElementContainer"] {
+            margin-top: 0 !important;
+            margin-bottom: 0.25rem !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
         
         # 問題タイプ表示
         if questions:
