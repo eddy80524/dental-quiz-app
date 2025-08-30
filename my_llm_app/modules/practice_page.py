@@ -539,23 +539,32 @@ class AnswerModeComponent:
                             mapping_key = f"label_mapping_{qid}_{group_id}"
                             label_mapping = st.session_state.get(mapping_key, {})
                             
-                            # 正解選択肢のテキストを取得（シャッフルとマッピングに対応）
+                            # 正解選択肢のテキストと表示ラベルを取得（シャッフルとマッピングに対応）
                             correct_choice_text = ""
+                            correct_display_label = correct_answer  # デフォルトは元のラベル
                             try:
                                 # 元の選択肢順序から正解テキストを取得
                                 original_choices = question.get('choices', [])
                                 if correct_answer and ord(correct_answer) - ord('A') < len(original_choices):
                                     correct_choice_text = original_choices[ord(correct_answer) - ord('A')]
+                                    
+                                    # ラベルマッピングを使用してシャッフル後の表示ラベルを取得
+                                    if label_mapping:
+                                        # マッピングを逆引きして、元のラベルから表示ラベルを取得
+                                        for display_label, original_label in label_mapping.items():
+                                            if original_label == correct_answer:
+                                                correct_display_label = display_label
+                                                break
                                 else:
                                     correct_choice_text = "不明"
                             except:
                                 correct_choice_text = "不明"
                             
-                            # 正解/不正解のアラート表示
+                            # 正解/不正解のアラート表示（シャッフル後の実際の表示ラベルを使用）
                             if is_correct:
-                                st.success(f"✅ 正解！（正答：{correct_answer}. {correct_choice_text}）")
+                                st.success(f"✅ 正解！（正答：{correct_display_label}. {correct_choice_text}）")
                             else:
-                                st.error(f"❌ 不正解！（正答：{correct_answer}. {correct_choice_text}）")
+                                st.error(f"❌ 不正解！（正答：{correct_display_label}. {correct_choice_text}）")
                     
                     # 問題間の区切り
                     if q_index < len(questions) - 1:
