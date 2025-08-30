@@ -648,48 +648,6 @@ class ResultModeComponent:
             with st.expander("💡 症例情報", expanded=False):
                 st.info(case_data['scenario_text'])
         
-        # 問題と解答の詳細表示（常に表示）
-        st.markdown("### 📝 問題と解答")
-        for q_index, question in enumerate(questions):
-            qid = question.get('number', f'q_{q_index}')
-            user_answer = result_data.get(qid, {}).get('user_answer', '')
-            correct_answer = question.get('answer', '')
-            is_correct = result_data.get(qid, {}).get('is_correct', False)
-            
-            # 問題番号と正誤表示
-            st.markdown(f"#### {qid} {'✅ 正解' if is_correct else '❌ 不正解'}")
-            
-            # 問題文を表示
-            question_text = question.get('question', '')
-            if question_text:
-                st.markdown(f"**問題:** {question_text}")
-            
-            # ユーザーの解答表示
-            if isinstance(user_answer, list):
-                user_answer_text = ', '.join(user_answer) if user_answer else "未選択"
-            else:
-                user_answer_text = user_answer if user_answer else "未選択"
-            
-            st.markdown(f"**あなたの解答:** {user_answer_text}")
-            st.markdown(f"**正解:** {correct_answer}")
-            
-            # 画像がある場合は表示
-            image_urls = question.get('image_urls', []) or []
-            image_paths = question.get('image_paths', []) or []
-            all_images = image_urls + image_paths
-            
-            if all_images:
-                inject_image_quality_css()
-                for img_idx, img_path in enumerate(all_images):
-                    try:
-                        if img_path and img_path.strip():
-                            st.image(img_path, caption=f"{qid} - 図 {img_idx + 1}", use_container_width=True)
-                    except Exception as e:
-                        st.warning(f"画像の読み込みに失敗しました: {img_path}")
-            
-            if q_index < len(questions) - 1:
-                st.markdown("---")
-        
         # 自己評価エリア
         return ResultModeComponent._render_self_evaluation(group_id)
     
@@ -1234,8 +1192,13 @@ def _display_current_question(practice_session: PracticeSession, uid: str):
             _skip_current_group(practice_session)
     
     else:
-        # 結果表示モード
+        # 結果表示モード - 問題文と選択肢も表示
         result_data = st.session_state.get(f"result_{group_id}", {})
+        
+        # 問題文と選択肢を表示（解答モードと同じ表示）
+        answer_result = AnswerModeComponent.render(q_objects, group_id, case_data)
+        
+        # 結果表示用のボタンとメッセージ
         evaluation_result = ResultModeComponent.render(q_objects, group_id, result_data, case_data)
         
         if evaluation_result['next_submitted']:
