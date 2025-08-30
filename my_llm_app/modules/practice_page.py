@@ -25,15 +25,42 @@ from utils import (
 from subject_mapping import get_standardized_subject
 from performance_optimizer import CachedDataManager, PerformanceOptimizer
 
-# UserDataExtractor インポート（エラーハンドリング付き）
+# UserDataExtractor インポート（エラーハンドリング付き・Streamlit Cloud対応）
 try:
     import sys
     import os
-    sys.path.append(os.path.dirname(os.path.abspath(__file__)).replace('/modules', ''))
+    
+    # 複数のパスを試行（Streamlit Cloud対応）
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # パターン1: modules/から親ディレクトリ、さらに親ディレクトリへ
+    parent_dir = os.path.dirname(os.path.dirname(current_dir))
+    if parent_dir not in sys.path:
+        sys.path.insert(0, parent_dir)
+    
+    # パターン2: my_llm_appの親ディレクトリ
+    app_parent_dir = os.path.dirname(os.path.dirname(current_dir))
+    if app_parent_dir not in sys.path:
+        sys.path.insert(0, app_parent_dir)
+    
+    # パターン3: 現在のワーキングディレクトリ
+    working_dir = os.getcwd()
+    if working_dir not in sys.path:
+        sys.path.insert(0, working_dir)
+    
+    # パターン4: my_llm_appディレクトリから直接インポート
+    my_llm_app_dir = os.path.dirname(current_dir)
+    if my_llm_app_dir not in sys.path:
+        sys.path.insert(0, my_llm_app_dir)
+    
     from user_data_extractor import UserDataExtractor
     USER_DATA_EXTRACTOR_AVAILABLE = True
+    print(f"[DEBUG] UserDataExtractor正常にインポート完了")
 except ImportError as e:
-    print(f"UserDataExtractor import error: {e}")
+    print(f"[WARNING] UserDataExtractor import error: {e}")
+    print(f"[DEBUG] 現在のパス: {sys.path[:5]}")
+    print(f"[DEBUG] 現在のディレクトリ: {os.getcwd()}")
+    print(f"[DEBUG] __file__: {__file__}")
     USER_DATA_EXTRACTOR_AVAILABLE = False
 
 
@@ -1464,18 +1491,18 @@ def _render_auto_learning_mode():
                 # 直接統計を計算（キャッシュではなく現在のカードデータから）
                 try:
                     user_stats = extractor.get_user_comprehensive_stats(uid)
-                    if user_stats:
+                    if user_stats and isinstance(user_stats, dict):
                         detailed_stats = user_stats
                         print(f"[DEBUG] UserDataExtractor統計成功: keys={list(detailed_stats.keys())}")
                         
                         # 重要な統計データが存在するか確認
-                        if 'level_distribution' in detailed_stats:
+                        if 'level_distribution' in detailed_stats and detailed_stats['level_distribution']:
                             print(f"[DEBUG] level_distribution取得成功: {detailed_stats.get('level_distribution')}")
                         else:
-                            print(f"[WARNING] level_distributionが見つかりません")
+                            print(f"[WARNING] level_distributionが空またはなし - フォールバックを使用")
                             detailed_stats = None
                     else:
-                        print(f"[DEBUG] UserDataExtractor: user_statsがNone")
+                        print(f"[DEBUG] UserDataExtractor: user_statsが無効 - タイプ: {type(user_stats)}")
                         detailed_stats = None
                 except Exception as ude_error:
                     print(f"[ERROR] UserDataExtractor直接計算エラー: {ude_error}")
