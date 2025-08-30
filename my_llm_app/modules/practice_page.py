@@ -23,6 +23,8 @@ from utils import (
     HISSHU_Q_NUMBERS_SET, GAKUSHI_HISSHU_Q_NUMBERS_SET
 )
 from firebase_analytics import FirebaseAnalytics, PerformanceAnalytics
+from subject_mapping import get_standardized_subject
+from performance_optimizer import CachedDataManager, PerformanceOptimizer
 
 # UserDataExtractor インポート（エラーハンドリング付き）
 try:
@@ -126,10 +128,13 @@ class QuestionComponent:
         # 問題表示エリア
         for i, question in enumerate(questions):
             with st.container():
-                # 問題ID
+                # 問題ID と科目情報
                 question_number = question.get('number', '')
                 if question_number:
-                    st.markdown(f"#### {question_number}")
+                    # 科目名を標準化して表示
+                    original_subject = question.get('subject', '未分類')
+                    standardized_subject = get_standardized_subject(original_subject)
+                    st.markdown(f"#### {question_number} - {standardized_subject}")
                 
                 # 問題文（化学式対応）
                 question_text = QuestionComponent.format_chemical_formula(
@@ -238,10 +243,13 @@ class AnswerModeComponent:
                     qid = question.get('number', f'q_{q_index}')
                     choices = question.get('choices', [])
                     
-                    # 問題ID
+                    # 問題ID と科目情報
                     question_number = question.get('number', '')
                     if question_number:
-                        st.markdown(f"#### {question_number}")
+                        # 科目名を標準化して表示
+                        original_subject = question.get('subject', '未分類')
+                        standardized_subject = get_standardized_subject(original_subject)
+                        st.markdown(f"#### {question_number} - {standardized_subject}")
                     
                     # 問題文（化学式対応）
                     question_text = QuestionComponent.format_chemical_formula(
@@ -887,17 +895,14 @@ def _render_custom_settings():
                 help="演習する問題数を選択してください"
             )
         
-        # 分野選択
-        subjects = [
-            "歯科理工学", "歯科保存学", "歯科補綴学", "口腔外科学",
-            "歯科矯正学", "小児歯科学", "歯周病学", "口腔病理学",
-            "歯科放射線学", "歯科麻酔学", "高齢者歯科学", "歯科法医学"
-        ]
+        # 分野選択（標準化された科目リストを使用）
+        from subject_mapping import get_all_standardized_subjects
+        subjects = get_all_standardized_subjects()
         
         selected_subjects = st.multiselect(
             "📚 出題分野",
             subjects,
-            default=subjects[:4],  # デフォルトで最初の4つを選択
+            default=subjects[:4] if len(subjects) >= 4 else subjects,  # デフォルトで最初の4つを選択
             help="演習したい分野を選択してください"
         )
         
@@ -1323,7 +1328,6 @@ def _reset_session():
 
 def render_practice_sidebar():
     """練習ページ専用のサイドバーを描画"""
-    print("[DEBUG] practice_page.py: render_practice_sidebar() を開始...")
     try:
         uid = st.session_state.get("uid")
         if not uid:
@@ -1339,12 +1343,9 @@ def render_practice_sidebar():
             key="learning_mode"
         )
         
-        print(f"[DEBUG] practice_page.py: 選択された学習モード: {learning_mode}")
-        
         st.divider()
         
         if learning_mode == 'おまかせ学習':
-            print("[DEBUG] practice_page.py: _render_auto_learning_mode() を呼び出し中...")
             _render_auto_learning_mode()
         else:
             _render_free_learning_mode(has_gakushi_permission)
@@ -1373,15 +1374,17 @@ def _render_auto_learning_mode():
             st.warning("ユーザーIDが見つかりません")
             return
         
-        # UserDataExtractorを使用した詳細分析
+        # UserDataExtractorを使用した詳細分析（最適化版）
         detailed_stats = None
         if USER_DATA_EXTRACTOR_AVAILABLE:
             try:
-                extractor = UserDataExtractor()
-                detailed_stats = extractor.get_user_comprehensive_stats(
-                    uid, 
-                    st.session_state.get("analysis_target", "全て")
-                )
+                # キャッシュされた統計を取得
+                stats_result = CachedDataManager.get_user_statistics(uid)
+                if stats_result.get("success"):
+                    detailed_stats = stats_result.get("data")
+                else:
+                    print(f"UserDataExtractor analysis error: {stats_result.get('error')}")
+                    detailed_stats = None
             except Exception as e:
                 print(f"UserDataExtractor analysis error: {e}")
                 detailed_stats = None
@@ -1496,13 +1499,6 @@ def _render_auto_learning_mode():
                             review_count += 1
                     except Exception as e:
                         continue
-        
-        # デバッグ情報：今日学習したカードの詳細
-        print(f"[DEBUG] 学習統計:")
-        print(f"  - 今日学習したカード数: {completed_count}")
-        print(f"  - 今日学習したカードID: {today_studied_cards[:10]}")  # 最初の10個のみ表示
-        print(f"  - 復習予定: {review_count}")
-        print(f"  - 新規予定: {new_count}")
         
         # 新規カード数を上限で制限
         new_count = min(new_count, new_cards_per_day)
@@ -1620,22 +1616,52 @@ def _render_detailed_conditions(quiz_format: str, target_exam: str):
             selected_area = st.selectbox("領域", area_options, key="free_gakushi_area")
     
     elif quiz_format == "科目別":
-        # 科目グループ選択
-        group_options = ["基礎系", "臨床系"]
-        selected_group = st.selectbox("科目グループ", group_options, key="free_subject_group")
+        # 科目選択（実際のJSONデータから科目を取得）
+        uid = st.session_state.get("uid")
+        has_gakushi_permission = check_gakushi_permission(uid) if uid else False
+        analysis_target = st.session_state.get("analysis_target", "国試問題")
         
-        # 具体的な科目選択（実際のデータから取得）
-        if selected_group == "基礎系":
-            subject_options = [
-                "解剖学", "生理学", "生化学", "病理学", "微生物学・免疫学", 
-                "薬理学", "歯科理工学", "組織学", "発生学・加齢老年学"
-            ]
-        else:
-            subject_options = [
-                "保存修復学", "歯内治療学", "歯周病学", "クラウンブリッジ学", 
-                "部分床義歯学", "全部床義歯学", "口腔外科学", "矯正歯科学", 
-                "小児歯科学", "歯科麻酔学", "歯科放射線学", "衛生学", "インプラント学"
-            ]
+        # 実際のJSONデータから科目を取得
+        try:
+            from utils import ALL_QUESTIONS
+            
+            kokushi_subjects = set()
+            gakushi_subjects = set()
+            
+            for q in ALL_QUESTIONS:
+                subject = q.get('subject', '')
+                number = q.get('number', '')
+                
+                if not subject or subject == '（未分類）':
+                    continue
+                
+                # 国試問題か学士試験問題かを判定
+                if number.startswith('G'):
+                    gakushi_subjects.add(subject)
+                else:
+                    kokushi_subjects.add(subject)
+            
+            # 対象試験に応じて科目を選択
+            if target_exam == "学士試験":
+                if has_gakushi_permission:
+                    subject_options = sorted(list(gakushi_subjects))
+                else:
+                    # 学士試験権限がない場合は国試科目のみ
+                    subject_options = sorted(list(kokushi_subjects))
+                    st.warning("学士試験権限がないため、国試問題の科目のみ表示しています")
+            elif target_exam == "国試":
+                subject_options = sorted(list(kokushi_subjects))
+            else:
+                # "全て"の場合は両方の科目を合成
+                all_subjects = kokushi_subjects.union(gakushi_subjects)
+                subject_options = sorted(list(all_subjects))
+            
+            if not subject_options:
+                subject_options = ["一般"]
+                
+        except Exception as e:
+            st.error(f"科目データの取得中にエラーが発生しました: {e}")
+            subject_options = ["一般"]
         
         selected_subject = st.selectbox("科目", subject_options, key="free_subject")
     
@@ -2202,11 +2228,11 @@ def _start_free_learning(quiz_format: str, target_exam: str, question_order: str
                         st.info(f"デバッグ: 学士{selected_year}{selected_kaisu}{selected_area}絞り込み後: {len(available_questions)}")
                         
                 elif quiz_format == "科目別":
-                    # 科目別の詳細条件を取得
+                    # 科目別の詳細条件を取得（標準化された科目名で比較）
                     selected_subject = st.session_state.get("free_subject", "")
                     if selected_subject:
                         available_questions = [q for q in available_questions 
-                                             if q.get("subject", "") == selected_subject]
+                                             if get_standardized_subject(q.get("subject", "")) == selected_subject]
                         st.info(f"デバッグ: 科目({selected_subject})絞り込み後: {len(available_questions)}")
                     pass
                 elif quiz_format == "必修問題のみ":

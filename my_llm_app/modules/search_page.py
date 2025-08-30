@@ -347,8 +347,6 @@ def calculate_progress_metrics(cards: Dict, base_df: pd.DataFrame, uid: str = No
                         level = calculate_card_level(card)
                         if level != "未学習":
                             current_hisshu_studied_count += 1
-                
-                print(f"[DEBUG] 必修学習済み数計算完了: {current_hisshu_studied_count}問 (analysis_target: {analysis_target})")
             else:
                 # フォールバック: analysis_targetでフィルタリングしたbase_dfから計算
                 for _, row in base_df.iterrows():
@@ -776,8 +774,6 @@ def render_overview_tab_perfect(filtered_df: pd.DataFrame, ALL_QUESTIONS: list, 
                     insights_text = f"💡 推奨復習分野: {', '.join(weak_areas[:3])}"
                 if efficiency > 0.7:
                     insights_text += " | 🚀 学習効率が良好です"
-                elif efficiency > 0.3:
-                    insights_text += " | 📈 学習ペースは順調です"
         except Exception as e:
             print(f"[WARNING] 概要タブ洞察取得エラー: {e}")
     
@@ -797,7 +793,6 @@ def render_overview_tab_perfect(filtered_df: pd.DataFrame, ALL_QUESTIONS: list, 
                 enhanced_stats = extractor.get_user_comprehensive_stats(uid, analysis_target)
                 if enhanced_stats and 'level_distribution' in enhanced_stats:
                     level_dist = enhanced_stats['level_distribution']
-                    print(f"[DEBUG] UserDataExtractor レベル分布: {level_dist}")
                     
                     # UserDataExtractorの結果を使用
                     level_counts = pd.Series(level_dist)
@@ -989,13 +984,20 @@ def render_graph_analysis_tab_perfect(filtered_df: pd.DataFrame):
     # 科目別進捗
     st.markdown("##### 科目別進捗状況")
     
+    # グラフ表示前の説明を追加
+    st.info("📊 各科目の学習進捗を横棒グラフで表示します。グレー: 未学習、青: 学習中、緑: 習得済み")
+    
     try:
-        # 科目別レベル分布データを詳細に集計
+        # 科目別レベル分布データを詳細に集計（実際のJSONデータの科目名を使用）
         subject_level_data = []
         
         for subject in filtered_df['subject'].unique():
+            # 実際の科目名をそのまま使用（標準化は行わない）
             subject_df = filtered_df[filtered_df['subject'] == subject]
             total_count = len(subject_df)
+            
+            if total_count == 0:
+                continue
             
             # 各レベルの数をカウント
             level_counts = subject_df['level'].value_counts()
@@ -1010,7 +1012,7 @@ def render_graph_analysis_tab_perfect(filtered_df: pd.DataFrame):
             unlearned_pct = 100 - learned_pct
             
             subject_level_data.append({
-                'subject': subject,
+                'subject': subject,  # 実際の科目名をそのまま使用
                 'total': total_count,
                 'learned': learned_count,
                 'mastered': mastered_count,
@@ -1021,80 +1023,120 @@ def render_graph_analysis_tab_perfect(filtered_df: pd.DataFrame):
         
         # データフレーム作成
         progress_df = pd.DataFrame(subject_level_data)
-        progress_df = progress_df.sort_values('learned_pct', ascending=True)  # 進捗率昇順でソート
+        
+        if len(progress_df) == 0:
+            st.warning("科目別データがありません")
+            return
+        
+        # 実際の科目名を使用するので重複統合は不要
+        # 問題数で降順ソートして見やすくする
+        if len(progress_df) > 0:
+            progress_df = progress_df.sort_values('total', ascending=True)  # 問題数昇順でソート
         
         # 積み上げ横棒グラフを作成
         fig = go.Figure()
         
+        # 可視性を向上させるため、最小表示幅を設定
+        min_visible_width = 2.0  # 最低2%は表示されるようにする
+        
         # 未学習部分（薄いグレー - 視認性向上）
+        unlearned_values = progress_df['unlearned_pct'].tolist()
         fig.add_trace(go.Bar(
             name='未学習',
             y=progress_df['subject'],
-            x=progress_df['unlearned_pct'],
+            x=unlearned_values,
             orientation='h',
             marker_color='#BDBDBD',
-            text=[f"{pct:.1f}%" if pct >= 10 else "" for pct in progress_df['unlearned_pct']],
+            text=[f"{pct:.0f}%" if pct >= 10 else "" for pct in unlearned_values],
             textposition='inside',
-            textfont=dict(color='black')
+            hovertemplate='<b>%{y}</b><br>未学習: %{x:.1f}%<extra></extra>'
         ))
         
         # 学習済み（未習得）部分（視認性の高い青色）
         learning_pct = progress_df['learned_pct'] - progress_df['mastered_pct']
+        # 最小表示幅を適用
+        learning_values = [max(pct, min_visible_width) if pct > 0 else pct for pct in learning_pct]
         fig.add_trace(go.Bar(
             name='学習中',
             y=progress_df['subject'],
-            x=learning_pct,
+            x=learning_values,
             orientation='h',
             marker_color='#42A5F5',
-            text=[f"{pct:.1f}%" if pct >= 10 else "" for pct in learning_pct],
+            text=[f"{pct:.0f}%" if pct >= 5 else "" for pct in learning_pct],  # 元の値でテキスト表示
             textposition='inside',
-            textfont=dict(color='white')
+            hovertemplate='<b>%{y}</b><br>学習中: %{customdata:.1f}%<extra></extra>',
+            customdata=learning_pct  # 元の値をカスタムデータとして保持
         ))
         
         # 習得済み部分（達成感のある緑色）
+        mastered_values = [max(pct, min_visible_width) if pct > 0 else pct for pct in progress_df['mastered_pct']]
         fig.add_trace(go.Bar(
             name='習得済み',
             y=progress_df['subject'],
-            x=progress_df['mastered_pct'],
+            x=mastered_values,
             orientation='h',
             marker_color='#4CAF50',
-            text=[f"{pct:.1f}%" if pct >= 10 else "" for pct in progress_df['mastered_pct']],
+            text=[f"{pct:.0f}%" if pct >= 5 else "" for pct in progress_df['mastered_pct']],  # 元の値でテキスト表示
             textposition='inside',
-            textfont=dict(color='white')
+            hovertemplate='<b>%{y}</b><br>習得済み: %{customdata:.1f}%<extra></extra>',
+            customdata=progress_df['mastered_pct']  # 元の値をカスタムデータとして保持
         ))
         
         fig.update_layout(
-            title="科目別進捗状況（各科目100%基準）",
+            title={
+                'text': "科目別進捗状況（各科目100%基準）",
+                'x': 0,  # タイトルを左寄せ
+                'xanchor': 'left'
+            },
             xaxis_title="進捗率 (%)",
             yaxis_title="科目",
             barmode='stack',
-            height=max(400, len(progress_df) * 40),  # 科目数に応じて高さ調整
-            xaxis=dict(range=[0, 100]),
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=1.02,
-                xanchor="right",
-                x=1
+            height=max(500, len(progress_df) * 35),  # 科目数に応じて高さ調整（最小500px）
+            xaxis=dict(range=[0, 105], tickformat='.0f', ticksuffix='%'),
+            yaxis=dict(
+                automargin=True, 
+                tickmode='linear',
+                side='left'  # Y軸ラベルを左側に配置
             ),
-            margin=dict(l=150)  # 左マージンを広く取って科目名を表示
+            legend=dict(
+                orientation="h", 
+                yanchor="bottom", 
+                y=1.02, 
+                xanchor="left",  # 凡例を左寄せ
+                x=0
+            ),
+            margin=dict(l=200, r=50, t=80, b=50),  # 左マージンを広く取って科目名を表示
+            showlegend=True,
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            font=dict(size=12)  # フォントサイズを明示的に指定
         )
         
-        st.plotly_chart(fig, use_container_width=True)
+        # 横棒グラフを表示（左寄せで高さ中央配置）
+        print(f"[DEBUG] グラフ分析タブで横棒グラフ表示開始")
+        print(f"[DEBUG] figの型: {type(fig)}")
+        print(f"[DEBUG] progress_df科目数: {len(progress_df)}")
+        print(f"[DEBUG] figのdata数: {len(fig.data)}")
+        print(f"[DEBUG] figの高さ: {fig.layout.height}")
         
-        # 詳細データテーブル
-        display_df = progress_df[['subject', 'total', 'learned', 'mastered', 'learned_pct', 'mastered_pct']].copy()
-        display_df.columns = ['科目', '総問題数', '学習済み', '習得済み', '学習率(%)', '習得率(%)']
-        display_df['学習率(%)'] = display_df['学習率(%)'].round(1)
-        display_df['習得率(%)'] = display_df['習得率(%)'].round(1)
+        # グラフを左寄せで配置（高さ中央）
+        try:
+            st.plotly_chart(fig, use_container_width=True, key="subject_progress_chart")
+            print(f"[DEBUG] Plotlyチャート表示成功")
+        except Exception as chart_error:
+            print(f"[ERROR] Plotlyチャート表示エラー: {chart_error}")
+            st.error(f"グラフ表示エラー: {chart_error}")
+            # フォールバック: シンプルなバーチャート
+            st.bar_chart(progress_df.set_index('subject')[['learned_pct', 'mastered_pct']])
         
-        st.dataframe(display_df, use_container_width=True)
+        print(f"[DEBUG] グラフ分析タブで横棒グラフ表示完了")
+        
+        # 詳細データテーブルは非表示（UIが煩雑になるため）
+        # ユーザーが詳細を知りたい場合はグラフのホバー情報で十分
         
     except Exception as e:
-        # Plotlyが利用できない環境への対応
-        subject_counts = filtered_df['subject'].value_counts()
-        st.bar_chart(subject_counts)
-        st.error(f"グラフ表示エラー: {e}")
+        st.error(f"グラフ作成エラー: {e}")
+        st.info("グラフの表示に問題が発生しました。データの確認を行ってください。")
     
     # 学習記録 - UserDataExtractor強化版
     st.markdown("##### 学習の記録")
@@ -1389,7 +1431,8 @@ def render_question_list_tab_perfect(filtered_df: pd.DataFrame):
         level = row['level']
         color = LEVEL_COLORS.get(level, "#757575")
         q_id = row['id']
-        subject = row['subject']
+        # 実際の科目名をそのまま使用（標準化は行わない）
+        actual_subject = row['subject']
         
         # 3. HTMLとCSSでリスト項目をスタイリング
         list_item_html = f"""
@@ -1408,7 +1451,7 @@ def render_question_list_tab_perfect(filtered_df: pd.DataFrame):
                 flex-shrink: 0;
             ">{level}</span>
             <span style="font-weight: 500;">{q_id}</span>
-            <span style="color: #666; margin-left: 15px; font-size: 0.9em;">{subject}</span>
+            <span style="color: #666; margin-left: 15px; font-size: 0.9em;">{actual_subject}</span>
         </div>
         """
         st.markdown(list_item_html, unsafe_allow_html=True)

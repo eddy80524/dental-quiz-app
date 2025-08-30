@@ -26,13 +26,22 @@ from utils import (
     AnalyticsUtils
 )
 from modules.practice_page import render_practice_page, render_practice_sidebar
-from modules.ranking_page import render_ranking_page
+from modules.updated_ranking_page import render_updated_ranking_page
 # from enhanced_analytics import enhanced_ga, EnhancedGoogleAnalytics
 
 # 最適化モジュールのインポート
 from enhanced_firestore_optimizer import get_cached_firestore_optimizer
 from optimized_weekly_ranking import OptimizedWeeklyRankingSystem
 from complete_migration_system import CompleteMigrationSystem
+from performance_optimizer import (
+    PerformanceOptimizer, 
+    CachedDataManager, 
+    UIOptimizer, 
+    apply_performance_optimizations
+)
+
+# 科目マッピングのインポート
+from subject_mapping import get_standardized_subject, get_all_standardized_subjects, analyze_subject_mapping
 
 
 def apply_sidebar_button_styles():
@@ -352,11 +361,29 @@ st.markdown("""
     /* デフォルトのStreamlitラジオボタンを使用 */
 }
 
-/* シンプルなボタンスタイル */
+/* 通常ボタンのスタイル（青色統一） */
 .stButton > button {
-    background-color: #1c83e1 !important;
+    background-color: var(--primary-color) !important;
     color: white !important;
-    border-radius: 4px !important;
+    border: none !important;
+    border-radius: 8px !important;
+    font-weight: 500 !important;
+    padding: 0.5rem 1rem !important;
+    transition: all 0.2s ease !important;
+    box-shadow: 0 2px 4px rgba(28, 131, 225, 0.2) !important;
+}
+
+.stButton > button:hover {
+    background-color: var(--primary-hover) !important;
+    color: white !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 8px rgba(28, 131, 225, 0.3) !important;
+}
+
+.stButton > button:focus {
+    background-color: var(--primary-color) !important;
+    color: white !important;
+    box-shadow: 0 0 0 0.2rem rgba(28, 131, 225, 0.25) !important;
 }
 
 
@@ -572,6 +599,11 @@ h2, h3 {
     margin: 0 !important;
 }
 
+/* サイドバー内のアラートのみシンプルに左寄せ */
+.stSidebar .stAlert {
+    text-align: left;
+}
+
 .st-emotion-cache-13gev4o {
     margin: 0 !important;
     padding: 0 !important;
@@ -638,6 +670,43 @@ div[style*="background-color: rgb(250, 250, 250)"] {
 .stAlert {
     margin-top: 0.5rem !important;
 }
+
+/* ダウンロードボタンの統一スタイル */
+.stDownloadButton > button {
+    background: linear-gradient(135deg, var(--primary-color), var(--primary-hover)) !important;
+    color: white !important;
+    border: 2px solid var(--primary-color) !important;
+    border-radius: 8px !important;
+    padding: 0.5rem 1rem !important;
+    font-weight: 600 !important;
+    box-shadow: 0 2px 4px rgba(28, 131, 225, 0.3) !important;
+    transition: all 0.3s ease !important;
+}
+
+.stDownloadButton > button:hover {
+    background: linear-gradient(135deg, var(--primary-hover), var(--primary-color)) !important;
+    border-color: var(--primary-hover) !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 8px rgba(28, 131, 225, 0.4) !important;
+}
+
+/* ボタンのフォーカス状態を統一 */
+.stButton > button:focus,
+.stDownloadButton > button:focus {
+    outline: none !important;
+    box-shadow: 0 0 0 3px rgba(28, 131, 225, 0.3) !important;
+}
+
+/* その他のフォーム要素の統一 */
+.stSelectbox > div > div {
+    border-color: var(--border-color) !important;
+    background-color: var(--background-light) !important;
+}
+
+.stSelectbox > div > div:focus-within {
+    border-color: var(--primary-color) !important;
+    box-shadow: 0 0 0 2px rgba(28, 131, 225, 0.2) !important;
+}
 </style>""", unsafe_allow_html=True)
 
 # 最小限のスタイル
@@ -654,6 +723,9 @@ class DentalApp:
     """歯科国家試験対策アプリのメインクラス"""
     
     def __init__(self):
+        # パフォーマンス最適化を最初に適用
+        apply_performance_optimizations()
+        
         self.auth_manager = AuthManager()
         self.cookie_manager = CookieManager()
         self.firestore_manager = get_firestore_manager()
@@ -763,41 +835,43 @@ class DentalApp:
         self._initialize_available_subjects()
     
     def _initialize_available_subjects(self):
-        """利用可能な科目を初期化"""
+        """利用可能な科目を初期化（最適化版）"""
         uid = st.session_state.get("uid")
         has_gakushi_permission = check_gakushi_permission(uid) if uid else False
         analysis_target = st.session_state.get("analysis_target", "国試問題")
         
-        # 分析対象に応じて科目を取得
-        subjects_set = set()
-        for q in ALL_QUESTIONS:
-            q_num = q.get("number", "")
-            
-            # 権限チェック
-            if q_num.startswith("G") and not has_gakushi_permission:
-                continue
-            
-            # 分析対象フィルタ
-            if analysis_target == "学士試験問題":
-                if not q_num.startswith("G"):
-                    continue
-            elif analysis_target == "国試問題":
-                if q_num.startswith("G"):
-                    continue
-            
-            subject = q.get("subject", "未分類")
-            if subject:
-                subjects_set.add(subject)
+        # 既に同じ条件で初期化済みの場合はスキップ
+        cache_key = f"{uid}_{has_gakushi_permission}_{analysis_target}"
+        if (st.session_state.get('available_subjects') and 
+            st.session_state.get('subjects_cache_key') == cache_key):
+            return
         
-        available_subjects = sorted(list(subjects_set))
-        st.session_state.available_subjects = available_subjects
-        
-        # 科目フィルターのデフォルト設定
-        if 'subject_filter' not in st.session_state:
-            st.session_state.subject_filter = available_subjects
+        # キャッシュから科目を取得
+        try:
+            available_subjects = PerformanceOptimizer.get_cached_subjects(
+                uid or "anonymous", 
+                has_gakushi_permission, 
+                analysis_target
+            )
+            st.session_state.available_subjects = available_subjects
+            st.session_state.subjects_cache_key = cache_key
+            
+            # 科目フィルターのデフォルト設定
+            if 'subject_filter' not in st.session_state:
+                st.session_state.subject_filter = available_subjects
+                
+        except Exception as e:
+            print(f"[DEBUG] 科目初期化エラー: {e}")
+            # フォールバック処理
+            st.session_state.available_subjects = ["一般"]
+            st.session_state.subject_filter = ["一般"]
+            st.session_state.subjects_cache_key = cache_key
     
     def run(self):
-        """アプリケーションのメイン実行"""
+        """アプリケーションのメイン実行（最適化版）"""
+        # パフォーマンス最適化の適用
+        apply_performance_optimizations()
+        
         # CSSスタイルを適用（ページ読み込み時に一度だけ実行）
         if not st.session_state.get("styles_applied"):
             apply_sidebar_button_styles()
@@ -844,7 +918,8 @@ class DentalApp:
             if not hasattr(st.session_state, 'available_subjects') or not st.session_state.available_subjects:
                 self._initialize_available_subjects()
             
-            self._render_sidebar()
+            # 最適化されたUI描画
+            UIOptimizer.render_optimized_sidebar(self._render_sidebar)
             self._render_main_content()
             
             # ログイン後のページビュー追跡
@@ -1087,35 +1162,38 @@ class DentalApp:
         elif selected_page == "🏆 ランキング":
             new_page = "ランキング"
         
-        # ページが変更された場合はイベントを送信
+        # ページが変更された場合はイベントを送信（最適化版）
         if new_page and new_page != st.session_state.get("page"):
             old_page = st.session_state.get("page", "unknown")
-            st.session_state["page"] = new_page
-            st.session_state["current_page"] = new_page  # _track_user_activityで使用
             
-            # 包括的なページ変更追跡
-            self.track_page_navigation(new_page)
-            
-            # 機能使用追跡
-            self.track_feature_interaction(
-                feature="page_navigation",
-                action="page_change",
-                context={
-                    "from_page": old_page,
-                    "to_page": new_page,
-                    "navigation_method": "sidebar"
-                }
-            )
-            
-            if uid:
-                log_to_ga("page_change", uid, {
-                    "previous_page": old_page,
-                    "new_page": new_page,
-                    "navigation_method": "sidebar"
-                })
-            
-            # ページ切り替え時に強制リロード
-            st.rerun()
+            # ページ遷移の最適化チェック
+            if UIOptimizer.optimize_page_transition(new_page, old_page):
+                st.session_state["page"] = new_page
+                st.session_state["current_page"] = new_page  # _track_user_activityで使用
+                
+                # 包括的なページ変更追跡
+                self.track_page_navigation(new_page)
+                
+                # 機能使用追跡
+                self.track_feature_interaction(
+                    feature="page_navigation",
+                    action="page_change",
+                    context={
+                        "from_page": old_page,
+                        "to_page": new_page,
+                        "navigation_method": "sidebar"
+                    }
+                )
+                
+                if uid:
+                    log_to_ga("page_change", uid, {
+                        "previous_page": old_page,
+                        "new_page": new_page,
+                        "navigation_method": "sidebar"
+                    })
+                
+                # 強制リロードを削除してパフォーマンス向上
+                # st.rerun() を削除
         
         # 選択されたページに応じて異なるサイドバーコンテンツを表示
         if st.session_state.get("page") == "ランキング":
@@ -1131,18 +1209,22 @@ class DentalApp:
             # 学士試験権限の確認
             has_gakushi_permission = check_gakushi_permission(uid) if uid else False
             
-            # 分析対象フィルター
+            # 分析対象フィルター（最適化版）
             if has_gakushi_permission:
-                # 分析対象変更時のコールバック
+                # 分析対象変更時のコールバック（最適化版）
                 def on_analysis_target_change():
-                    # 科目リストを強制再初期化
-                    if 'available_subjects' in st.session_state:
-                        del st.session_state['available_subjects']
-                    if 'subject_filter' in st.session_state:
-                        del st.session_state['subject_filter']
-                    # 科目を即座に再初期化
-                    self._initialize_available_subjects()
-                    print(f"[DEBUG] 分析対象変更: {st.session_state.get('analysis_target')}, 利用可能科目数: {len(st.session_state.get('available_subjects', []))}")
+                    # デバウンス処理を適用
+                    if PerformanceOptimizer.debounce_action("analysis_target_change", 0.5):
+                        # キャッシュをクリア
+                        PerformanceOptimizer.get_cached_subjects.clear()
+                        # 科目リストを強制再初期化
+                        if 'available_subjects' in st.session_state:
+                            del st.session_state['available_subjects']
+                        if 'subject_filter' in st.session_state:
+                            del st.session_state['subject_filter']
+                        # 科目を即座に再初期化
+                        self._initialize_available_subjects()
+                        print(f"[DEBUG] 分析対象変更: {st.session_state.get('analysis_target')}, 利用可能科目数: {len(st.session_state.get('available_subjects', []))}")
                 
                 analysis_target = st.radio(
                     "分析対象試験",
@@ -1156,7 +1238,7 @@ class DentalApp:
                 st.session_state["analysis_target"] = "国試問題"
                 st.info("💡 現在は国試問題のみ利用可能です")
             
-            # 科目フィルター（動的UI）
+            # 科目フィルター（最適化版）
             if not hasattr(st.session_state, 'available_subjects') or not st.session_state.available_subjects:
                 # 科目が初期化されていない場合は再初期化
                 self._initialize_available_subjects()
@@ -1778,7 +1860,7 @@ class DentalApp:
         current_page = st.session_state.get("page", "練習")
         
         if current_page == "ランキング":
-            render_ranking_page(self.auth_manager)
+            render_updated_ranking_page()
         elif current_page == "検索・進捗":
             from modules.search_page import render_search_page
             render_search_page()

@@ -44,38 +44,78 @@ class WeeklyRankingBatch:
         self.db = self.firestore_manager.db
         
     def calculate_user_weekly_points(self, uid: str, week_start: datetime.datetime) -> Dict[str, int]:
-        """ユーザーの週間ポイントを計算"""
+        """ユーザーの週間ポイントを計算（最適化されたスキーマ対応）"""
         try:
-            cards = self.firestore_manager.load_user_cards(uid)
+            # 最適化されたstudy_cardsコレクションから直接取得
+            cards_ref = self.db.collection("study_cards")
+            query = cards_ref.where("uid", "==", uid)
+            cards_docs = query.get()
             
             total_points = 0
             weekly_points = 0
             week_end = week_start + datetime.timedelta(days=7)
             
-            for card in cards.values():
-                history = card.get("history", [])
-                for record in history:
-                    quality = record.get("quality", 0)
-                    timestamp_str = record.get("timestamp", "")
+            for doc in cards_docs:
+                card_data = doc.to_dict()
+                
+                # historyフィールドから履歴を取得（旧形式との互換性）
+                history = card_data.get("history", [])
+                
+                # 履歴がない場合は、performanceデータから推定
+                if not history:
+                    performance = card_data.get("performance", {})
+                    total_attempts = performance.get("total_attempts", 0)
+                    last_quality = performance.get("last_quality", 0)
                     
-                    # ポイント計算（正解で5点、部分正解で2点）
-                    if quality >= 4:
-                        points = 5
-                    elif quality >= 2:
-                        points = 2
-                    else:
-                        points = 0
-                    
-                    total_points += points
-                    
-                    # 週間ポイント計算
-                    try:
-                        timestamp = datetime.datetime.fromisoformat(timestamp_str)
-                        if week_start <= timestamp < week_end:
-                            weekly_points += points
-                    except (ValueError, TypeError):
-                        continue
+                    # 学習したカードの場合、推定ポイントを加算
+                    if total_attempts > 0:
+                        if last_quality >= 4:
+                            estimated_points = 5 * total_attempts
+                        elif last_quality >= 2:
+                            estimated_points = 2 * total_attempts
+                        else:
+                            estimated_points = 0
+                        total_points += estimated_points
+                        
+                        # 最近更新されたカードの場合、週間ポイントに加算
+                        metadata = card_data.get("metadata", {})
+                        updated_at = metadata.get("updated_at")
+                        if updated_at:
+                            try:
+                                if hasattr(updated_at, 'seconds'):  # Firestore Timestamp
+                                    update_time = datetime.datetime.fromtimestamp(updated_at.seconds, tz=datetime.timezone.utc)
+                                else:
+                                    update_time = datetime.datetime.fromisoformat(str(updated_at))
+                                    
+                                if week_start <= update_time < week_end:
+                                    weekly_points += estimated_points
+                            except (ValueError, TypeError, AttributeError):
+                                continue
+                else:
+                    # 履歴データからポイント計算（従来方式）
+                    for record in history:
+                        quality = record.get("quality", 0)
+                        timestamp_str = record.get("timestamp", "")
+                        
+                        # ポイント計算（正解で5点、部分正解で2点）
+                        if quality >= 4:
+                            points = 5
+                        elif quality >= 2:
+                            points = 2
+                        else:
+                            points = 0
+                        
+                        total_points += points
+                        
+                        # 週間ポイント計算
+                        try:
+                            timestamp = datetime.datetime.fromisoformat(timestamp_str)
+                            if week_start <= timestamp < week_end:
+                                weekly_points += points
+                        except (ValueError, TypeError):
+                            continue
             
+            logger.info(f"ポイント計算完了 (uid: {uid}): 総合{total_points}pt, 週間{weekly_points}pt")
             return {
                 "total_points": total_points,
                 "weekly_points": weekly_points
@@ -86,23 +126,62 @@ class WeeklyRankingBatch:
             return {"total_points": 0, "weekly_points": 0}
     
     def calculate_user_study_stats(self, uid: str) -> Dict[str, Any]:
-        """ユーザーの学習統計を計算"""
+        """ユーザーの学習統計を計算（最適化されたスキーマ対応）"""
         try:
-            cards = self.firestore_manager.load_user_cards(uid)
-            study_dates = set()
+            # 最適化されたstudy_cardsコレクションから直接取得
+            cards_ref = self.db.collection("study_cards")
+            query = cards_ref.where("uid", "==", uid)
+            cards_docs = query.get()
             
-            for card in cards.values():
-                for record in card.get("history", []):
+            study_dates = set()
+            total_cards = 0  # 実際に演習したカード数のみカウント
+            mastered_cards = 0
+            
+            for doc in cards_docs:
+                card_data = doc.to_dict()
+                
+                # 履歴から学習日を抽出
+                history = card_data.get("history", [])
+                
+                # 演習履歴がないカードはカウントしない
+                if not history:
+                    # メタデータがない場合は、更新日時から学習日を推定
+                    metadata = card_data.get("metadata", {})
+                    updated_at = metadata.get("updated_at")
+                    if updated_at:
+                        try:
+                            if hasattr(updated_at, 'seconds'):  # Firestore Timestamp
+                                update_time = datetime.datetime.fromtimestamp(updated_at.seconds, tz=datetime.timezone.utc)
+                            else:
+                                update_time = datetime.datetime.fromisoformat(str(updated_at))
+                            study_dates.add(update_time.date())
+                            total_cards += 1  # 更新履歴がある場合のみカウント
+                        except (ValueError, TypeError, AttributeError):
+                            continue
+                    continue
+                
+                # 演習履歴があるカードのみカウント
+                total_cards += 1
+                
+                for record in history:
                     timestamp_str = record.get("timestamp", "")
                     try:
                         timestamp = datetime.datetime.fromisoformat(timestamp_str)
                         study_dates.add(timestamp.date())
                     except (ValueError, TypeError):
                         continue
+                
+                # 習得度計算（SM2のnレベルまたはパフォーマンスデータから）
+                sm2_data = card_data.get("sm2_data", {})
+                performance = card_data.get("performance", {})
+                level = sm2_data.get("n", 0)
+                avg_quality = performance.get("avg_quality", 0)
+                
+                # レベル4以上または平均品質3.5以上を習得済みとみなす
+                if level >= 4 or avg_quality >= 3.5:
+                    mastered_cards += 1
             
             # 習熟度計算
-            total_cards = len(cards)
-            mastered_cards = sum(1 for card in cards.values() if card.get("level", 0) >= 4)
             mastery_rate = mastered_cards / total_cards * 100 if total_cards > 0 else 0
             
             if mastery_rate >= 80:
@@ -114,6 +193,7 @@ class WeeklyRankingBatch:
             else:
                 mastery_level = "入門"
             
+            logger.info(f"学習統計計算完了 (uid: {uid}): {len(study_dates)}日, 習熟度{mastery_rate:.1f}%")
             return {
                 "study_days": len(study_dates),
                 "mastery_level": mastery_level,

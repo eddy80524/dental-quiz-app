@@ -28,6 +28,14 @@ import streamlit.components.v1 as components
 # 日本時間のタイムゾーン設定
 JST = pytz.timezone('Asia/Tokyo')
 
+# 科目マッピング機能をインポート
+try:
+    from subject_mapping import get_standardized_subject
+except ImportError:
+    # フォールバック：subject_mappingが利用できない場合
+    def get_standardized_subject(subject):
+        return subject or "未分類"
+
 # Google Analytics設定
 try:
     GA_MEASUREMENT_ID = st.secrets.get("google_analytics_id", "G-XXXXXXXXXX")
@@ -314,8 +322,9 @@ class QuestionUtils:
     
     @staticmethod
     def get_subject_of(q: Dict[str, Any]) -> str:
-        """問題の科目を取得"""
-        return (q.get("subject") or "未分類").strip()
+        """問題の科目を取得（標準化済み）"""
+        original_subject = (q.get("subject") or "未分類").strip()
+        return get_standardized_subject(original_subject)
     
     @staticmethod
     def make_subject_index(all_questions: List[Dict[str, Any]]):
@@ -456,7 +465,7 @@ class CardSelectionUtils:
     
     @staticmethod
     def pick_new_cards_for_today(all_questions: List[Dict[str, Any]], cards: Dict[str, Any], N: int = 10, recent_qids: Optional[List[str]] = None) -> List[str]:
-        """今日の新規カードを選択"""
+        """今日の新規カードを選択（出題基準フィルター対応）"""
         recent_qids = recent_qids or []
         qid_to_subject, subj_to_qids = QuestionUtils.make_subject_index(all_questions)
 
