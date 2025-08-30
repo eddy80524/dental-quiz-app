@@ -1346,6 +1346,11 @@ class DentalApp:
         
         # ログアウトボタン
         st.divider()
+        
+        # Firebase接続テストボタン（デバッグ用）
+        if st.button("🔍 Firebase接続テスト", type="secondary", use_container_width=True):
+            self._test_firebase_connection()
+        
         if st.button("🚪 ログアウト", type="secondary", use_container_width=True):
             self._handle_logout_real()
 
@@ -1854,6 +1859,82 @@ class DentalApp:
         with st.expander("⚙️ 設定"):
             self._render_settings(has_gakushi_permission)
     
+    def _test_firebase_connection(self):
+        """Firebase接続テスト関数"""
+        st.info("🔍 Firebase接続テストを実行中...")
+        
+        try:
+            from firestore_db import get_firestore_manager
+            manager = get_firestore_manager()
+            
+            # 現在のユーザー情報
+            uid = st.session_state.get("uid")
+            email = st.session_state.get("email")
+            
+            st.write(f"**テスト対象UID**: {uid}")
+            st.write(f"**メールアドレス**: {email}")
+            
+            if uid:
+                # 1. users コレクションテスト
+                user_doc = manager.db.collection("users").document(uid).get()
+                st.write(f"**users/{uid} 存在**: {'✅' if user_doc.exists else '❌'}")
+                
+                if user_doc.exists:
+                    user_data = user_doc.to_dict()
+                    st.write(f"**ユーザーデータ**: {len(user_data)} フィールド")
+                
+                # 2. study_cards テスト  
+                cards_query = manager.db.collection("study_cards").where("uid", "==", uid).limit(10)
+                cards_docs = list(cards_query.stream())
+                st.write(f"**study_cards数（サンプル10件）**: {len(cards_docs)}")
+                
+                if cards_docs:
+                    sample_card = cards_docs[0]
+                    card_data = sample_card.to_dict()
+                    st.write(f"**サンプルカードID**: {sample_card.id}")
+                    st.json({
+                        "question_id": card_data.get("question_id"),
+                        "exam_type": card_data.get("exam_type"),
+                        "level": card_data.get("level"),
+                        "is_studied": len(card_data.get("history", [])) > 0
+                    })
+                
+                # 3. evaluation_logs テスト
+                eval_query = manager.db.collection("evaluation_logs").where("uid", "==", uid).limit(5)
+                eval_docs = list(eval_query.stream())
+                st.write(f"**評価ログ数（サンプル5件）**: {len(eval_docs)}")
+                
+                # 4. セッション状態確認
+                st.write("**セッション状態確認**:")
+                st.write(f"- user_logged_in: {st.session_state.get('user_logged_in')}")
+                st.write(f"- id_token存在: {'✅' if st.session_state.get('id_token') else '❌'}")
+                st.write(f"- cardsデータ: {len(st.session_state.get('cards', {}))} 件")
+                
+                # 5. UserDataExtractor テスト
+                try:
+                    from user_data_extractor import UserDataExtractor
+                    extractor = UserDataExtractor()
+                    stats = extractor.get_user_comprehensive_stats(uid)
+                    if stats:
+                        st.write(f"**UserDataExtractor**: ✅ 正常動作")
+                        st.write(f"- 弱点分野: {len(stats.get('weak_categories', []))}")
+                        st.write(f"- 習熟度分布: {stats.get('level_distribution', {})}")
+                    else:
+                        st.write(f"**UserDataExtractor**: ❌ データ取得失敗")
+                except Exception as e:
+                    st.write(f"**UserDataExtractor**: ❌ エラー - {e}")
+                
+                st.success("✅ Firebase接続テスト完了")
+                
+            else:
+                st.error("❌ UID not found in session")
+                st.write(f"**Session Keys**: {list(st.session_state.keys())}")
+                
+        except Exception as e:
+            st.error(f"❌ Firebase接続エラー: {e}")
+            import traceback
+            st.code(traceback.format_exc())
+
     def _handle_logout_real(self):
         """ログアウト処理"""
         uid = st.session_state.get("uid")
