@@ -40,6 +40,8 @@ except ImportError as e:
 
 def _calculate_legacy_stats_full(cards: Dict, today: str, new_cards_per_day: int) -> Tuple[int, int, int]:
     """従来のロジックを使用してカード統計を計算（完全版）"""
+    print(f"[DEBUG] _calculate_legacy_stats_full開始: カード数={len(cards)}, 今日={today}")
+    
     # 復習カード数（期限切れ）
     review_count = 0
     # 新規カード数（今日学習予定）
@@ -103,6 +105,8 @@ def _calculate_legacy_stats_full(cards: Dict, today: str, new_cards_per_day: int
     
     # 新規カード数を上限で制限
     new_count = min(new_count, new_cards_per_day)
+    
+    print(f"[DEBUG] _calculate_legacy_stats_full結果: 復習={review_count}, 新規={new_count}, 完了={completed_count}")
     
     return review_count, new_count, completed_count
 
@@ -1463,6 +1467,14 @@ def _render_auto_learning_mode():
                     # CachedDataManagerは統計データを直接返すため、successキーを除外してdetailed_statsに設定
                     detailed_stats = {k: v for k, v in stats_result.items() if k != 'success'}
                     print(f"[DEBUG] detailed_stats取得: {type(detailed_stats)}, keys={list(detailed_stats.keys())}")
+                    
+                    # 重要な統計データが存在するか確認
+                    if 'level_distribution' not in detailed_stats:
+                        print(f"[WARNING] level_distributionが見つかりません。detailed_stats: {detailed_stats}")
+                        detailed_stats = None
+                    else:
+                        print(f"[DEBUG] level_distribution取得成功: {detailed_stats.get('level_distribution')}")
+                        
                 else:
                     error_msg = stats_result.get('error') if isinstance(stats_result, dict) else str(stats_result)
                     print(f"[DEBUG] CachedDataManager failed: {error_msg}")
@@ -1513,13 +1525,15 @@ def _render_auto_learning_mode():
         print(f"[DEBUG] カード総数: {len(cards)}")
         
         # UserDataExtractorからの統計データを優先使用
-        if detailed_stats:
+        if detailed_stats and detailed_stats.get("level_distribution"):
             try:
-                print(f"[DEBUG] detailed_stats取得成功: {type(detailed_stats)}, keys={list(detailed_stats.keys()) if detailed_stats else 'None'}")
+                print(f"[DEBUG] detailed_stats使用開始: keys={list(detailed_stats.keys())}")
                 
                 # detailed_statsからlevel_distributionを取得
                 level_distribution = detailed_stats.get("level_distribution", {})
                 total_studied_cards = detailed_stats.get("total_studied_cards", 0)
+                
+                print(f"[DEBUG] level_distribution: {level_distribution}")
                 
                 # 復習期限カード数の計算
                 # レベル0-5のカードは復習対象と考える（習得済みは除外）
@@ -1545,10 +1559,12 @@ def _render_auto_learning_mode():
             except Exception as e:
                 print(f"[ERROR] UserDataExtractor統計計算エラー: {e}")
                 # フォールバック: 古いロジック
+                print(f"[DEBUG] フォールバック: _calculate_legacy_stats_full使用")
                 review_count, new_count, completed_count = _calculate_legacy_stats_full(cards, today, new_cards_per_day)
         else:
             # UserDataExtractorが利用できない場合: 古いロジック
-            print("[DEBUG] UserDataExtractorのdetailed_statsが利用できません")
+            print("[DEBUG] UserDataExtractorのdetailed_statsが利用できません - フォールバック使用")
+            print(f"[DEBUG] detailed_stats状態: {detailed_stats}")
             review_count, new_count, completed_count = _calculate_legacy_stats_full(cards, today, new_cards_per_day)
         # 学習状況を簡潔に表示
         col1, col2 = st.columns(2)
