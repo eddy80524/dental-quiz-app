@@ -535,11 +535,17 @@ class AnswerModeComponent:
                             correct_answer = question_result.get('correct_answer', question.get('answer', ''))
                             is_correct = question_result.get('is_correct', False)
                             
-                            # 正解選択肢のテキストを取得（安全に）
+                            # ラベルマッピングを使用して正解選択肢を取得
+                            mapping_key = f"label_mapping_{qid}_{group_id}"
+                            label_mapping = st.session_state.get(mapping_key, {})
+                            
+                            # 正解選択肢のテキストを取得（シャッフルとマッピングに対応）
                             correct_choice_text = ""
                             try:
-                                if correct_answer and ord(correct_answer) - ord('A') < len(shuffled_choices):
-                                    correct_choice_text = shuffled_choices[ord(correct_answer) - ord('A')]
+                                # 元の選択肢順序から正解テキストを取得
+                                original_choices = question.get('choices', [])
+                                if correct_answer and ord(correct_answer) - ord('A') < len(original_choices):
+                                    correct_choice_text = original_choices[ord(correct_answer) - ord('A')]
                                 else:
                                     correct_choice_text = "不明"
                             except:
