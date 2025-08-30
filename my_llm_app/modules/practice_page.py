@@ -1452,60 +1452,119 @@ def _render_auto_learning_mode():
             st.warning("ユーザーIDが見つかりません")
             return
         
-        # UserDataExtractorを使用した詳細分析（最適化版）
+        # UserDataExtractorを使用した詳細分析（最適化版・デプロイ対応強化）
         detailed_stats = None
-        if USER_DATA_EXTRACTOR_AVAILABLE:
+        if USER_DATA_EXTRACTOR_AVAILABLE and len(cards) > 0:
             try:
-                print(f"[DEBUG] CachedDataManager.get_user_statistics開始: {uid}")
-                # キャッシュされた統計を取得
-                stats_result = CachedDataManager.get_user_statistics(uid)
-                print(f"[DEBUG] CachedDataManager結果: {type(stats_result)}, success={stats_result.get('success') if isinstance(stats_result, dict) else 'N/A'}")
-                print(f"[DEBUG] stats_result内容: {stats_result}")
+                print(f"[DEBUG] UserDataExtractor統計計算開始: uid={uid}, カード数={len(cards)}")
                 
-                if isinstance(stats_result, dict) and stats_result.get("success"):
-                    # CachedDataManagerは統計データを直接返すため、successキーを除外してdetailed_statsに設定
-                    detailed_stats = {k: v for k, v in stats_result.items() if k != 'success'}
-                    print(f"[DEBUG] detailed_stats取得: {type(detailed_stats)}, keys={list(detailed_stats.keys())}")
-                    
-                    # 重要な統計データが存在するか確認
-                    if 'level_distribution' not in detailed_stats:
-                        print(f"[WARNING] level_distributionが見つかりません。detailed_stats: {detailed_stats}")
-                        detailed_stats = None
-                    else:
-                        print(f"[DEBUG] level_distribution取得成功: {detailed_stats.get('level_distribution')}")
+                # Streamlit Cloud対応：データが存在する場合のみUserDataExtractorを使用
+                extractor = UserDataExtractor()
+                
+                # 直接統計を計算（キャッシュではなく現在のカードデータから）
+                try:
+                    user_stats = extractor.get_user_comprehensive_stats(uid)
+                    if user_stats:
+                        detailed_stats = user_stats
+                        print(f"[DEBUG] UserDataExtractor統計成功: keys={list(detailed_stats.keys())}")
                         
-                else:
-                    error_msg = stats_result.get('error') if isinstance(stats_result, dict) else str(stats_result)
-                    print(f"[DEBUG] CachedDataManager failed: {error_msg}")
+                        # 重要な統計データが存在するか確認
+                        if 'level_distribution' in detailed_stats:
+                            print(f"[DEBUG] level_distribution取得成功: {detailed_stats.get('level_distribution')}")
+                        else:
+                            print(f"[WARNING] level_distributionが見つかりません")
+                            detailed_stats = None
+                    else:
+                        print(f"[DEBUG] UserDataExtractor: user_statsがNone")
+                        detailed_stats = None
+                except Exception as ude_error:
+                    print(f"[ERROR] UserDataExtractor直接計算エラー: {ude_error}")
                     detailed_stats = None
+                    
             except Exception as e:
-                print(f"[ERROR] CachedDataManager exception: {e}")
+                print(f"[ERROR] UserDataExtractor全体エラー: {e}")
                 detailed_stats = None
+        else:
+            if not USER_DATA_EXTRACTOR_AVAILABLE:
+                print(f"[DEBUG] UserDataExtractor利用不可")
+            if len(cards) == 0:
+                print(f"[DEBUG] カードデータが空 - UserDataExtractor スキップ")
+            detailed_stats = None
         
-        # Firestoreから個人の学習データを取得
+        # Firestoreから個人の学習データを取得（Streamlit Cloud対応強化版）
         firestore_manager = get_firestore_manager()
+        cards = {}
+        
         try:
-            # セッション状態のカードデータを最優先で使用
+            # 1. セッション状態のカードデータを最優先で使用
             session_cards = st.session_state.get("cards", {})
+            print(f"[DEBUG] セッション状態確認: カード数={len(session_cards)}")
             
-            # セッション状態にデータがない場合のみFirestoreから取得
-            if not session_cards:
-                user_cards = firestore_manager.get_user_cards(uid)
-                cards = user_cards
-                # セッション状態にも保存
-                st.session_state["cards"] = cards
+            # 2. セッション状態にデータがない、または空の場合はFirestoreから強制取得
+            if not session_cards or len(session_cards) == 0:
+                print(f"[DEBUG] セッション状態が空 - Firestoreから直接取得")
+                
+                if firestore_manager and firestore_manager.db:
+                    # Firestoreから直接study_cardsを取得
+                    study_cards_ref = firestore_manager.db.collection("study_cards")
+                    user_cards_query = study_cards_ref.where("uid", "==", uid)
+                    user_cards_docs = list(user_cards_query.stream())
+                    
+                    print(f"[DEBUG] Firestore取得: {len(user_cards_docs)}件のドキュメント")
+                    
+                    # カードデータを変換
+                    for doc in user_cards_docs:
+                        try:
+                            card_data = doc.to_dict()
+                            question_id = doc.id.split('_')[-1] if '_' in doc.id else doc.id
+                            
+                            # 既存の形式に変換
+                            card = {
+                                "q_id": question_id,
+                                "uid": card_data.get("uid", uid),
+                                "history": card_data.get("history", []),
+                                "sm2_data": card_data.get("sm2_data", {}),
+                                "performance": card_data.get("performance", {}),
+                                "metadata": card_data.get("metadata", {})
+                            }
+                            
+                            # SM2データから既存の形式に変換
+                            sm2_data = card_data.get("sm2_data", {})
+                            if sm2_data:
+                                card.update({
+                                    "n": sm2_data.get("n", 0),
+                                    "EF": sm2_data.get("ef", 2.5),
+                                    "interval": sm2_data.get("interval", 1),
+                                    "next_review": sm2_data.get("next_review"),
+                                    "last_review": sm2_data.get("last_review")
+                                })
+                            
+                            cards[question_id] = card
+                            
+                        except Exception as card_error:
+                            print(f"[WARNING] カードデータ処理エラー ({doc.id}): {card_error}")
+                            continue
+                    
+                    # セッション状態にも保存
+                    st.session_state["cards"] = cards
+                    print(f"[DEBUG] Firestoreから{len(cards)}枚のカードを取得、セッションに保存")
+                else:
+                    print(f"[ERROR] Firestoreマネージャーまたはdbが無効")
+                    cards = {}
             else:
                 # セッション状態のデータをそのまま使用
                 cards = session_cards
+                print(f"[DEBUG] セッション状態のカードを使用: {len(cards)}枚")
             
             # デバッグ情報を追加
             print(f"[DEBUG] カードデータ統計:")
             print(f"  - セッションカード数: {len(session_cards)}")
             print(f"  - 使用中カード数: {len(cards)}")
-            print(f"  - データソース: {'セッション状態' if session_cards else 'Firestore'}")
+            print(f"  - データソース: {'セッション状態' if session_cards else 'Firestore直接取得'}")
             
         except Exception as e:
             print(f"[ERROR] 学習データ取得エラー: {str(e)}")
+            print(f"[ERROR] エラー詳細: {type(e).__name__}")
             st.warning(f"学習データの取得に失敗: {str(e)}")
             cards = st.session_state.get("cards", {})
 
@@ -1518,53 +1577,60 @@ def _render_auto_learning_mode():
         print(f"  - セッションカードキー例: {list(session_cards_debug.keys())[:5] if session_cards_debug else 'なし'}")
         print(f"  - 使用中カード数: {len(cards)}")
         
-        # リアルタイム計算 - UserDataExtractorのデータを優先使用
+        # リアルタイム計算 - カードデータが確実に存在する場合のみ統計計算
         today = datetime.datetime.now().strftime("%Y-%m-%d")
         print(f"[DEBUG] 今日の日付: {today}")
         print(f"[DEBUG] カード総数: {len(cards)}")
         
-        # UserDataExtractorからの統計データを優先使用
-        if detailed_stats and detailed_stats.get("level_distribution"):
-            try:
-                print(f"[DEBUG] detailed_stats使用開始: keys={list(detailed_stats.keys())}")
-                
-                # detailed_statsからlevel_distributionを取得
-                level_distribution = detailed_stats.get("level_distribution", {})
-                total_studied_cards = detailed_stats.get("total_studied_cards", 0)
-                
-                print(f"[DEBUG] level_distribution: {level_distribution}")
-                
-                # 復習期限カード数の計算
-                # レベル0-5のカードは復習対象と考える（習得済みは除外）
-                review_count = 0
-                for level, count in level_distribution.items():
-                    if level in ['レベル0', 'レベル1', 'レベル2', 'レベル3', 'レベル4', 'レベル5']:
-                        review_count += count
-                
-                # 新規カード数の計算（未学習カード）
-                new_count = level_distribution.get("未学習", 0)
-                # 1日の新規カード上限で制限
-                new_count = min(new_count, new_cards_per_day)
-                
-                # 今日の学習数
-                completed_count = detailed_stats.get("今日の学習数", 0)
-                
-                print(f"[DEBUG] UserDataExtractor統計使用:")
-                print(f"  - 復習期限: {review_count}問 (レベル0-5の合計)")
-                print(f"  - 新規カード: {new_count}問 (未学習カード)")
-                print(f"  - 今日完了: {completed_count}問")
-                print(f"  - 習熟度分布: {level_distribution}")
-                    
-            except Exception as e:
-                print(f"[ERROR] UserDataExtractor統計計算エラー: {e}")
-                # フォールバック: 古いロジック
-                print(f"[DEBUG] フォールバック: _calculate_legacy_stats_full使用")
-                review_count, new_count, completed_count = _calculate_legacy_stats_full(cards, today, new_cards_per_day)
+        if len(cards) == 0:
+            # カードデータが存在しない場合のデフォルト値
+            print(f"[DEBUG] カードデータが存在しません - デフォルト値を使用")
+            review_count = 0
+            new_count = 0
+            completed_count = 0
         else:
-            # UserDataExtractorが利用できない場合: 古いロジック
-            print("[DEBUG] UserDataExtractorのdetailed_statsが利用できません - フォールバック使用")
-            print(f"[DEBUG] detailed_stats状態: {detailed_stats}")
-            review_count, new_count, completed_count = _calculate_legacy_stats_full(cards, today, new_cards_per_day)
+            # UserDataExtractorからの統計データを優先使用
+            if detailed_stats and detailed_stats.get("level_distribution"):
+                try:
+                    print(f"[DEBUG] detailed_stats使用開始: keys={list(detailed_stats.keys())}")
+                    
+                    # detailed_statsからlevel_distributionを取得
+                    level_distribution = detailed_stats.get("level_distribution", {})
+                    total_studied_cards = detailed_stats.get("total_studied_cards", 0)
+                    
+                    print(f"[DEBUG] level_distribution: {level_distribution}")
+                    
+                    # 復習期限カード数の計算
+                    # レベル0-5のカードは復習対象と考える（習得済みは除外）
+                    review_count = 0
+                    for level, count in level_distribution.items():
+                        if level in ['レベル0', 'レベル1', 'レベル2', 'レベル3', 'レベル4', 'レベル5']:
+                            review_count += count
+                    
+                    # 新規カード数の計算（未学習カード）
+                    new_count = level_distribution.get("未学習", 0)
+                    # 1日の新規カード上限で制限
+                    new_count = min(new_count, new_cards_per_day)
+                    
+                    # 今日の学習数
+                    completed_count = detailed_stats.get("今日の学習数", 0)
+                    
+                    print(f"[DEBUG] UserDataExtractor統計使用:")
+                    print(f"  - 復習期限: {review_count}問 (レベル0-5の合計)")
+                    print(f"  - 新規カード: {new_count}問 (未学習カード)")
+                    print(f"  - 今日完了: {completed_count}問")
+                    print(f"  - 習熟度分布: {level_distribution}")
+                        
+                except Exception as e:
+                    print(f"[ERROR] UserDataExtractor統計計算エラー: {e}")
+                    # フォールバック: 古いロジック
+                    print(f"[DEBUG] フォールバック: _calculate_legacy_stats_full使用")
+                    review_count, new_count, completed_count = _calculate_legacy_stats_full(cards, today, new_cards_per_day)
+            else:
+                # UserDataExtractorが利用できない場合: 古いロジック
+                print("[DEBUG] UserDataExtractorのdetailed_statsが利用できません - フォールバック使用")
+                print(f"[DEBUG] detailed_stats状態: {detailed_stats}")
+                review_count, new_count, completed_count = _calculate_legacy_stats_full(cards, today, new_cards_per_day)
         # 学習状況を簡潔に表示
         col1, col2 = st.columns(2)
         with col1:
