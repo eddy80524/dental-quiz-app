@@ -576,10 +576,17 @@ class AnswerModeComponent:
                 # 選択された答えがあるかチェック
                 has_selections = any(selections for selections in user_selections.values())
                 
+                # 回答チェック済みかどうかを確認（全問題で一つでもチェック済みなら無効化）
+                any_answer_checked = any(
+                    st.session_state.get(f"answer_checked_{q.get('number', f'q_{i}')}__{group_id}", False)
+                    for i, q in enumerate(questions)
+                )
+                
                 with col1:
                     check_submitted = st.form_submit_button(
                         "回答をチェック", 
-                        type="primary"
+                        type="primary",
+                        disabled=any_answer_checked  # 回答チェック後は無効化
                     )
                 
                 with col2:
