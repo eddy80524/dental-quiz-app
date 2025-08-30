@@ -311,7 +311,6 @@ def calculate_progress_metrics(cards: Dict, base_df: pd.DataFrame, uid: str = No
                                 log['is_hisshu'] = question_id in HISSHU_Q_NUMBERS_SET
                             filtered_logs.append(log)
                 evaluation_logs = filtered_logs
-                print(f"[INFO] {analysis_target}でフィルタリング: {len(filtered_logs)}件 (元: 総{len(evaluation_logs)}件)")
             else:
                 # フィルタリングしない場合でも、すべてのログに正しいis_hisshuフラグを設定
                 for log in evaluation_logs:
@@ -321,7 +320,6 @@ def calculate_progress_metrics(cards: Dict, base_df: pd.DataFrame, uid: str = No
                             log['is_hisshu'] = question_id in GAKUSHI_HISSHU_Q_NUMBERS_SET
                         else:
                             log['is_hisshu'] = question_id in HISSHU_Q_NUMBERS_SET
-                print(f"[INFO] フィルタリングなし: {len(evaluation_logs)}件")
             
             # より正確な統計を計算
             if evaluation_logs:
@@ -373,9 +371,8 @@ def calculate_progress_metrics(cards: Dict, base_df: pd.DataFrame, uid: str = No
                 enhanced_data['today_study_count'] = len(today_logs)
                 enhanced_data['yesterday_study_count'] = len(yesterday_logs)
                 
-                print(f"[INFO] UserDataExtractor強化({analysis_target}): 今日{len(today_logs)}問, 昨日{len(yesterday_logs)}問, 直近7日{len(recent_evaluations)}問, 必修{len(recent_hisshu_evaluations)}問")
         except Exception as e:
-            print(f"[WARNING] UserDataExtractor強化データ取得エラー: {e}")
+            pass
     
     # 今日・昨日・期間別の学習データを集計（従来ロジック）
     today_studied_problems = set()
@@ -532,7 +529,7 @@ def calculate_progress_metrics(cards: Dict, base_df: pd.DataFrame, uid: str = No
                         if is_hisshu:
                             current_hisshu_studied_count += 1
         except Exception as e:
-            print(f"[WARNING] UserDataExtractor取得エラー: {e}")
+            pass
             # フォールバック: analysis_targetでフィルタリングしたbase_dfから計算
             for _, row in base_df.iterrows():
                 # analysis_targetによるフィルタリング
@@ -707,34 +704,25 @@ def render_search_page():
     uid = st.session_state.get("uid", "guest")
     cards = st.session_state.get("cards", {})
     
-    # デバッグ: データ取得状況を確認
-    print(f"[DEBUG] UID: {uid}")
-    print(f"[DEBUG] Cards数: {len(cards) if cards else 0}")
-    print(f"[DEBUG] Analysis target: {analysis_target}")
-    
     # 実際のユーザーデータが存在しない場合のみテストデータを生成
     if uid == "guest" and not cards:
-        print(f"[DEBUG] ゲストユーザーのためテストデータを生成します")
         st.info("📊 デモ用データを使用してグラフを表示します（ログイン後は実際の学習データに自動更新されます）")
-        test_cards = generate_test_cards_data(200)  # 200件のテストデータ
+        test_cards = generate_test_cards_data(100)  # 軽量化：200→100件に削減
         cards.update(test_cards)
         st.session_state["cards"] = cards
-        print(f"[DEBUG] テストカード数: {len(test_cards)}")
     elif cards:
-        print(f"[DEBUG] 既存のユーザーデータを使用: {len(cards)}件")
-        
-        # カードデータをquestion_idでもアクセスできるようにインデックス化
-        question_id_to_card = {}
-        for card_key, card_data in cards.items():
-            if isinstance(card_data, dict):
-                question_id = card_data.get('question_id')
-                if question_id and question_id != card_key:
-                    question_id_to_card[question_id] = card_data
-        
-        # インデックス化されたデータをcardsに追加
-        cards.update(question_id_to_card)
-        st.session_state["cards"] = cards
-        print(f"[DEBUG] question_idインデックス追加後のカード数: {len(cards)}")
+        # インデックス化処理を軽量化：必要な場合のみ実行
+        if len(cards) < 1000:  # データが多い場合はスキップ
+            question_id_to_card = {}
+            for card_key, card_data in cards.items():
+                if isinstance(card_data, dict):
+                    question_id = card_data.get('question_id')
+                    if question_id and question_id != card_key:
+                        question_id_to_card[question_id] = card_data
+            
+            # インデックス化されたデータをcardsに追加
+            cards.update(question_id_to_card)
+            st.session_state["cards"] = cards
     
     # キャッシュからデータ取得を試行
     cache = SearchPageCache()
@@ -784,13 +772,12 @@ def render_search_page():
                                             'time_spent': log_entry.get('time_spent')
                                         }
                                         cards[q_id]['history'].append(history_entry)
-                            
+                                        
                     except Exception as e:
-                        print(f"[WARNING] result_log取得エラー: {e}")
-                        
+                        pass
+                
             except Exception as e:
-                st.error(f"[ERROR] Firestore取得エラー: {e}")
-                print(f"[WARNING] Firestore取得エラー: {e}")
+                pass
     
     # セッション状態のresult_logも確認
     result_log = st.session_state.get("result_log", {})
@@ -820,7 +807,7 @@ def render_search_page():
     # 4. 2. プロンプト指示に基づく修正：主要なデータフレームを一度だけ作成
     all_data = []
     
-    # UserDataExtractorから直接学習データを取得
+    # UserDataExtractorから直接学習データを取得（軽量化）
     user_data_extractor = None
     actual_cards_data = {}
     
@@ -828,37 +815,44 @@ def render_search_page():
         from my_llm_app.user_data_extractor import UserDataExtractor
         user_data_extractor = UserDataExtractor()
         if uid != "guest":
-            # UserDataExtractorから実際の学習データを取得
-            user_stats = user_data_extractor.get_comprehensive_statistics(uid, force_refresh=True)
+            # force_refresh=Falseで軽量化
+            user_stats = user_data_extractor.get_comprehensive_statistics(uid, force_refresh=False)
             if user_stats and 'card_levels' in user_stats:
-                actual_cards_data = user_stats['card_levels']
-                print(f"[DEBUG] UserDataExtractorから取得したカード数: {len(actual_cards_data)}")
-            else:
-                print(f"[DEBUG] UserDataExtractorからデータ取得失敗")
+                card_levels = user_stats['card_levels']
+                # 最大500件まで制限して軽量化
+                if len(card_levels) > 500:
+                    import itertools
+                    actual_cards_data = dict(itertools.islice(card_levels.items(), 500))
+                else:
+                    actual_cards_data = card_levels
     except Exception as e:
-        print(f"[DEBUG] UserDataExtractor取得エラー: {e}")
+        pass
     
-    # カードデータと問題データの紐付けのための準備
+    # カードデータと問題データの紐付けのための準備（軽量化）
     question_id_to_card_mapping = {}
     
-    # 1. UserDataExtractorのデータを優先使用
-    for card_id, card_data in actual_cards_data.items():
-        if isinstance(card_data, dict):
-            question_id = card_data.get('question_id', card_id)
-            question_id_to_card_mapping[question_id] = card_data
+    # 1. UserDataExtractorのデータを優先使用（制限済み）
+    question_id_to_card_mapping.update({
+        card_data.get('question_id', card_id): card_data
+        for card_id, card_data in actual_cards_data.items()
+        if isinstance(card_data, dict) and card_data.get('question_id')
+    })
     
-    # 2. セッション状態のカードデータを補完として使用
+    # 2. セッション状態のカードデータを補完として使用（必要分のみ）
     for card_id, card_data in cards.items():
         if isinstance(card_data, dict):
             question_id = card_data.get('question_id', card_id)
-            if question_id not in question_id_to_card_mapping:
+            if question_id not in question_id_to_card_mapping and len(question_id_to_card_mapping) < 1000:
                 question_id_to_card_mapping[question_id] = card_data
     
-    print(f"[DEBUG] 最終問題ID->カードマッピング数: {len(question_id_to_card_mapping)}")
-    print(f"[DEBUG] 実際のカードデータ数: {len(actual_cards_data)}")
-    print(f"[DEBUG] マッピング例: {list(question_id_to_card_mapping.keys())[:5]}")
+    # 問題データ処理の軽量化
+    processed_count = 0
+    max_questions = 3000  # 最大処理件数を制限
     
     for question in ALL_QUESTIONS:
+        if processed_count >= max_questions:
+            break
+            
         q_number = question.get('number', '')
         
         # analysis_targetとユーザー権限に基づくフィルタリング
@@ -871,15 +865,6 @@ def render_search_page():
         # 各問題に対応するcardsデータを取得し、学習レベルを計算
         card = question_id_to_card_mapping.get(q_number, {})
         level = calculate_card_level(card)
-        
-        # デバッグ: 最初の数件のカードデータを出力
-        if len(all_data) < 3:
-            print(f"[DEBUG] card[{len(all_data)}] q_number: {q_number}")
-            print(f"[DEBUG] card[{len(all_data)}] card_found: {bool(card)}")
-            if card:
-                print(f"[DEBUG] card[{len(all_data)}] raw_level: {card.get('level')}")
-                print(f"[DEBUG] card[{len(all_data)}] mastery_status: {card.get('mastery_status')}")
-            print(f"[DEBUG] card[{len(all_data)}] calculated_level: {level}")
         
         # is_hisshuフラグをanalysis_targetに応じて判定
         if analysis_target in ["学士試験", "学士試験問題"]:
@@ -899,6 +884,8 @@ def render_search_page():
             'card_data': card,
             'history': card.get('history', [])
         })
+        
+        processed_count += 1
     
     # 基本DataFrameを作成（フィルター前の全対象問題）
     base_df = pd.DataFrame(all_data)
@@ -1210,603 +1197,189 @@ def render_overview_tab_perfect(filtered_df: pd.DataFrame, ALL_QUESTIONS: list, 
 
 def render_graph_analysis_tab_perfect(filtered_df: pd.DataFrame):
     """
-    グラフ分析タブ - UserDataExtractor強化版
-    科目別進捗、学習記録、レベル別分布をPlotlyで表示
+    グラフ分析タブ - 簡素化版
+    国試か学士のフィルターのみでシンプルなグラフを表示
     """
     if filtered_df.empty:
         st.info("表示するデータがありません")
         return
+
+    # 分析対象の取得（国試 or 学士試験）
+    analysis_target = st.session_state.get("analysis_target", "国試")
     
-    # UserDataExtractorからの詳細データを取得
-    uid = st.session_state.get("uid", "guest")
-    enhanced_analytics = {}
-    if uid != "guest" and UserDataExtractor:
-        try:
-            extractor = UserDataExtractor()
-            evaluation_logs = extractor.extract_self_evaluation_logs(uid)
-            if evaluation_logs:
-                enhanced_analytics['evaluation_logs'] = evaluation_logs
-                print(f"[INFO] グラフ分析強化: {len(evaluation_logs)}件の評価ログを取得")
-        except Exception as e:
-            print(f"[WARNING] グラフ分析強化データ取得エラー: {e}")
+    # フィルター部分
+    st.subheader("📊 グラフ分析")
     
-    # 科目別進捗
+    # 簡素化されたフィルター: 国試/学士試験の選択のみ
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        st.metric("分析対象", analysis_target)
+    with col2:
+        if analysis_target == "国試":
+            st.info("🎯 歯科国試問題のデータを分析中")
+        else:
+            st.info("🎓 学士試験問題のデータを分析中")
+    
+    # 科目別進捗グラフ
     st.markdown("##### 科目別進捗状況")
     
-    # グラフ表示前の説明を追加
-    st.info("📊 各科目の学習進捗を横棒グラフで表示します。グレー: 未学習、青: 学習中、緑: 習得済み")
-    
-    # デバッグ情報の表示
-    print(f"[DEBUG] filtered_df shape: {filtered_df.shape}")
-    print(f"[DEBUG] filtered_df columns: {filtered_df.columns.tolist()}")
-    if not filtered_df.empty:
-        print(f"[DEBUG] unique subjects: {filtered_df['subject'].unique()}")
-        print(f"[DEBUG] unique levels: {filtered_df['level'].unique()}")
-    else:
-        print(f"[DEBUG] filtered_df is empty!")
-    
-    # デバッグ用にStreamlitでも情報を表示
-    if st.checkbox("デバッグ情報を表示", key="debug_graph"):
-        st.write(f"データ行数: {len(filtered_df)}")
-        if not filtered_df.empty:
-            st.write(f"科目数: {len(filtered_df['subject'].unique())}")
-            st.write(f"科目一覧: {list(filtered_df['subject'].unique())}")
-            st.write(f"レベル分布:")
-            st.write(filtered_df['level'].value_counts())
-            
-            # 実際のサンプルデータを表示
-            st.write("**サンプルデータ（最初の5行）:**")
-            st.dataframe(filtered_df[['id', 'subject', 'level']].head())
-    
-    # グラフが表示されない場合の代替表示
-    if st.checkbox("簡易版グラフを強制表示", key="force_simple_graph"):
-        st.write("**簡易版グラフ（デバッグ用）:**")
-        if not filtered_df.empty and 'subject' in filtered_df.columns:
-            # 概要タブと同じ方法でレベルを再計算
-            corrected_data = []
-            for _, row in filtered_df.iterrows():
-                card_data = row['card_data']
-                actual_level = calculate_card_level(card_data)
-                corrected_data.append({
-                    'subject': row['subject'],
-                    'level': actual_level
-                })
-            
-            corrected_df = pd.DataFrame(corrected_data)
-            
-            # シンプルな科目別レベル分布
-            subject_level_pivot = corrected_df.groupby(['subject', 'level']).size().unstack(fill_value=0)
-            if not subject_level_pivot.empty:
-                st.bar_chart(subject_level_pivot)
-            else:
-                st.warning("ピボットテーブルが空です")
-        else:
-            st.error("必要な列（subject）が存在しません")
+    if filtered_df.empty:
+        st.warning("⚠️ 表示するデータがありません")
+        return
     
     try:
-        # 科目別レベル分布データを詳細に集計（実際のJSONデータの科目名を使用）
-        subject_level_data = []
+        # シンプルな科目別集計（軽量化）
+        subject_stats = []
+        subjects = filtered_df['subject'].dropna().unique()
         
-        # データの基本チェック
-        if filtered_df.empty:
-            st.warning("⚠️ フィルタ条件に一致するデータがありません")
-            return
-            
-        # 科目データの存在チェック
-        available_subjects = filtered_df['subject'].dropna().unique()
-        available_subjects = [s for s in available_subjects if s and s.strip()]  # 空文字列を除外
+        # 科目数を制限して軽量化
+        max_subjects = 30
+        if len(subjects) > max_subjects:
+            subjects = subjects[:max_subjects]
         
-        if len(available_subjects) == 0:
-            st.warning("⚠️ 有効な科目データがありません")
-            st.info("可能性のある原因: 問題データに科目情報が設定されていない")
-            
-            # フォールバック: レベル分布のみ表示
-            st.markdown("##### レベル別学習状況（全問題対象）")
-            if not filtered_df.empty:
-                # 概要タブと同じ方法でレベルを再計算
-                actual_levels = []
-                for _, row in filtered_df.iterrows():
-                    card_data = row['card_data']
-                    actual_level = calculate_card_level(card_data)
-                    actual_levels.append(actual_level)
-                
-                level_counts = pd.Series(actual_levels).value_counts()
-                if len(level_counts) > 0:
-                    # レベル分布の円グラフを表示
-                    fig_pie = px.pie(
-                        values=level_counts.values,
-                        names=level_counts.index,
-                        title="学習レベル分布",
-                        color_discrete_map={
-                            '未学習': '#BDBDBD',
-                            'レベル0': '#E3F2FD',
-                            'レベル1': '#BBDEFB',
-                            'レベル2': '#90CAF9',
-                            'レベル3': '#64B5F6',
-                            'レベル4': '#42A5F5',
-                            'レベル5': '#2196F3',
-                            '習得済み': '#4CAF50'
-                        }
-                    )
-                    st.plotly_chart(fig_pie, use_container_width=True)
-                    
-                    # 簡易版の棒グラフも表示
-                    st.bar_chart(level_counts)
-                else:
-                    st.info("レベルデータも利用できません")
-            return
-        
-        print(f"[DEBUG] 有効な科目数: {len(available_subjects)}")
-        print(f"[DEBUG] 有効な科目: {available_subjects}")
-        
-        for subject in available_subjects:
-            # 実際の科目名をそのまま使用（標準化は行わない）
+        for subject in subjects:
             subject_df = filtered_df[filtered_df['subject'] == subject]
             total_count = len(subject_df)
             
             if total_count == 0:
-                print(f"[DEBUG] 科目 '{subject}' のデータが0件、スキップ")
                 continue
             
-            # 概要タブと同じ方法でレベルを計算
-            actual_levels = []
-            for _, row in subject_df.iterrows():
-                card_data = row['card_data']
-                actual_level = calculate_card_level(card_data)
-                actual_levels.append(actual_level)
+            # レベル別カウント
+            level_counts = subject_df['level'].value_counts()
             
-            # 各レベルの数をカウント（実際に計算されたレベル）
-            level_counts = pd.Series(actual_levels).value_counts()
-            print(f"[DEBUG] 科目 '{subject}' の実際のレベル分布: {dict(level_counts)}")
-            
-            # 未学習以外を「学習済み」として集計
-            learned_count = total_count - level_counts.get('未学習', 0)
-            mastered_count = level_counts.get('習得済み', 0)
+            unlearned = level_counts.get('未学習', 0)
+            learning = sum([level_counts.get(f'レベル{i}', 0) for i in range(5)])  # レベル0-4
+            mastered = level_counts.get('習得済み', 0)
             
             # パーセンテージ計算
-            learned_pct = (learned_count / total_count * 100) if total_count > 0 else 0
-            mastered_pct = (mastered_count / total_count * 100) if total_count > 0 else 0
-            unlearned_pct = 100 - learned_pct
+            unlearned_pct = (unlearned / total_count) * 100
+            learning_pct = (learning / total_count) * 100
+            mastered_pct = (mastered / total_count) * 100
             
-            subject_level_data.append({
-                'subject': subject,  # 実際の科目名をそのまま使用
+            subject_stats.append({
+                'subject': subject,
                 'total': total_count,
-                'learned': learned_count,
-                'mastered': mastered_count,
-                'learned_pct': learned_pct,
-                'mastered_pct': mastered_pct,
-                'unlearned_pct': unlearned_pct
+                'unlearned_pct': unlearned_pct,
+                'learning_pct': learning_pct,
+                'mastered_pct': mastered_pct
             })
         
-        # データフレーム作成
-        progress_df = pd.DataFrame(subject_level_data)
-        
-        print(f"[DEBUG] subject_level_data length: {len(subject_level_data)}")
-        print(f"[DEBUG] progress_df shape: {progress_df.shape}")
-        
-        if len(progress_df) == 0:
-            st.warning("⚠️ 科目別データがありません。")
-            st.info("データが表示されない原因:")
-            st.info("• サイドバーのフィルター設定により、表示対象の問題がない可能性があります")
-            st.info("• 学習データが存在しない可能性があります")
-            st.info("• 選択中の試験種別（国試/学士試験）にデータがない可能性があります")
-            return
-        
-        # 実際の科目名を使用するので重複統合は不要
-        # 問題数で降順ソートして見やすくする
-        if len(progress_df) > 0:
-            progress_df = progress_df.sort_values('total', ascending=True)  # 問題数昇順でソート
-        
-        # 積み上げ横棒グラフを作成
-        print(f"[DEBUG] グラフ作成開始 - データ行数: {len(progress_df)}")
-        
-        # データの妥当性チェック
-        if progress_df.empty:
-            st.error("グラフ用データが空です")
+        if not subject_stats:
+            st.warning("科目データがありません")
             return
             
-        # 必要な列が存在するかチェック
-        required_columns = ['subject', 'unlearned_pct', 'learned_pct', 'mastered_pct']
-        missing_columns = [col for col in required_columns if col not in progress_df.columns]
-        if missing_columns:
-            st.error(f"必要な列が不足しています: {missing_columns}")
-            return
+        # データフレーム作成
+        progress_df = pd.DataFrame(subject_stats)
+        progress_df = progress_df.sort_values('total', ascending=True)
         
+        # 積み上げ横棒グラフ作成
         fig = go.Figure()
         
-        # 可視性を向上させるため、最小表示幅を設定
-        min_visible_width = 2.0  # 最低2%は表示されるようにする
-        
-        print(f"[DEBUG] progress_df内容:")
-        for idx, row in progress_df.iterrows():
-            print(f"  科目: {row['subject']}, 未学習: {row['unlearned_pct']:.1f}%, 学習中: {row['learned_pct'] - row['mastered_pct']:.1f}%, 習得済み: {row['mastered_pct']:.1f}%")
-        
-        # 未学習部分（薄いグレー - 視認性向上）
-        unlearned_values = progress_df['unlearned_pct'].tolist()
-        print(f"[DEBUG] 未学習データ: {unlearned_values}")
-        
+        # 未学習 (グレー)
         fig.add_trace(go.Bar(
             name='未学習',
             y=progress_df['subject'],
-            x=unlearned_values,
+            x=progress_df['unlearned_pct'],
             orientation='h',
             marker_color='#BDBDBD',
-            text=[f"{pct:.0f}%" if pct >= 10 else "" for pct in unlearned_values],
-            textposition='inside',
             hovertemplate='<b>%{y}</b><br>未学習: %{x:.1f}%<extra></extra>'
         ))
         
-        # 学習済み（未習得）部分（視認性の高い青色）
-        learning_pct = progress_df['learned_pct'] - progress_df['mastered_pct']
-        # 最小表示幅を適用
-        learning_values = [max(pct, min_visible_width) if pct > 0 else pct for pct in learning_pct]
+        # 学習中 (青)
         fig.add_trace(go.Bar(
             name='学習中',
             y=progress_df['subject'],
-            x=learning_values,
+            x=progress_df['learning_pct'],
             orientation='h',
             marker_color='#42A5F5',
-            text=[f"{pct:.0f}%" if pct >= 5 else "" for pct in learning_pct],  # 元の値でテキスト表示
-            textposition='inside',
-            hovertemplate='<b>%{y}</b><br>学習中: %{customdata:.1f}%<extra></extra>',
-            customdata=learning_pct  # 元の値をカスタムデータとして保持
+            hovertemplate='<b>%{y}</b><br>学習中: %{x:.1f}%<extra></extra>'
         ))
         
-        # 習得済み部分（達成感のある緑色）
-        mastered_values = [max(pct, min_visible_width) if pct > 0 else pct for pct in progress_df['mastered_pct']]
+        # 習得済み (緑)
         fig.add_trace(go.Bar(
             name='習得済み',
             y=progress_df['subject'],
-            x=mastered_values,
+            x=progress_df['mastered_pct'],
             orientation='h',
             marker_color='#4CAF50',
-            text=[f"{pct:.0f}%" if pct >= 5 else "" for pct in progress_df['mastered_pct']],  # 元の値でテキスト表示
-            textposition='inside',
-            hovertemplate='<b>%{y}</b><br>習得済み: %{customdata:.1f}%<extra></extra>',
-            customdata=progress_df['mastered_pct']  # 元の値をカスタムデータとして保持
+            hovertemplate='<b>%{y}</b><br>習得済み: %{x:.1f}%<extra></extra>'
         ))
         
+        # レイアウト設定
         fig.update_layout(
-            title={
-                'text': "科目別進捗状況（各科目100%基準）",
-                'x': 0,  # タイトルを左寄せ
-                'xanchor': 'left'
-            },
-            xaxis_title="進捗率 (%)",
-            yaxis_title="科目",
             barmode='stack',
-            height=max(600, len(progress_df) * 40),  # 科目数に応じて高さ調整（最小600px、より大きく）
-            width=None,  # 幅を自動調整
-            xaxis=dict(range=[0, 105], tickformat='.0f', ticksuffix='%'),
-            yaxis=dict(
-                automargin=True, 
-                tickmode='linear',
-                side='left',  # Y軸ラベルを左側に配置
-                categoryorder='total ascending'  # 進捗率順に並び替え
-            ),
-            legend=dict(
-                orientation="h", 
-                yanchor="bottom", 
-                y=1.02, 
-                xanchor="left",  # 凡例を左寄せ
-                x=0
-            ),
-            margin=dict(l=200, r=50, t=100, b=50),  # マージンを調整
-            showlegend=True,
-            plot_bgcolor='rgba(0,0,0,0)',  # 透明背景
-            paper_bgcolor='rgba(0,0,0,0)',  # 透明背景
-            font=dict(size=12)  # フォントサイズを明示的に指定
+            title=f'{analysis_target}問題 - 科目別学習進捗',
+            xaxis_title='進捗率 (%)',
+            yaxis_title='科目',
+            height=max(400, len(progress_df) * 30),
+            margin=dict(l=200, r=50, t=60, b=50),
+            showlegend=True
         )
         
-        # 横棒グラフを表示（左寄せで高さ中央配置）
-        print(f"[DEBUG] グラフ分析タブで横棒グラフ表示開始")
-        print(f"[DEBUG] figの型: {type(fig)}")
-        print(f"[DEBUG] progress_df科目数: {len(progress_df)}")
-        print(f"[DEBUG] figのdata数: {len(fig.data)}")
-        print(f"[DEBUG] figの高さ: {fig.layout.height}")
+        # グラフ表示
+        st.plotly_chart(fig, use_container_width=True)
         
-        # Streamlitのコンテナを明示的に作成してグラフを表示
-        with st.container():
-            st.subheader("📊 科目別進捗状況")
-            try:
-                # キャッシュ問題を回避するため、時刻ベースのキーを使用
-                import time
-                chart_key = f"subject_progress_chart_{int(time.time())}"
-                
-                # グラフが適切に作成されているか確認
-                if fig and fig.data and len(fig.data) > 0:
-                    st.plotly_chart(fig, use_container_width=True, key=chart_key)
-                    print(f"[DEBUG] Plotlyチャート表示成功 (key: {chart_key})")
-                else:
-                    print(f"[WARNING] figが空またはデータなし - フォールバック表示")
-                    raise Exception("グラフデータが空です")
-                    
-            except Exception as chart_error:
-                print(f"[ERROR] Plotlyチャート表示エラー: {chart_error}")
-                st.warning(f"詳細グラフの表示でエラーが発生しました: {chart_error}")
-                
-                # フォールバック: Streamlit標準のバーチャート
-                st.subheader("📊 科目別進捗状況（簡易表示）")
-                try:
-                    # progress_dfから簡易チャート用のデータを準備
-                    chart_data = progress_df[['subject', '学習中', '習得済み']].set_index('subject')
-                    chart_data.columns = ['学習中(%)', '習得済み(%)']
-                    st.bar_chart(chart_data)
-                    print(f"[DEBUG] フォールバックチャート表示成功")
-                except Exception as fallback_error:
-                    print(f"[ERROR] フォールバックチャート表示エラー: {fallback_error}")
-                    st.error("グラフ表示機能に問題があります。データ表示機能をご利用ください。")
-        
-        print(f"[DEBUG] グラフ分析タブで横棒グラフ表示完了")
-        
-        # 詳細データテーブルは非表示（UIが煩雑になるため）
-        # ユーザーが詳細を知りたい場合はグラフのホバー情報で十分
-        
+        # 基本統計
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("科目数", len(progress_df))
+        with col2:
+            st.metric("総問題数", int(progress_df['total'].sum()))
+        with col3:
+            avg_learning = progress_df['learning_pct'].mean()
+            st.metric("平均学習中", f"{avg_learning:.1f}%")
+        with col4:
+            avg_mastered = progress_df['mastered_pct'].mean()
+            st.metric("平均習得済み", f"{avg_mastered:.1f}%")
+            
     except Exception as e:
-        print(f"[ERROR] 科目別進捗グラフ作成エラー: {e}")
-        st.error(f"科目別進捗グラフの作成中にエラーが発生しました: {e}")
+        st.error(f"グラフ作成エラー: {e}")
         
-        # デバッグ情報の表示
-        st.write("**デバッグ情報:**")
-        st.write(f"- filtered_df の行数: {len(filtered_df)}")
+        # フォールバック: シンプルな表示
         if not filtered_df.empty:
-            st.write(f"- 利用可能な科目: {list(filtered_df['subject'].unique())}")
-            st.write(f"- レベル分布: {dict(filtered_df['level'].value_counts())}")
-        else:
-            st.write("- filtered_df が空です")
-        
-        # 簡易版のグラフを試す
-        if not filtered_df.empty and 'subject' in filtered_df.columns and 'level' in filtered_df.columns:
-            st.write("**簡易版グラフを表示します:**")
-            try:
-                # シンプルな科目別集計
-                subject_counts = filtered_df.groupby(['subject', 'level']).size().unstack(fill_value=0)
-                if not subject_counts.empty:
-                    st.bar_chart(subject_counts)
-                else:
-                    st.info("表示可能なデータがありません")
-            except Exception as simple_error:
-                st.error(f"簡易版グラフも表示できませんでした: {simple_error}")
-        st.info("グラフの表示に問題が発生しました。データの確認を行ってください。")
-    
-    # 学習記録 - UserDataExtractor強化版
-    st.markdown("##### 学習の記録")
-    
-    # UserDataExtractorの詳細データを使用（可能な場合）
-    if enhanced_analytics.get('evaluation_logs'):
-        evaluation_logs = enhanced_analytics['evaluation_logs']
-        
-        # 高精度な日別学習データを作成
-        daily_study = defaultdict(lambda: {'count': 0, 'correct': 0, 'avg_quality': 0})
-        today = datetime.datetime.now()
-        ninety_days_ago = today - datetime.timedelta(days=90)
-        
-        quality_sum = defaultdict(int)
-        
-        for log in evaluation_logs:
-            try:
-                # より安全なタイムスタンプパース
-                timestamp = log['timestamp']
-                if isinstance(timestamp, str):
-                    if 'T' in timestamp:
-                        # ISO形式
-                        timestamp_str = timestamp.split('.')[0] if '.' in timestamp else timestamp
-                        log_datetime = datetime.datetime.fromisoformat(timestamp_str)
-                    else:
-                        # 通常形式
-                        log_datetime = datetime.datetime.fromisoformat(timestamp[:19])
-                else:
-                    # datetime オブジェクトの場合
-                    log_datetime = timestamp
-                    
-                if log_datetime >= ninety_days_ago:
-                    date_str = log_datetime.date().isoformat()
-                    daily_study[date_str]['count'] += 1
-                    quality = log.get('quality', 0)
-                    quality_sum[date_str] += quality
-                    if quality >= 3:
-                        daily_study[date_str]['correct'] += 1
-            except:
-                continue
-        
-        # 平均評価を計算
-        for date_str in daily_study:
-            if daily_study[date_str]['count'] > 0:
-                daily_study[date_str]['avg_quality'] = quality_sum[date_str] / daily_study[date_str]['count']
-        
-        if daily_study:
-            try:
-                study_df = pd.DataFrame([
-                    {
-                        '日付': date_str,
-                        '学習回数': data['count'],
-                        '正解数': data['correct'],
-                        '正解率': (data['correct'] / data['count'] * 100) if data['count'] > 0 else 0,
-                        '平均評価': data['avg_quality']
-                    }
-                    for date_str, data in daily_study.items()
-                ])
-                
-                # データフレームが空でないかチェック
-                if study_df.empty:
-                    st.info("学習記録のデータがありません")
-                    return
-                
-                study_df['日付'] = pd.to_datetime(study_df['日付'])
-                study_df = study_df.sort_values('日付')
-                
-                print(f"[DEBUG] study_df shape: {study_df.shape}")
-                print(f"[DEBUG] study_df columns: {study_df.columns.tolist()}")
-                
-                # 2つのグラフを作成
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    # 学習回数グラフ
-                    try:
-                        fig1 = px.bar(
-                            study_df, 
-                            x='日付', 
-                            y='学習回数',
-                            title='学習回数推移（過去90日）',
-                            color='学習回数',
-                            color_continuous_scale='Blues'
-                        )
-                        fig1.update_traces(hovertemplate='<b>%{x|%Y-%m-%d}</b><br>学習回数: %{y}問<extra></extra>')
-                        fig1.update_layout(coloraxis_showscale=False, height=300)
-                        st.plotly_chart(fig1, use_container_width=True)
-                    except Exception as e:
-                        print(f"[ERROR] 学習回数グラフ作成エラー: {e}")
-                        st.error(f"学習回数グラフの作成でエラーが発生しました: {e}")
-                        # フォールバック: シンプルなグラフ
-                        st.bar_chart(study_df.set_index('日付')['学習回数'])
-                
-                with col2:
-                    # 正解率グラフ
-                    try:
-                        fig2 = px.line(
-                            study_df, 
-                            x='日付', 
-                            y='正解率',
-                            title='正解率推移（過去90日）',
-                            line_shape='spline'
-                        )
-                        fig2.update_traces(hovertemplate='<b>%{x|%Y-%m-%d}</b><br>正解率: %{y:.1f}%<extra></extra>')
-                        fig2.update_layout(height=300)
-                        fig2.update_traces(line_color='#FF6B6B')
-                        st.plotly_chart(fig2, use_container_width=True)
-                    except Exception as e:
-                        print(f"[ERROR] 正解率グラフ作成エラー: {e}")
-                        st.error(f"正解率グラフの作成でエラーが発生しました: {e}")
-                        # フォールバック: シンプルなグラフ
-                        st.line_chart(study_df.set_index('日付')['正解率'])
-                        
-            except Exception as df_error:
-                print(f"[ERROR] データフレーム作成エラー: {df_error}")
-                st.error(f"学習記録データの処理でエラーが発生しました: {df_error}")
-                st.write("デバッグ情報:")
-                st.write(f"daily_study keys: {list(daily_study.keys())[:5]}...")
-                if daily_study:
-                    first_key = list(daily_study.keys())[0]
-                    st.write(f"サンプルデータ: {daily_study[first_key]}")
-            
-            # 強化された統計メトリクス
-            col1, col2, col3, col4 = st.columns(4)
-            total_days = len(study_df)
-            total_sessions = study_df['学習回数'].sum()
-            avg_daily = study_df['学習回数'].mean()
-            avg_accuracy = study_df['正解率'].mean()
-
-            with col1:
-                st.metric("学習日数", f"{total_days}日", help="過去90日間の実績")
-            with col2:
-                st.metric("総学習回数", f"{total_sessions}回", help="過去90日間の実績")
-            with col3:
-                st.metric("1日平均", f"{avg_daily:.1f}回", help="過去90日間の学習日平均")
-            with col4:
-                st.metric("平均正解率", f"{avg_accuracy:.1f}%", help="過去90日間の平均")
-        else:
-            st.info("学習記録データがありません")
-    else:
-        # フォールバック: 従来のロジック
-        daily_study = defaultdict(int)
-        today = datetime.datetime.now()
-        ninety_days_ago = today - datetime.timedelta(days=90)
-
-        for _, row in filtered_df.iterrows():
-            history = row.get('history', [])
-            if isinstance(history, list):
-                for entry in history:
-                    if isinstance(entry, dict) and 'timestamp' in entry:
-                        try:
-                            # タイムスタンプのパース処理
-                            timestamp = entry['timestamp']
-                            if hasattr(timestamp, 'date'):
-                                entry_datetime = timestamp
-                            else:
-                                # より安全なタイムスタンプパース
-                                try:
-                                    if 'T' in str(timestamp):
-                                        # ISO形式
-                                        timestamp_str = str(timestamp).split('.')[0] if '.' in str(timestamp) else str(timestamp)
-                                        entry_datetime = datetime.datetime.fromisoformat(timestamp_str)
-                                    else:
-                                        # 通常形式
-                                        entry_datetime = datetime.datetime.fromisoformat(str(timestamp)[:19])
-                                except Exception as e:
-                                    print(f"タイムスタンプパースエラー (search_page line 939): {e}")
-                                    continue
-                            
-                            # 90日以内のデータのみ集計
-                            if entry_datetime >= ninety_days_ago:
-                                date_str = entry_datetime.date().isoformat()
-                                daily_study[date_str] += 1
-                        except:
-                            continue
-
-        if daily_study:
-            study_df = pd.DataFrame(list(daily_study.items()), columns=['日付', '学習回数'])
-            study_df['日付'] = pd.to_datetime(study_df['日付'])
-            study_df = study_df.sort_values('日付')
-            
-            # シンプルな棒グラフを作成
-            fig = px.bar(
-                study_df, 
-                x='日付', 
-                y='学習回数',
-                title='過去90日間の学習記録',
-                color='学習回数',
-                color_continuous_scale='OrRd'
-            )
-            
-            fig.update_traces(hovertemplate='<b>%{x|%Y-%m-%d}</b><br>学習回数: %{y}問<extra></extra>')
-            fig.update_layout(
-                xaxis_title='日付',
-                yaxis_title='学習回数',
-                coloraxis_showscale=False,
-                height=400
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # 基本統計
-            col1, col2, col3, col4 = st.columns(4)
-            total_days = len(study_df)
-            total_sessions = study_df['学習回数'].sum()
-            avg_daily = study_df['学習回数'].mean()
-            max_daily = study_df['学習回数'].max()
-
-            with col1:
-                st.metric("学習日数", f"{total_days}日", help="過去90日間の実績")
-            with col2:
-                st.metric("総学習回数", f"{total_sessions}回", help="過去90日間の実績")
-            with col3:
-                st.metric("1日平均", f"{avg_daily:.1f}回", help="過去90日間の学習日平均")
-            with col4:
-                st.metric("最大学習回数", f"{max_daily}回", help="過去90日間の最大値")
-        else:
-            st.info("学習記録データがありません")
+            st.subheader("📊 科目別集計（簡易表示）")
+            subject_counts = filtered_df.groupby('subject')['level'].value_counts().unstack(fill_value=0)
+            if not subject_counts.empty:
+                st.bar_chart(subject_counts)
     
     # レベル別分布
     st.markdown("##### 学習レベル別分布")
     
-    level_counts = filtered_df['level'].value_counts()
-    level_counts = level_counts.reindex(LEVEL_ORDER, fill_value=0)
-    
     try:
-        # Plotly製の棒グラフ
-        fig = px.bar(
+        level_counts = filtered_df['level'].value_counts()
+        level_order = ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "習得済み"]
+        level_counts = level_counts.reindex(level_order, fill_value=0)
+        
+        # レベル別棒グラフ
+        fig_level = px.bar(
             x=level_counts.index, 
             y=level_counts.values,
-            title="学習レベル別分布",
+            title=f'{analysis_target}問題 - 学習レベル別分布',
             color=level_counts.index,
-            color_discrete_map=LEVEL_COLORS
+            color_discrete_map={
+                '未学習': '#BDBDBD',
+                'レベル0': '#E3F2FD',
+                'レベル1': '#BBDEFB',
+                'レベル2': '#90CAF9',
+                'レベル3': '#64B5F6',
+                'レベル4': '#42A5F5',
+                '習得済み': '#4CAF50'
+            }
         )
-        fig.update_layout(showlegend=False)
-        st.plotly_chart(fig, use_container_width=True)
-    except:
+        fig_level.update_layout(
+            xaxis_title='学習レベル',
+            yaxis_title='問題数',
+            showlegend=False,
+            height=400
+        )
+        
+        st.plotly_chart(fig_level, use_container_width=True)
+        
+    except Exception as e:
+        st.error(f"レベル分布グラフエラー: {e}")
         # フォールバック
         st.bar_chart(level_counts)
+
 
 def render_question_list_tab_perfect(filtered_df: pd.DataFrame, analysis_target: str = "国試"):
     """
