@@ -1621,7 +1621,7 @@ def _render_auto_learning_mode():
         print(f"  - セッションカードキー例: {list(session_cards_debug.keys())[:5] if session_cards_debug else 'なし'}")
         print(f"  - 使用中カード数: {len(cards)}")
         
-        # リアルタイム計算 - 確実に動作する統計計算（Streamlit Cloud対応）
+        # リアルタイム計算 - UserDataExtractorが利用可能なら優先使用（Streamlit Cloud対応）
         today = datetime.datetime.now().strftime("%Y-%m-%d")
         print(f"[DEBUG] 今日の日付: {today}")
         print(f"[DEBUG] カード総数: {len(cards)}")
@@ -1633,27 +1633,52 @@ def _render_auto_learning_mode():
             new_count = 0
             completed_count = 0
         else:
-            # 常に確実に動作する従来のロジックを使用
-            print("[DEBUG] 確実な従来ロジックを使用して統計計算")
-            review_count, new_count, completed_count = _calculate_legacy_stats_full(cards, today, new_cards_per_day)
-            
-            # UserDataExtractorは補助的な情報表示のみに使用（統計計算には影響しない）
-            if USER_DATA_EXTRACTOR_AVAILABLE and len(cards) > 0:
+            # UserDataExtractorが利用可能で正常に動作する場合は優先使用
+            detailed_stats = None
+            if USER_DATA_EXTRACTOR_AVAILABLE:
                 try:
-                    print(f"[DEBUG] UserDataExtractor補助情報取得試行: uid={uid}")
+                    print(f"[DEBUG] UserDataExtractor統計計算開始: uid={uid}, カード数={len(cards)}")
                     extractor = UserDataExtractor()
                     user_stats = extractor.get_user_comprehensive_stats(uid)
-                    if user_stats and isinstance(user_stats, dict):
+                    if user_stats and isinstance(user_stats, dict) and user_stats.get('level_distribution'):
                         detailed_stats = user_stats
-                        print(f"[DEBUG] UserDataExtractor補助情報取得成功: keys={list(detailed_stats.keys())}")
+                        print(f"[DEBUG] UserDataExtractor統計成功: keys={list(detailed_stats.keys())}")
+                        
+                        # UserDataExtractorから統計を計算
+                        level_distribution = detailed_stats.get("level_distribution", {})
+                        print(f"[DEBUG] level_distribution: {level_distribution}")
+                        
+                        # 復習期限カード数の計算（レベル0-5）
+                        review_count = 0
+                        for level, count in level_distribution.items():
+                            if level in ['レベル0', 'レベル1', 'レベル2', 'レベル3', 'レベル4', 'レベル5']:
+                                review_count += count
+                        
+                        # 新規カード数の計算（未学習カード、上限制限）
+                        new_count = min(level_distribution.get("未学習", 0), new_cards_per_day)
+                        
+                        # 今日の学習数
+                        completed_count = detailed_stats.get("今日の学習数", 0)
+                        
+                        print(f"[DEBUG] UserDataExtractor統計使用:")
+                        print(f"  - 復習期限: {review_count}問 (レベル0-5の合計)")
+                        print(f"  - 新規カード: {new_count}問 (未学習カード)")
+                        print(f"  - 今日完了: {completed_count}問")
+                        
                     else:
-                        print(f"[DEBUG] UserDataExtractor補助情報取得失敗")
+                        print(f"[DEBUG] UserDataExtractor失敗 - フォールバック使用")
                         detailed_stats = None
+                        review_count, new_count, completed_count = _calculate_legacy_stats_full(cards, today, new_cards_per_day)
+                        
                 except Exception as e:
-                    print(f"[DEBUG] UserDataExtractor補助情報取得エラー: {e}")
+                    print(f"[ERROR] UserDataExtractor全体エラー: {e}")
                     detailed_stats = None
+                    review_count, new_count, completed_count = _calculate_legacy_stats_full(cards, today, new_cards_per_day)
             else:
+                # UserDataExtractorが利用できない場合: 従来ロジック
+                print("[DEBUG] UserDataExtractor利用不可 - 従来ロジック使用")
                 detailed_stats = None
+                review_count, new_count, completed_count = _calculate_legacy_stats_full(cards, today, new_cards_per_day)
         # 学習状況を簡潔に表示
         col1, col2 = st.columns(2)
         with col1:
