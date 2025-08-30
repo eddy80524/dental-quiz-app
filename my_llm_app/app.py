@@ -29,10 +29,10 @@ from modules.practice_page import render_practice_page, render_practice_sidebar
 from modules.updated_ranking_page import render_updated_ranking_page
 # from enhanced_analytics import enhanced_ga, EnhancedGoogleAnalytics
 
-# 最適化モジュールのインポート
-from enhanced_firestore_optimizer import get_cached_firestore_optimizer
-from optimized_weekly_ranking import OptimizedWeeklyRankingSystem
-from complete_migration_system import CompleteMigrationSystem
+# 最適化モジュールのインポート (不要なものはコメントアウト)
+# from enhanced_firestore_optimizer import get_cached_firestore_optimizer
+# from optimized_weekly_ranking import OptimizedWeeklyRankingSystem
+# from complete_migration_system import CompleteMigrationSystem
 from performance_optimizer import (
     PerformanceOptimizer, 
     CachedDataManager, 
