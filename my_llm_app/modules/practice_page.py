@@ -633,16 +633,6 @@ class ResultModeComponent:
     def render(questions: List[Dict], group_id: str, result_data: Dict, case_data: Dict = None) -> Dict[str, Any]:
         """軽量化された結果表示モード画面の描画"""
         
-        # 軽量化：不要な表示を削減
-        correct_count = sum(1 for qid, data in result_data.items() if data.get('is_correct', False))
-        total_count = len(result_data)
-        
-        # 簡潔な結果表示
-        if correct_count == total_count:
-            st.success(f"🎉 全問正解！ ({correct_count}/{total_count})")
-        else:
-            st.info(f"📊 結果: {correct_count}/{total_count} 問正解")
-        
         # 症例情報エリア（必要時のみ）
         if case_data and case_data.get('scenario_text'):
             with st.expander("💡 症例情報", expanded=False):
