@@ -1488,6 +1488,10 @@ def render_practice_sidebar():
 def _render_auto_learning_mode():
     """🚀 2. 「おまかせ学習」モードのUI（シンプル版）"""
     print("[DEBUG] practice_page.py: _render_auto_learning_mode() を開始...")
+    
+    # cardsの初期化（安全のため最初に実行）
+    cards = {}
+    
     try:
         st.markdown("### おまかせ学習")
         
@@ -1496,46 +1500,7 @@ def _render_auto_learning_mode():
             st.warning("ユーザーIDが見つかりません")
             return
         
-        # UserDataExtractorを使用した詳細分析（最適化版・デプロイ対応強化）
-        detailed_stats = None
-        if USER_DATA_EXTRACTOR_AVAILABLE and len(cards) > 0:
-            try:
-                print(f"[DEBUG] UserDataExtractor統計計算開始: uid={uid}, カード数={len(cards)}")
-                
-                # Streamlit Cloud対応：データが存在する場合のみUserDataExtractorを使用
-                extractor = UserDataExtractor()
-                
-                # 直接統計を計算（キャッシュではなく現在のカードデータから）
-                try:
-                    user_stats = extractor.get_user_comprehensive_stats(uid)
-                    if user_stats and isinstance(user_stats, dict):
-                        detailed_stats = user_stats
-                        print(f"[DEBUG] UserDataExtractor統計成功: keys={list(detailed_stats.keys())}")
-                        
-                        # 重要な統計データが存在するか確認
-                        if 'level_distribution' in detailed_stats and detailed_stats['level_distribution']:
-                            print(f"[DEBUG] level_distribution取得成功: {detailed_stats.get('level_distribution')}")
-                        else:
-                            print(f"[WARNING] level_distributionが空またはなし - フォールバックを使用")
-                            detailed_stats = None
-                    else:
-                        print(f"[DEBUG] UserDataExtractor: user_statsが無効 - タイプ: {type(user_stats)}")
-                        detailed_stats = None
-                except Exception as ude_error:
-                    print(f"[ERROR] UserDataExtractor直接計算エラー: {ude_error}")
-                    detailed_stats = None
-                    
-            except Exception as e:
-                print(f"[ERROR] UserDataExtractor全体エラー: {e}")
-                detailed_stats = None
-        else:
-            if not USER_DATA_EXTRACTOR_AVAILABLE:
-                print(f"[DEBUG] UserDataExtractor利用不可")
-            if len(cards) == 0:
-                print(f"[DEBUG] カードデータが空 - UserDataExtractor スキップ")
-            detailed_stats = None
-        
-        # Firestoreから個人の学習データを取得（Streamlit Cloud対応強化版）
+        # Firestoreから個人の学習データを取得（最初に実行）
         firestore_manager = get_firestore_manager()
         cards = {}
         
@@ -1611,6 +1576,45 @@ def _render_auto_learning_mode():
             print(f"[ERROR] エラー詳細: {type(e).__name__}")
             st.warning(f"学習データの取得に失敗: {str(e)}")
             cards = st.session_state.get("cards", {})
+
+        # UserDataExtractorを使用した詳細分析（最適化版・デプロイ対応強化）
+        detailed_stats = None
+        if USER_DATA_EXTRACTOR_AVAILABLE and cards and len(cards) > 0:
+            try:
+                print(f"[DEBUG] UserDataExtractor統計計算開始: uid={uid}, カード数={len(cards)}")
+                
+                # Streamlit Cloud対応：データが存在する場合のみUserDataExtractorを使用
+                extractor = UserDataExtractor()
+                
+                # 直接統計を計算（キャッシュではなく現在のカードデータから）
+                try:
+                    user_stats = extractor.get_user_comprehensive_stats(uid)
+                    if user_stats and isinstance(user_stats, dict):
+                        detailed_stats = user_stats
+                        print(f"[DEBUG] UserDataExtractor統計成功: keys={list(detailed_stats.keys())}")
+                        
+                        # 重要な統計データが存在するか確認
+                        if 'level_distribution' in detailed_stats and detailed_stats['level_distribution']:
+                            print(f"[DEBUG] level_distribution取得成功: {detailed_stats.get('level_distribution')}")
+                        else:
+                            print(f"[WARNING] level_distributionが空またはなし - フォールバックを使用")
+                            detailed_stats = None
+                    else:
+                        print(f"[DEBUG] UserDataExtractor: user_statsが無効 - タイプ: {type(user_stats)}")
+                        detailed_stats = None
+                except Exception as ude_error:
+                    print(f"[ERROR] UserDataExtractor直接計算エラー: {ude_error}")
+                    detailed_stats = None
+                    
+            except Exception as e:
+                print(f"[ERROR] UserDataExtractor全体エラー: {e}")
+                detailed_stats = None
+        else:
+            if not USER_DATA_EXTRACTOR_AVAILABLE:
+                print(f"[DEBUG] UserDataExtractor利用不可")
+            if not cards or len(cards) == 0:
+                print(f"[DEBUG] カードデータが空 - UserDataExtractor スキップ")
+            detailed_stats = None
 
         new_cards_per_day = st.session_state.get("new_cards_per_day", 10)
         
