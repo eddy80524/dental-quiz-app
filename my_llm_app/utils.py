@@ -811,6 +811,144 @@ def get_http_session():
     return get_http_session._session
 
 
+def ensure_firebase_initialized():
+    """Firebase Admin SDKが初期化されていることを確認し、必要に応じて初期化する"""
+    try:
+        import firebase_admin
+        from firebase_admin import credentials
+        
+        # 既に初期化されている場合は何もしない
+        if firebase_admin._apps:
+            return True
+            
+        # 初期化されていない場合は初期化を試みる
+        try:
+            # Streamlit secretsから認証情報を取得
+            firebase_config = st.secrets.get("firebase_service_account", {})
+            if firebase_config:
+                cred = credentials.Certificate(firebase_config)
+                firebase_admin.initialize_app(cred, {
+                    'storageBucket': st.secrets.get("firebase_storage_bucket", "")
+                })
+                print("✅ Firebase Admin SDK初期化完了")
+                return True
+        except Exception as init_error:
+            print(f"❌ Firebase初期化エラー: {init_error}")
+            return False
+    except ImportError:
+        print("❌ Firebase Admin SDKがインストールされていません")
+        return False
+    except Exception as e:
+        print(f"❌ Firebase初期化チェックエラー: {e}")
+        return False
+
+
+def get_secure_image_url(path: str) -> Optional[str]:
+    """
+    Firebase Storageのパスから15分有効な署名付きURLを生成。
+    http(s)で始まるURLはそのまま返します。
+    """
+    if not path or not isinstance(path, str):
+        return None
+
+    if path.startswith('http://') or path.startswith('https://'):
+        return path
+    
+    # Firebase初期化を確認
+    if not ensure_firebase_initialized():
+        print(f"[ERROR] Firebase初期化に失敗しました。パス: {path}")
+        return None
+    
+    try:
+        # firebase_adminをインポート（この関数はFirebase Admin SDKが初期化されていることを前提とします）
+        from firebase_admin import storage
+        import datetime
+        
+        bucket = storage.bucket()
+        blob = bucket.blob(path)
+
+        # 存在確認をせずに、まずURL生成を試みる（高速化のため）
+        return blob.generate_signed_url(
+            expiration=datetime.timedelta(minutes=15),
+            method="GET",
+            version="v4"
+        )
+    except Exception as e:
+        print(f"[ERROR] 署名付きURLの生成に失敗しました: Path='{path}', Error='{e}'")
+        # ここで代替パスを試すなどのフォールバック処理も追加可能です
+    """Firebase Admin SDKが初期化されていることを確認し、必要に応じて初期化する"""
+    try:
+        import firebase_admin
+        from firebase_admin import credentials
+        
+        # 既に初期化されている場合は何もしない
+        if firebase_admin._apps:
+            return True
+            
+        # 初期化されていない場合は初期化を試みる
+        try:
+            # Streamlit secretsから認証情報を取得
+            firebase_config = st.secrets.get("firebase_service_account", {})
+            if firebase_config:
+                cred = credentials.Certificate(firebase_config)
+                firebase_admin.initialize_app(cred, {
+                    'storageBucket': st.secrets.get("firebase_storage_bucket", "")
+                })
+                print("✅ Firebase Admin SDK初期化完了")
+                return True
+        except Exception as init_error:
+            print(f"❌ Firebase初期化エラー: {init_error}")
+            return False
+    except ImportError:
+        print("❌ Firebase Admin SDKがインストールされていません")
+        return False
+    except Exception as e:
+        print(f"❌ Firebase初期化チェックエラー: {e}")
+        return False
+
+
+def get_secure_image_url(path: str) -> Optional[str]:
+    """
+    Firebase Storageのパスから15分有効な署名付きURLを生成。
+    http(s)で始まるURLはそのまま返します。
+    """
+    if not path or not isinstance(path, str):
+        return None
+
+    if path.startswith('http://') or path.startswith('https://'):
+        return path
+    
+    # Firebase初期化を確認
+    if not ensure_firebase_initialized():
+        print(f"[ERROR] Firebase初期化に失敗しました。パス: {path}")
+        return None
+    
+    try:
+        # firebase_adminをインポート（この関数はFirebase Admin SDKが初期化されていることを前提とします）
+        from firebase_admin import storage
+        import datetime
+        
+        bucket = storage.bucket()
+        blob = bucket.blob(path)
+
+        # 存在確認をせずに、まずURL生成を試みる（高速化のため）
+        return blob.generate_signed_url(
+            expiration=datetime.timedelta(minutes=15),
+            method="GET",
+            version="v4"
+        )
+    except Exception as e:
+        print(f"[ERROR] 署名付きURLの生成に失敗しました: Path='{path}', Error='{e}'")
+        # ここで代替パスを試すなどのフォールバック処理も追加可能です
+    """HTTPセッションを取得（再利用可能）"""
+    if not hasattr(get_http_session, '_session'):
+        get_http_session._session = requests.Session()
+        get_http_session._session.headers.update({
+            'User-Agent': 'DentalQuizApp/1.0'
+        })
+    return get_http_session._session
+
+
 def create_simple_fallback_template(questions: List[Dict]) -> str:
     """シンプルなフォールバックテンプレート"""
     content = []

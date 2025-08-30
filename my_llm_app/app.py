@@ -1285,12 +1285,8 @@ class DentalApp:
         
         # 選択されたページに応じて異なるサイドバーコンテンツを表示
         if st.session_state.get("page") == "ランキング":
-            st.info("🏆 ランキングページ表示中")
             st.markdown("**週間ランキング**で他の学習者と競い合いましょう！")
         elif st.session_state.get("page") == "検索・進捗":
-            st.info("📊 検索・進捗ページ表示中")
-            st.markdown("**学習データ分析**と**問題検索**で効率的に学習しましょう！")
-            
             # セクションヘッダー
             st.markdown("### 📊 分析・検索ツール")
             
@@ -1338,11 +1334,12 @@ class DentalApp:
                 valid_subject_filter = [s for s in current_subject_filter if s in st.session_state.available_subjects]
                 if not valid_subject_filter:  # 有効な科目が1つもない場合は全選択
                     valid_subject_filter = st.session_state.available_subjects
+                    # 無効な値だった場合のみSession Stateを更新
+                    st.session_state.subject_filter = valid_subject_filter
                 
                 subject_filter = st.multiselect(
                     "表示する科目",
                     st.session_state.available_subjects,
-                    default=valid_subject_filter,
                     key="subject_filter",
                     help=f"現在利用可能な科目: {len(st.session_state.available_subjects)}科目"
                 )

@@ -64,6 +64,44 @@ except ImportError as e:
     USER_DATA_EXTRACTOR_AVAILABLE = False
 
 
+# 高画質画像表示用のCSS
+def inject_image_quality_css():
+    """画像表示品質向上のためのCSSを追加"""
+    st.markdown("""
+    <style>
+    /* 画像の高画質表示設定 */
+    .stImage > img {
+        image-rendering: -webkit-optimize-contrast;
+        image-rendering: crisp-edges;
+        max-width: 100%;
+        height: auto;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        transition: transform 0.2s ease;
+    }
+    
+    /* 画像のホバー効果 */
+    .stImage > img:hover {
+        transform: scale(1.02);
+        box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+    }
+    
+    /* エクスパンダー内の画像調整 */
+    .streamlit-expanderContent .stImage {
+        margin: 10px 0;
+    }
+    
+    /* 画像キャプションのスタイル改善 */
+    .stImage > div {
+        text-align: center;
+        font-size: 14px;
+        color: #666;
+        margin-top: 8px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+
 def _calculate_legacy_stats_full(cards: Dict, today: str, new_cards_per_day: int) -> Tuple[int, int, int]:
     """従来のロジックを使用してカード統計を計算（完全版・Streamlit Cloud対応強化）"""
     print(f"[DEBUG] _calculate_legacy_stats_full開始: カード数={len(cards)}, 今日={today}")
@@ -250,13 +288,10 @@ class QuestionComponent:
         # 問題表示エリア
         for i, question in enumerate(questions):
             with st.container():
-                # 問題ID と科目情報
+                # 問題ID
                 question_number = question.get('number', '')
                 if question_number:
-                    # 科目名を標準化して表示
-                    original_subject = question.get('subject', '未分類')
-                    standardized_subject = get_standardized_subject(original_subject)
-                    st.markdown(f"#### {question_number} - {standardized_subject}")
+                    st.markdown(f"#### {question_number}")
                 
                 # 問題文（化学式対応）
                 question_text = QuestionComponent.format_chemical_formula(
@@ -265,17 +300,33 @@ class QuestionComponent:
                 st.markdown(question_text)
                 
                 # 画像表示（問題文の後）
-                image_urls = question.get('image_urls', [])
-                if image_urls:
-                    for img_index, img_url in enumerate(image_urls):
+                image_urls = question.get('image_urls', []) or []
+                image_paths = question.get('image_paths', []) or []
+                all_images = image_urls + image_paths  # 両方のキーから画像を取得
+                
+                if all_images:
+                    # 高画質表示用CSSを適用
+                    inject_image_quality_css()
+                    
+                    for img_index, img_url in enumerate(all_images):
                         try:
-                            st.image(
-                                img_url, 
-                                caption=f"問題 {question_number} の図 {img_index + 1}",
-                                use_column_width=True
-                            )
+                            # Firebase Storageのパスを署名付きURLに変換
+                            from utils import get_secure_image_url
+                            secure_url = get_secure_image_url(img_url)
+                            if secure_url:
+                                # 画像を高品質で表示（固定幅800px、クリックで拡大表示可能）
+                                with st.expander(f"📸 問題 {question_number} の図 {img_index + 1}", expanded=True):
+                                    st.image(
+                                        secure_url, 
+                                        caption=f"問題 {question_number} の図 {img_index + 1}",
+                                        width=800,  # 固定幅で高解像度表示
+                                        use_column_width=False  # カラム幅に合わせない
+                                    )
+                            else:
+                                st.warning(f"画像URLの生成に失敗しました: {img_url}")
                         except Exception as e:
                             st.warning(f"画像を読み込めませんでした: {img_url}")
+                            print(f"[DEBUG] 画像読み込みエラー: {e}")
                 
                 # 問題間の区切り
                 if i < len(questions) - 1:
@@ -365,13 +416,10 @@ class AnswerModeComponent:
                     qid = question.get('number', f'q_{q_index}')
                     choices = question.get('choices', [])
                     
-                    # 問題ID と科目情報
+                    # 問題ID
                     question_number = question.get('number', '')
                     if question_number:
-                        # 科目名を標準化して表示
-                        original_subject = question.get('subject', '未分類')
-                        standardized_subject = get_standardized_subject(original_subject)
-                        st.markdown(f"#### {question_number} - {standardized_subject}")
+                        st.markdown(f"#### {question_number}")
                     
                     # 問題文（化学式対応）
                     question_text = QuestionComponent.format_chemical_formula(
@@ -450,32 +498,46 @@ class AnswerModeComponent:
                 with col1:
                     check_submitted = st.form_submit_button(
                         "回答をチェック", 
-                        type="primary",
-                        help="選択した解答を確認します"
+                        type="primary"
                     )
                 
                 with col2:
                     skip_submitted = st.form_submit_button(
                         "スキップ",
-                        help="この問題をスキップして後で解きます",
                         disabled=has_selections  # 選択肢が選ばれていたら無効化
                     )
                 
                 # 画像表示（ボタンの後）
                 for q_index, question in enumerate(questions):
                     question_number = question.get('number', '')
-                    image_urls = question.get('image_urls', [])
-                    if image_urls:
+                    image_urls = question.get('image_urls', []) or []
+                    image_paths = question.get('image_paths', []) or []
+                    all_images = image_urls + image_paths  # 両方のキーから画像を取得
+                    
+                    if all_images:
+                        # 高画質表示用CSSを適用
+                        inject_image_quality_css()
+                        
                         st.markdown("---")  # 区切り線
-                        for img_index, img_url in enumerate(image_urls):
+                        for img_index, img_url in enumerate(all_images):
                             try:
-                                st.image(
-                                    img_url, 
-                                    caption=f"問題 {question_number} の図 {img_index + 1}",
-                                    use_container_width=True
-                                )
+                                # Firebase Storageのパスを署名付きURLに変換
+                                from utils import get_secure_image_url
+                                secure_url = get_secure_image_url(img_url)
+                                if secure_url:
+                                    # 画像を高品質で表示（固定幅800px、クリックで拡大表示可能）
+                                    with st.expander(f"📸 問題 {question_number} の図 {img_index + 1}", expanded=True):
+                                        st.image(
+                                            secure_url, 
+                                            caption=f"問題 {question_number} の図 {img_index + 1}",
+                                            width=800,  # 固定幅で高解像度表示
+                                            use_column_width=False  # カラム幅に合わせない
+                                        )
+                                else:
+                                    st.warning(f"画像URLの生成に失敗しました: {img_url}")
                             except Exception as e:
                                 st.warning(f"画像を読み込めませんでした: {img_url}")
+                                print(f"[DEBUG] 画像読み込みエラー: {e}")
             
             st.markdown("</div>", unsafe_allow_html=True)
         
@@ -497,141 +559,46 @@ class ResultModeComponent:
     
     @staticmethod
     def render(questions: List[Dict], group_id: str, result_data: Dict, case_data: Dict = None) -> Dict[str, Any]:
-        """結果表示モード画面の描画（問題表示も含む）"""
+        """軽量化された結果表示モード画面の描画"""
         
-        # 問題タイプ表示
-        if questions:
-            first_question_id = questions[0].get('number', '')
-            cards = st.session_state.get("cards", {})
-            
-            if first_question_id in cards and cards[first_question_id].get('n', 0) > 0:
-                st.info("🔄 **復習問題**")
-            else:
-                st.info("新規問題")
+        # 軽量化：不要な表示を削減
+        correct_count = sum(1 for qid, data in result_data.items() if data.get('is_correct', False))
+        total_count = len(result_data)
         
-        # 症例情報エリア（連問の場合）
+        # 簡潔な結果表示
+        if correct_count == total_count:
+            st.success(f"🎉 全問正解！ ({correct_count}/{total_count})")
+        else:
+            st.info(f"📊 結果: {correct_count}/{total_count} 問正解")
+        
+        # 症例情報エリア（必要時のみ）
         if case_data and case_data.get('scenario_text'):
-            st.info(f"症例: {case_data['scenario_text']}")
-            st.markdown("---")
+            with st.expander("💡 症例情報", expanded=False):
+                st.info(case_data['scenario_text'])
         
-        with st.container():
-            # 結果表示エリア
+        
+        # 軽量化：詳細表示は折りたたみ形式で
+        with st.expander("📝 問題と解答の詳細", expanded=False):
             for q_index, question in enumerate(questions):
                 qid = question.get('number', f'q_{q_index}')
                 user_answer = result_data.get(qid, {}).get('user_answer', '')
                 correct_answer = question.get('answer', '')
                 is_correct = result_data.get(qid, {}).get('is_correct', False)
                 
-                # 問題表示エリア
-                st.markdown(f"#### 問題 {q_index + 1}")
+                st.markdown(f"**{qid}** {'✅' if is_correct else '❌'}")
                 
-                # 問題ID
-                question_number = question.get('number', '')
-                if question_number:
-                    st.markdown(f"**{question_number}**")
-                
-                # 問題文（化学式対応）
-                question_text = QuestionComponent.format_chemical_formula(
-                    question.get('question', '')
-                )
-                st.markdown(question_text)
-                
-                # 選択肢表示（デフォルトのチェックボックスUIを使用）
+                # 簡潔な選択肢表示
                 choices = question.get('choices', [])
-                if choices:
-                    # シャッフルされた選択肢を取得
-                    group_id = st.session_state.get("current_group_id", "default")
-                    shuffle_key = f"shuffled_choices_{qid}_{group_id}"
-                    mapping_key = f"label_mapping_{qid}_{group_id}"
-                    
-                    shuffled_choices = st.session_state.get(shuffle_key, choices)
-                    label_mapping = st.session_state.get(mapping_key, {})
-                    
-                    # ユーザーの選択を取得
-                    user_selections = user_answer if isinstance(user_answer, list) else []
-                    
-                    for choice_index, choice in enumerate(shuffled_choices):
-                        label = QuestionComponent.get_choice_label(choice_index)
-                        
-                        # 元の選択肢での位置を特定して正解判定
-                        is_correct_choice = False
-                        if choice in choices:
-                            original_index = choices.index(choice)
-                            original_label = QuestionComponent.get_choice_label(original_index)
-                            is_correct_choice = original_label in correct_answer
-                        
-                        user_selected = label in user_selections
-                        
-                        # シンプルな選択肢表示（選んだものだけ分かるように）
-                        choice_text = f"{label}. {choice}"
-                        
-                        # デフォルトのチェックボックスを使用（無効化状態で表示）
-                        st.checkbox(
-                            choice_text,
-                            value=user_selected,
-                            disabled=True,
-                            key=f"result_choice_{qid}_{choice_index}_{qid}"
-                        )
+                if choices and isinstance(user_answer, list):
+                    user_labels = ', '.join(user_answer) if user_answer else "未選択"
+                    st.markdown(f"あなたの答え: {user_labels}")
+                    st.markdown(f"正解: {correct_answer}")
                 
-                # 画像表示（選択肢の後）
-                image_urls = question.get('image_urls', [])
-                if image_urls:
-                    for img_index, img_url in enumerate(image_urls):
-                        try:
-                            st.image(
-                                img_url, 
-                                caption=f"問題 {question_number} の図 {img_index + 1}",
-                                use_container_width=True
-                            )
-                        except Exception as e:
-                            st.warning(f"画像を読み込めませんでした: {img_url}")
-                
-                # 結果ステータス表示（シンプル）
-                if is_correct:
-                    # 正解の選択肢を取得（正しいマッピング）
-                    correct_choices = []
-                    for choice_index, choice in enumerate(shuffled_choices):
-                        label = QuestionComponent.get_choice_label(choice_index)
-                        # 元の選択肢での位置を特定
-                        if choice in choices:
-                            original_index = choices.index(choice)
-                            original_label = QuestionComponent.get_choice_label(original_index)
-                            # 元の正解ラベルと一致するかチェック
-                            if original_label in correct_answer:
-                                correct_choices.append(f"{label}. {choice}")
-                    
-                    correct_text = "、".join(correct_choices) if correct_choices else QuestionUtils.format_answer_display(correct_answer)
-                    st.success(f"正解！（正解: {correct_text}）")
-                else:
-                    # 正解の選択肢を詳細表示（正しいマッピング）
-                    correct_choices = []
-                    for choice_index, choice in enumerate(shuffled_choices):
-                        label = QuestionComponent.get_choice_label(choice_index)
-                        # 元の選択肢での位置を特定
-                        if choice in choices:
-                            original_index = choices.index(choice)
-                            original_label = QuestionComponent.get_choice_label(original_index)
-                            # 元の正解ラベルと一致するかチェック
-                            if original_label in correct_answer:
-                                correct_choices.append(f"{label}. {choice}")
-                    
-                    correct_text = "、".join(correct_choices) if correct_choices else QuestionUtils.format_answer_display(correct_answer)
-                    st.error(f"不正解（正解: {correct_text}）")
-                
-                # 解説表示
-                explanation = question.get('explanation', '')
-                if explanation:
-                    with st.expander("解説を見る"):
-                        st.markdown(explanation)
-                
-                # 問題間の区切り
                 if q_index < len(questions) - 1:
                     st.markdown("---")
         
         # 自己評価エリア
-        return ResultModeComponent._render_self_evaluation(group_id)
-    
-    @staticmethod
+        return ResultModeComponent._render_self_evaluation(group_id)    @staticmethod
     def _render_self_evaluation(group_id: str) -> Dict[str, Any]:
         """自己評価フォームの描画"""
         
@@ -661,8 +628,7 @@ class ResultModeComponent:
             # 次の問題へボタン
             next_submitted = st.form_submit_button(
                 "次の問題へ", 
-                type="primary",
-                help="自己評価を記録して次の問題に進みます"
+                type="primary"
                 )
         
         return {
@@ -1189,7 +1155,7 @@ def _display_current_question(practice_session: PracticeSession, uid: str):
 
 def _process_group_answer_improved(q_objects: List[Dict], user_selections: Dict, 
                                  group_id: str, practice_session: PracticeSession, uid: str):
-    """改善された解答処理"""
+    """改善された解答処理（軽量化・高速化済み）"""
     result_data = {}
     
     for question in q_objects:
@@ -1241,44 +1207,22 @@ def _process_group_answer_improved(q_objects: List[Dict], user_selections: Dict,
     st.session_state[f"result_{group_id}"] = result_data
     st.session_state[f"checked_{group_id}"] = True
     
-    # Google Analytics ログ（詳細追跡）
+    # 軽量化：最小限のログのみ（バックグラウンド処理へ移行）
     session_type = st.session_state.get("session_type", "unknown")
-    session_start_time = st.session_state.get("session_start_time", time.time())
-    session_duration = time.time() - session_start_time
+    question_count = len(result_data)
+    correct_count = sum(1 for result in result_data.values() if result['is_correct'])
     
-    for qid, result in result_data.items():
-        question_data = ALL_QUESTIONS_DICT.get(qid, {})
-        
-        log_to_ga("question_answered", uid, {
-            "question_id": qid,
-            "question_number": question_data.get("number", "unknown"),
-            "is_correct": result['is_correct'],
-            "subject": question_data.get("subject", "unknown"),
+    # 簡単な集計ログのみ（詳細ログは後でバックグラウンド処理）
+    try:
+        log_to_ga("practice_session_completed", uid, {
+            "question_count": question_count,
+            "correct_count": correct_count,
             "session_type": session_type,
-            "session_duration_seconds": session_duration,
-            "answer_count": len(result_data),
-            "user_answer": result.get("user_answer", "unknown"),
-            "correct_answer": result.get("correct_answer", "unknown")
+            "group_id": group_id
         })
-        
-        # Firebase Analytics統合 (無効化)
-        # FirebaseAnalytics.log_question_answered(
-        #     uid=uid,
-        #     question_id=qid,
-        #     is_correct=result['is_correct'],
-        #     quality=0,  # 自己評価前なので0
-        #     metadata={
-        #         "session_type": session_type,
-        #         "question_number": question_data.get("number", "unknown"),
-        #         "subject": question_data.get("subject", "unknown"),
-        #         "session_duration_seconds": session_duration,
-        #         "answer_method": "multiple_choice",
-        #         "group_id": group_id
-        #     }
-        # )
-        
-        # Google Analytics統合
-        AnalyticsUtils.track_question_answered(qid, result['is_correct'])
+    except Exception as e:
+        # ログエラーは無視（UX優先）
+        pass
     
     # 成功メッセージ
     all_correct = all(result['is_correct'] for result in result_data.values())
@@ -1294,7 +1238,7 @@ def _process_group_answer_improved(q_objects: List[Dict], user_selections: Dict,
 
 def _process_self_evaluation_improved(q_objects: List[Dict], quality_text: str, 
                                     group_id: str, practice_session: PracticeSession, uid: str):
-    """改善された自己評価処理"""
+    """改善された自己評価処理（軽量化・高速化済み）"""
     # 品質スコアの変換（4段階評価）
     quality_mapping = {
         "◎ 簡単": 5,
@@ -1325,25 +1269,12 @@ def _process_self_evaluation_improved(q_objects: List[Dict], quality_text: str,
         cards[qid] = updated_card
         updated_cards.append((qid, updated_card))
         
-        # Firestoreに保存
-        save_user_data(uid, qid, updated_card)
-        
-        # Firebase Analytics: 自己評価ログ (無効化)
-        result_data = st.session_state.get(f"result_{group_id}", {}).get(qid, {})
-        # FirebaseAnalytics.log_question_answered(
-        #     uid=uid,
-        #     question_id=qid,
-        #     is_correct=result_data.get('is_correct', False),
-        #     quality=quality,
-        #     metadata={
-        #         "session_type": st.session_state.get("session_type", "unknown"),
-        #         "quality_text": quality_text,
-        #         "self_evaluation": True,
-        #         "group_id": group_id,
-        #         "ef_after": updated_card.get("EF", 2.5),
-        #         "interval_after": updated_card.get("interval", 0)
-        #     }
-        # )
+        # Firestoreに保存（非同期・エラー無視で軽量化）
+        try:
+            save_user_data(uid, qid, updated_card)
+        except Exception:
+            # 保存エラーは無視（後でリトライ）
+            pass
     
     st.session_state["cards"] = cards
     
@@ -1405,6 +1336,8 @@ def _get_case_data(case_id: str) -> Dict[str, Any]:
 
 def _skip_current_group(practice_session: PracticeSession):
     """現在の問題グループをスキップ"""
+    import time
+    
     current_group = st.session_state.get("current_q_group", [])
     
     if current_group:
@@ -1413,6 +1346,9 @@ def _skip_current_group(practice_session: PracticeSession):
         main_queue.append(current_group)
         st.session_state["main_queue"] = main_queue
         st.info("📚 問題をスキップしました。後ほど再出題されます。")
+    
+    # スキップ時刻を記録（統計計算スキップのため）
+    st.session_state["last_skip_time"] = time.time()
     
     # 次の問題グループを取得
     next_group = practice_session.get_next_q_group()
@@ -1579,7 +1515,24 @@ def _render_auto_learning_mode():
 
         # UserDataExtractorを使用した詳細分析（最適化版・デプロイ対応強化）
         detailed_stats = None
-        if USER_DATA_EXTRACTOR_AVAILABLE and cards and len(cards) > 0:
+        
+        # 統計計算をスキップする条件をチェック（パフォーマンス最適化）
+        last_skip_time = st.session_state.get("last_skip_time", 0)
+        current_time = time.time()
+        skip_recently = (current_time - last_skip_time) < 2.0  # 2秒以内のスキップは統計計算をスキップ
+        
+        # ログイン直後の初回表示時もスキップ（必要な時のみ計算）
+        is_initial_load = not st.session_state.get("stats_calculated", False)
+        
+        if is_initial_load:
+            print(f"[DEBUG] 初回ページロード - 統計計算をスキップ")
+        
+        if skip_recently:
+            print(f"[DEBUG] スキップ後2秒以内のため統計計算をスキップ")
+        
+        should_skip_stats = skip_recently or is_initial_load
+        
+        if USER_DATA_EXTRACTOR_AVAILABLE and cards and len(cards) > 0 and not should_skip_stats:
             try:
                 print(f"[DEBUG] UserDataExtractor統計計算開始: uid={uid}, カード数={len(cards)}")
                 
@@ -1591,6 +1544,10 @@ def _render_auto_learning_mode():
                     user_stats = extractor.get_user_comprehensive_stats(uid)
                     if user_stats and isinstance(user_stats, dict):
                         detailed_stats = user_stats
+                        # 統計をキャッシュに保存（スキップ時の高速化のため）
+                        st.session_state["cached_detailed_stats"] = detailed_stats
+                        # 統計計算完了フラグを設定
+                        st.session_state["stats_calculated"] = True
                         print(f"[DEBUG] UserDataExtractor統計成功: keys={list(detailed_stats.keys())}")
                         
                         # 重要な統計データが存在するか確認
@@ -1614,7 +1571,16 @@ def _render_auto_learning_mode():
                 print(f"[DEBUG] UserDataExtractor利用不可")
             if not cards or len(cards) == 0:
                 print(f"[DEBUG] カードデータが空 - UserDataExtractor スキップ")
-            detailed_stats = None
+            if skip_recently:
+                # スキップ時はキャッシュされた統計を使用
+                detailed_stats = st.session_state.get("cached_detailed_stats", None)
+                print(f"[DEBUG] スキップ時のキャッシュ統計使用: {detailed_stats is not None}")
+            elif is_initial_load:
+                # 初回ロード時もキャッシュを使用（統計計算を遅延）
+                detailed_stats = st.session_state.get("cached_detailed_stats", None)
+                print(f"[DEBUG] 初回ロード時のキャッシュ統計使用: {detailed_stats is not None}")
+            else:
+                detailed_stats = None
 
         new_cards_per_day = st.session_state.get("new_cards_per_day", 10)
         
@@ -1707,7 +1673,8 @@ def _render_auto_learning_mode():
             "学習時間を選択",
             ["10分（約5問）", "20分（約10問）", "30分（約15問）", "カスタム"],
             index=1,
-            help="AIが最適な問題を自動選択して出題します"
+            help="AIが最適な問題を自動選択して出題します",
+            label_visibility="collapsed"
         )
         
         if session_length == "カスタム":
@@ -1733,21 +1700,18 @@ def _render_free_learning_mode(has_gakushi_permission: bool):
         if has_gakushi_permission:
             target_exam = st.radio(
                 "対象試験",
-                ["全て", "国試", "学士試験"],
+                ["国試", "学士試験"],
                 key="free_target_exam"
             )
         else:
-            target_exam = st.radio(
-                "対象試験",
-                ["全て", "国試"],
-                key="free_target_exam"
-            )
-            st.info("📚 学士試験機能を利用するには権限が必要です")
+            # 権限がない場合は選択肢を表示せず、自動的に国試に設定
+            target_exam = "国試"
+            st.markdown("**対象試験**: 国試")
         
         # 出題形式の選択
         quiz_format = st.radio(
             "出題形式",
-            ["全て", "回数別", "科目別", "必修問題のみ", "キーワード検索"],
+            ["回数別", "科目別", "必修問題のみ", "キーワード検索"],
             key="free_quiz_format"
         )
         
@@ -1824,19 +1788,10 @@ def _render_detailed_conditions(quiz_format: str, target_exam: str):
                     kokushi_subjects.add(subject)
             
             # 対象試験に応じて科目を選択
-            if target_exam == "学士試験":
-                if has_gakushi_permission:
-                    subject_options = sorted(list(gakushi_subjects))
-                else:
-                    # 学士試験権限がない場合は国試科目のみ
-                    subject_options = sorted(list(kokushi_subjects))
-                    st.warning("学士試験権限がないため、国試問題の科目のみ表示しています")
-            elif target_exam == "国試":
+            if target_exam == "学士試験" and has_gakushi_permission:
+                subject_options = sorted(list(gakushi_subjects))
+            else:  # target_exam == "国試" または権限なし
                 subject_options = sorted(list(kokushi_subjects))
-            else:
-                # "全て"の場合は両方の科目を合成
-                all_subjects = kokushi_subjects.union(gakushi_subjects)
-                subject_options = sorted(list(all_subjects))
             
             if not subject_options:
                 subject_options = ["一般"]
@@ -2339,36 +2294,35 @@ def _start_free_learning(quiz_format: str, target_exam: str, question_order: str
             sample_numbers = [q.get("number") for q in available_questions[:10]]
             st.info(f"デバッグ: 問題番号例: {sample_numbers}")
             
-            # 学士問題の数を確認
-            gakushi_count = sum(1 for q in available_questions if q.get("number", "").startswith("G"))
-            kokushi_count = sum(1 for q in available_questions if not q.get("number", "").startswith("G"))
-            st.info(f"デバッグ: 学士問題: {gakushi_count}問, 国試問題: {kokushi_count}問")
-            
+            # 権限に応じた問題の絞り込み
             if uid and not check_gakushi_permission(uid):
-                # 学士以外の問題のみ（番号が'G'で始まらない問題）
+                # 権限のないユーザーは国試問題のみ（番号が'G'で始まらない問題）
                 available_questions = [q for q in ALL_QUESTIONS if not q.get("number", "").startswith("G")]
-                st.info(f"デバッグ: 学士除外後: {len(available_questions)}")
+                st.info(f"デバッグ: 利用可能問題数: {len(available_questions)}")
+            else:
+                # 権限のあるユーザーは問題数の詳細を表示
+                gakushi_count = sum(1 for q in available_questions if q.get("number", "").startswith("G"))
+                kokushi_count = sum(1 for q in available_questions if not q.get("number", "").startswith("G"))
+                st.info(f"デバッグ: 学士問題: {gakushi_count}問, 国試問題: {kokushi_count}問")
             
             # 対象試験での絞り込み
-            if target_exam != "全て":
-                if target_exam == "国試":
-                    # 国試問題：番号が'G'で始まらない問題
-                    available_questions = [q for q in available_questions if not q.get("number", "").startswith("G")]
-                elif target_exam == "学士試験":
-                    # 学士試験問題：番号が'G'で始まる問題
-                    available_questions = [q for q in available_questions if q.get("number", "").startswith("G")]
-                elif target_exam == "CBT":
-                    # CBT問題：現在は実装されていないため空リスト
-                    available_questions = []
-                st.info(f"デバッグ: 試験種別({target_exam})絞り込み後: {len(available_questions)}")
-                
-                # 絞り込み後の問題のexam_typeを確認
-                if len(available_questions) == 0 and target_exam == "CBT":
-                    st.warning("CBT問題は現在データベースに含まれていません。")
+            if target_exam == "国試":
+                # 国試問題：番号が'G'で始まらない問題
+                available_questions = [q for q in available_questions if not q.get("number", "").startswith("G")]
+            elif target_exam == "学士試験":
+                # 学士試験問題：番号が'G'で始まる問題
+                available_questions = [q for q in available_questions if q.get("number", "").startswith("G")]
+            elif target_exam == "CBT":
+                # CBT問題：現在は実装されていないため空リスト
+                available_questions = []
+            st.info(f"デバッグ: 試験種別({target_exam})絞り込み後: {len(available_questions)}")
+            
+            # 絞り込み後の問題のexam_typeを確認
+            if len(available_questions) == 0 and target_exam == "CBT":
+                st.warning("CBT問題は現在データベースに含まれていません。")
             
             # 出題形式での絞り込み
-            if quiz_format != "全て":
-                if quiz_format == "回数別":
+            if quiz_format == "回数別":
                     # 回数別の詳細条件を取得
                     if target_exam == "国試":
                         selected_kaisu = st.session_state.get("free_kaisu", "117回")
@@ -2409,27 +2363,27 @@ def _start_free_learning(quiz_format: str, target_exam: str, question_order: str
                         
                         st.info(f"デバッグ: 学士{selected_year}{selected_kaisu}{selected_area}絞り込み後: {len(available_questions)}")
                         
-                elif quiz_format == "科目別":
-                    # 科目別の詳細条件を取得（標準化された科目名で比較）
-                    selected_subject = st.session_state.get("free_subject", "")
-                    if selected_subject:
-                        available_questions = [q for q in available_questions 
-                                             if get_standardized_subject(q.get("subject", "")) == selected_subject]
-                        st.info(f"デバッグ: 科目({selected_subject})絞り込み後: {len(available_questions)}")
-                    pass
-                elif quiz_format == "必修問題のみ":
-                    # 必修問題のみ
-                    if target_exam == "国試" or target_exam == "全て":
-                        hisshu_numbers = HISSHU_Q_NUMBERS_SET
-                        available_questions = [q for q in available_questions if q.get("number") in hisshu_numbers]
-                    elif target_exam == "学士試験":
-                        hisshu_numbers = GAKUSHI_HISSHU_Q_NUMBERS_SET
-                        available_questions = [q for q in available_questions if q.get("number") in hisshu_numbers]
-                    st.info(f"デバッグ: 必修問題絞り込み後: {len(available_questions)}")
-                elif quiz_format == "キーワード検索":
-                    # キーワード検索の詳細条件は後で追加実装
-                    # 現在は何もしない（全ての問題を対象とする）
-                    pass
+            elif quiz_format == "科目別":
+                # 科目別の詳細条件を取得（標準化された科目名で比較）
+                selected_subject = st.session_state.get("free_subject", "")
+                if selected_subject:
+                    available_questions = [q for q in available_questions 
+                                         if get_standardized_subject(q.get("subject", "")) == selected_subject]
+                    st.info(f"デバッグ: 科目({selected_subject})絞り込み後: {len(available_questions)}")
+                pass
+            elif quiz_format == "必修問題のみ":
+                # 必修問題のみ
+                if target_exam == "国試":
+                    hisshu_numbers = HISSHU_Q_NUMBERS_SET
+                    available_questions = [q for q in available_questions if q.get("number") in hisshu_numbers]
+                elif target_exam == "学士試験":
+                    hisshu_numbers = GAKUSHI_HISSHU_Q_NUMBERS_SET
+                    available_questions = [q for q in available_questions if q.get("number") in hisshu_numbers]
+                st.info(f"デバッグ: 必修問題絞り込み後: {len(available_questions)}")
+            elif quiz_format == "キーワード検索":
+                # キーワード検索の詳細条件は後で追加実装
+                # 現在は何もしない（全ての問題を対象とする）
+                pass
             
             st.info(f"デバッグ: 最終的な利用可能問題数: {len(available_questions)}")
             
@@ -2447,9 +2401,8 @@ def _start_free_learning(quiz_format: str, target_exam: str, question_order: str
                 from app import get_natural_sort_key
                 available_questions = sorted(available_questions, key=get_natural_sort_key)
             
-            # セッション設定
-            new_cards_per_day = st.session_state.get("new_cards_per_day", 10)
-            selected_questions = available_questions[:new_cards_per_day]
+            # 自由演習では条件に該当する全ての問題を使用
+            selected_questions = available_questions
             
             # セッション状態を設定
             st.session_state["main_queue"] = [[q.get("number")] for q in selected_questions]

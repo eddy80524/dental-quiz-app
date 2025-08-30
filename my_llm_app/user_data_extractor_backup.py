@@ -140,13 +140,21 @@ class UserDataExtractor:
                 print(f"最終学習日取得エラー: {e}")
                 last_study_date = None
             
+            # 今日の学習数を計算
+            try:
+                today_study_count = self._calculate_today_study_count(evaluation_logs)
+            except Exception as e:
+                print(f"今日の学習数計算エラー: {e}")
+                today_study_count = 0
+            
             return {
                 'weak_categories': weak_categories,
                 'level_distribution': level_distribution,
                 'learning_efficiency': learning_efficiency,
                 'recent_trends': recent_trends,
                 'total_studied_cards': len(card_levels.get('cards', [])),
-                'last_study_date': last_study_date
+                'last_study_date': last_study_date,
+                '今日の学習数': today_study_count
             }
             
         except Exception as e:
@@ -378,6 +386,27 @@ class UserDataExtractor:
         except Exception as e:
             print(f"最終学習日取得エラー: {e}")
             return None
+
+    def _calculate_today_study_count(self, evaluation_logs):
+        """今日の学習数を計算"""
+        try:
+            if not evaluation_logs:
+                return 0
+            
+            from datetime import datetime, date
+            today = date.today()
+            today_count = 0
+            
+            for log in evaluation_logs:
+                log_datetime = self._parse_timestamp(log.get('timestamp'))
+                if log_datetime and log_datetime.date() == today:
+                    today_count += 1
+            
+            return today_count
+            
+        except Exception as e:
+            print(f"今日の学習数計算エラー: {e}")
+            return 0
 
     def extract_self_evaluation_logs(self, uid, start_date=None, end_date=None):
         """自己評価ログを抽出"""
