@@ -867,6 +867,59 @@ class DentalApp:
             st.session_state.subject_filter = ["一般"]
             st.session_state.subjects_cache_key = cache_key
     
+    def _load_user_data(self):
+        """ユーザーの演習データを読み込み（最適化されたスキーマ対応）"""
+        uid = st.session_state.get("uid")
+        if not uid:
+            return
+        
+        try:
+            # 最適化されたstudy_cardsコレクションからユーザーデータを読み込み
+            firestore_manager = get_firestore_manager()
+            db = firestore_manager.db
+            
+            study_cards_ref = db.collection("study_cards")
+            user_cards_query = study_cards_ref.where("uid", "==", uid)
+            user_cards_docs = user_cards_query.get()
+            
+            # カードデータを変換（既存の形式に合わせる）
+            cards = {}
+            for doc in user_cards_docs:
+                card_data = doc.to_dict()
+                question_id = doc.id.split('_')[-1] if '_' in doc.id else doc.id
+                
+                # 既存の形式に変換
+                card = {
+                    "q_id": question_id,
+                    "uid": card_data.get("uid", uid),
+                    "history": card_data.get("history", []),
+                    "sm2_data": card_data.get("sm2_data", {}),
+                    "performance": card_data.get("performance", {}),
+                    "metadata": card_data.get("metadata", {})
+                }
+                
+                # SM2データから既存の形式に変換
+                sm2_data = card_data.get("sm2_data", {})
+                if sm2_data:
+                    card.update({
+                        "n": sm2_data.get("n", 0),
+                        "EF": sm2_data.get("ef", 2.5),
+                        "interval": sm2_data.get("interval", 1),
+                        "next_review": sm2_data.get("next_review"),
+                        "last_review": sm2_data.get("last_review")
+                    })
+                
+                cards[question_id] = card
+            
+            # セッション状態に保存
+            st.session_state["cards"] = cards
+            
+            print(f"[DEBUG] ユーザーデータ読み込み完了: {len(cards)}枚のカード")
+            
+        except Exception as e:
+            print(f"[ERROR] ユーザーデータ読み込みエラー: {e}")
+            st.session_state["cards"] = {}
+    
     def run(self):
         """アプリケーションのメイン実行（最適化版）"""
         # パフォーマンス最適化の適用
@@ -893,6 +946,9 @@ class DentalApp:
             if self.cookie_manager.try_auto_login():
                 # 自動ログイン成功時に科目を初期化
                 self._initialize_available_subjects()
+                
+                # ユーザーデータを読み込み
+                self._load_user_data()
                 
                 # ログイン成功追跡
                 user_info = {
@@ -1903,6 +1959,9 @@ class DentalApp:
                 
                 # 科目の初期化（ログイン後にユーザー権限を反映）
                 self._initialize_available_subjects()
+                
+                # ユーザーデータを読み込み
+                self._load_user_data()
                 
                 # Rerun: アプリをリロードしてメインインターフェースへ
                 time.sleep(0.5)

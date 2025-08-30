@@ -112,17 +112,24 @@ class CachedDataManager:
                 return st.session_state[cache_key]
             
             # 統計データを取得
-            result = extractor.get_comprehensive_statistics(uid)
+            result = extractor.get_user_comprehensive_stats(uid)
             
-            # 結果をセッションキャッシュに保存
-            st.session_state[cache_key] = result
-            
-            return result
+            # 結果の検証とsuccessキー追加
+            if result is not None and isinstance(result, dict):
+                result['success'] = True
+                # 結果をセッションキャッシュに保存
+                st.session_state[cache_key] = result
+                return result
+            else:
+                error_result = {"success": False, "error": "UserDataExtractor returned None or invalid data"}
+                st.session_state[cache_key] = error_result
+                return error_result
             
         except Exception as e:
             if LOG_LEVEL <= logging.WARNING:
                 print(f"[WARNING] 統計取得エラー: {e}")
-            return {"error": str(e)}
+            error_result = {"success": False, "error": str(e)}
+            return error_result
 
 
 class UIOptimizer:

@@ -38,6 +38,81 @@ except ImportError as e:
     USER_DATA_EXTRACTOR_AVAILABLE = False
 
 
+def _calculate_legacy_stats_full(cards: Dict, today: str, new_cards_per_day: int) -> Tuple[int, int, int]:
+    """従来のロジックを使用してカード統計を計算（完全版）"""
+    # 復習カード数（期限切れ）
+    review_count = 0
+    # 新規カード数（今日学習予定）
+    new_count = 0
+    # 完了数（今日学習済み）
+    completed_count = 0
+    
+    # 今日学習したカードの詳細を追跡
+    today_studied_cards = []
+    
+    for q_id, card in cards.items():
+        # 今日の学習記録チェック
+        history = card.get("history", [])
+        
+        # 今日学習したかどうかをチェック
+        today_studied = False
+        for h in history:
+            timestamp = h.get("timestamp", "")
+            if timestamp:
+                try:
+                    # FirebaseのDatetimeWithNanosecondsオブジェクトの場合
+                    if hasattr(timestamp, 'strftime'):
+                        timestamp_str = timestamp.strftime("%Y-%m-%d")
+                    # ISO文字列の場合
+                    elif isinstance(timestamp, str):
+                        timestamp_str = timestamp[:10] if len(timestamp) >= 10 else timestamp
+                    else:
+                        timestamp_str = str(timestamp)[:10]
+                    
+                    if timestamp_str == today:
+                        today_studied = True
+                        today_studied_cards.append(q_id)
+                        break
+                except Exception as e:
+                    continue
+        
+        if today_studied:
+            completed_count += 1
+        elif len(history) == 0:  # 未学習カード
+            new_count += 1
+        else:
+            # 学習履歴があるカード：復習期限をチェック
+            sm2_data = card.get("sm2", {})
+            due_date = sm2_data.get("due_date")
+            
+            if due_date:
+                try:
+                    # FirebaseのDatetimeWithNanosecondsオブジェクトの場合
+                    if hasattr(due_date, 'strftime'):
+                        due_date_str = due_date.strftime("%Y-%m-%d")
+                    # 文字列の場合
+                    elif isinstance(due_date, str):
+                        due_date_str = due_date[:10] if len(due_date) >= 10 else due_date
+                    else:
+                        due_date_str = str(due_date)[:10]
+                    
+                    if due_date_str <= today:
+                        review_count += 1
+                except Exception as e:
+                    continue
+    
+    # 新規カード数を上限で制限
+    new_count = min(new_count, new_cards_per_day)
+    
+    return review_count, new_count, completed_count
+
+
+def _calculate_legacy_stats(cards: Dict, today: str, new_cards_per_day: int) -> Tuple[int, int]:
+    """従来のロジックを使用してカード統計を計算（復習・新規のみ）"""
+    review_count, new_count, _ = _calculate_legacy_stats_full(cards, today, new_cards_per_day)
+    return review_count, new_count
+
+
 def _determine_optimal_learning_mode(detailed_stats: Dict, review_count: int, new_count: int, completed_count: int) -> Tuple[str, str]:
     """学習統計から最適な学習モードを自動判定"""
     try:
@@ -1378,15 +1453,22 @@ def _render_auto_learning_mode():
         detailed_stats = None
         if USER_DATA_EXTRACTOR_AVAILABLE:
             try:
+                print(f"[DEBUG] CachedDataManager.get_user_statistics開始: {uid}")
                 # キャッシュされた統計を取得
                 stats_result = CachedDataManager.get_user_statistics(uid)
-                if stats_result.get("success"):
-                    detailed_stats = stats_result.get("data")
+                print(f"[DEBUG] CachedDataManager結果: {type(stats_result)}, success={stats_result.get('success') if isinstance(stats_result, dict) else 'N/A'}")
+                print(f"[DEBUG] stats_result内容: {stats_result}")
+                
+                if isinstance(stats_result, dict) and stats_result.get("success"):
+                    # CachedDataManagerは統計データを直接返すため、successキーを除外してdetailed_statsに設定
+                    detailed_stats = {k: v for k, v in stats_result.items() if k != 'success'}
+                    print(f"[DEBUG] detailed_stats取得: {type(detailed_stats)}, keys={list(detailed_stats.keys())}")
                 else:
-                    print(f"UserDataExtractor analysis error: {stats_result.get('error')}")
+                    error_msg = stats_result.get('error') if isinstance(stats_result, dict) else str(stats_result)
+                    print(f"[DEBUG] CachedDataManager failed: {error_msg}")
                     detailed_stats = None
             except Exception as e:
-                print(f"UserDataExtractor analysis error: {e}")
+                print(f"[ERROR] CachedDataManager exception: {e}")
                 detailed_stats = None
         
         # Firestoreから個人の学習データを取得
@@ -1418,92 +1500,56 @@ def _render_auto_learning_mode():
 
         new_cards_per_day = st.session_state.get("new_cards_per_day", 10)
         
-        # リアルタイム計算
+        # デバッグ: セッション状態の確認
+        session_cards_debug = st.session_state.get("cards", {})
+        print(f"[DEBUG] 練習ページでのセッション状態確認:")
+        print(f"  - セッションカード数: {len(session_cards_debug)}")
+        print(f"  - セッションカードキー例: {list(session_cards_debug.keys())[:5] if session_cards_debug else 'なし'}")
+        print(f"  - 使用中カード数: {len(cards)}")
+        
+        # リアルタイム計算 - UserDataExtractorのデータを優先使用
         today = datetime.datetime.now().strftime("%Y-%m-%d")
         print(f"[DEBUG] 今日の日付: {today}")
         print(f"[DEBUG] カード総数: {len(cards)}")
         
-        # 復習カード数（期限切れ）
-        review_count = 0
-        # 新規カード数（今日学習予定）
-        new_count = 0
-        # 完了数（今日学習済み）
-        completed_count = 0
-        
-        # 今日学習したカードの詳細を追跡
-        today_studied_cards = []
-        
-        for q_id, card in cards.items():
-            # 今日の学習記録チェック
-            history = card.get("history", [])
-            
-            # 今日学習したかどうかをチェック
-            today_studied = False
-            for h in history:
-                timestamp = h.get("timestamp", "")
-                if timestamp:
-                    try:
-                        # FirebaseのDatetimeWithNanosecondsオブジェクトの場合
-                        if hasattr(timestamp, 'strftime'):
-                            timestamp_str = timestamp.strftime("%Y-%m-%d")
-                        # ISO文字列の場合
-                        elif isinstance(timestamp, str):
-                            timestamp_str = timestamp[:10] if len(timestamp) >= 10 else timestamp
-                        else:
-                            timestamp_str = str(timestamp)[:10]
-                        
-                        if timestamp_str == today:
-                            today_studied = True
-                            today_studied_cards.append(q_id)
-                            break
-                    except Exception as e:
-                        continue
-            
-            # デバッグ情報：最初の5個のカードについて詳細を表示
-            if len(today_studied_cards) < 5 or list(cards.keys()).index(q_id) < 5:
-                print(f"[DEBUG] カード {q_id}: history={len(history)}件, today_studied={today_studied}")
-                if history:
-                    latest_history = history[-1] if history else None
-                    print(f"  最新履歴: {latest_history}")
-                    # 安全な履歴表示
-                    recent_history = history[-3:] if len(history) >= 3 else history
-                    for i, h in enumerate(recent_history):
-                        try:
-                            ts = h.get('timestamp', '')
-                            display_index = len(history) - len(recent_history) + i
-                            print(f"  履歴[{display_index}]: timestamp={ts} (type: {type(ts)})")
-                        except Exception as debug_e:
-                            print(f"  履歴表示エラー: {debug_e}")
-            
-            if today_studied:
-                completed_count += 1
-            elif len(history) == 0:  # 未学習カード
-                new_count += 1
-            else:
-                # 学習履歴があるカード：復習期限をチェック
-                sm2_data = card.get("sm2", {})
-                due_date = sm2_data.get("due_date")
+        # UserDataExtractorからの統計データを優先使用
+        if detailed_stats:
+            try:
+                print(f"[DEBUG] detailed_stats取得成功: {type(detailed_stats)}, keys={list(detailed_stats.keys()) if detailed_stats else 'None'}")
                 
-                if due_date:
-                    try:
-                        # FirebaseのDatetimeWithNanosecondsオブジェクトの場合
-                        if hasattr(due_date, 'strftime'):
-                            due_date_str = due_date.strftime("%Y-%m-%d")
-                        # 文字列の場合
-                        elif isinstance(due_date, str):
-                            due_date_str = due_date[:10] if len(due_date) >= 10 else due_date
-                        else:
-                            due_date_str = str(due_date)[:10]
-                        
-                        if due_date_str <= today:
-                            review_count += 1
-                    except Exception as e:
-                        continue
-        
-        # 新規カード数を上限で制限
-        new_count = min(new_count, new_cards_per_day)
-        total_target = review_count + new_count
-        
+                # detailed_statsからlevel_distributionを取得
+                level_distribution = detailed_stats.get("level_distribution", {})
+                total_studied_cards = detailed_stats.get("total_studied_cards", 0)
+                
+                # 復習期限カード数の計算
+                # レベル0-5のカードは復習対象と考える（習得済みは除外）
+                review_count = 0
+                for level, count in level_distribution.items():
+                    if level in ['レベル0', 'レベル1', 'レベル2', 'レベル3', 'レベル4', 'レベル5']:
+                        review_count += count
+                
+                # 新規カード数の計算（未学習カード）
+                new_count = level_distribution.get("未学習", 0)
+                # 1日の新規カード上限で制限
+                new_count = min(new_count, new_cards_per_day)
+                
+                # 今日の学習数
+                completed_count = detailed_stats.get("今日の学習数", 0)
+                
+                print(f"[DEBUG] UserDataExtractor統計使用:")
+                print(f"  - 復習期限: {review_count}問 (レベル0-5の合計)")
+                print(f"  - 新規カード: {new_count}問 (未学習カード)")
+                print(f"  - 今日完了: {completed_count}問")
+                print(f"  - 習熟度分布: {level_distribution}")
+                    
+            except Exception as e:
+                print(f"[ERROR] UserDataExtractor統計計算エラー: {e}")
+                # フォールバック: 古いロジック
+                review_count, new_count, completed_count = _calculate_legacy_stats_full(cards, today, new_cards_per_day)
+        else:
+            # UserDataExtractorが利用できない場合: 古いロジック
+            print("[DEBUG] UserDataExtractorのdetailed_statsが利用できません")
+            review_count, new_count, completed_count = _calculate_legacy_stats_full(cards, today, new_cards_per_day)
         # 学習状況を簡潔に表示
         col1, col2 = st.columns(2)
         with col1:
@@ -1511,9 +1557,12 @@ def _render_auto_learning_mode():
             st.metric("新規予定", f"{new_count}問")
         with col2:
             st.metric("今日の学習", f"{completed_count}問")
+            total_target = review_count + new_count
             if total_target > 0:
                 progress = min(completed_count / total_target, 1.0)
                 st.metric("進捗", f"{progress:.1%}")
+            else:
+                st.metric("進捗", "0.0%")
         
         # AI自動判定（バックグラウンド処理 - ユーザーには詳細を表示しない）
         optimal_mode, reasoning = _determine_optimal_learning_mode(detailed_stats, review_count, new_count, completed_count)
