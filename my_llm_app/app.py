@@ -6,6 +6,7 @@
 - UID統一によるユーザー管理
 - パフォーマンス最適化
 - セキュリティ強化
+- practice_page.py UnboundLocalError修正済み (2025-08-30)
 """
 
 import streamlit as st
