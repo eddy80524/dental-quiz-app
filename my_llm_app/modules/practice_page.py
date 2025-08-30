@@ -664,34 +664,6 @@ class ResultModeComponent:
             if question_text:
                 st.markdown(f"**問題:** {question_text}")
             
-            # 選択肢を表示
-            choices = question.get('choices', [])
-            if choices:
-                st.markdown("**選択肢:**")
-                for choice_idx, choice in enumerate(choices):
-                    choice_label = chr(65 + choice_idx)  # A, B, C, D...
-                    if isinstance(choice, dict):
-                        choice_text = choice.get('text', str(choice))
-                    else:
-                        choice_text = str(choice)
-                    
-                    # ユーザーの選択と正解を強調表示
-                    is_user_choice = False
-                    is_correct_choice = choice_label == correct_answer or (isinstance(user_answer, list) and choice_label in user_answer)
-                    
-                    if isinstance(user_answer, list):
-                        is_user_choice = choice_label in user_answer
-                    elif isinstance(user_answer, str):
-                        is_user_choice = choice_label == user_answer
-                    
-                    # スタイリング
-                    if choice_label == correct_answer:
-                        st.markdown(f"**{choice_label}. {choice_text}** ✅ (正解)")
-                    elif is_user_choice:
-                        st.markdown(f"**{choice_label}. {choice_text}** ❌ (あなたの選択)")
-                    else:
-                        st.markdown(f"{choice_label}. {choice_text}")
-            
             # ユーザーの解答表示
             if isinstance(user_answer, list):
                 user_answer_text = ', '.join(user_answer) if user_answer else "未選択"
