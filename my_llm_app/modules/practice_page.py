@@ -22,7 +22,6 @@ from utils import (
     CardSelectionUtils, SM2Algorithm, AnalyticsUtils,
     HISSHU_Q_NUMBERS_SET, GAKUSHI_HISSHU_Q_NUMBERS_SET
 )
-from firebase_analytics import FirebaseAnalytics, PerformanceAnalytics
 from subject_mapping import get_standardized_subject
 from performance_optimizer import CachedDataManager, PerformanceOptimizer
 
@@ -1218,21 +1217,21 @@ def _process_group_answer_improved(q_objects: List[Dict], user_selections: Dict,
             "correct_answer": result.get("correct_answer", "unknown")
         })
         
-        # Firebase Analytics統合
-        FirebaseAnalytics.log_question_answered(
-            uid=uid,
-            question_id=qid,
-            is_correct=result['is_correct'],
-            quality=0,  # 自己評価前なので0
-            metadata={
-                "session_type": session_type,
-                "question_number": question_data.get("number", "unknown"),
-                "subject": question_data.get("subject", "unknown"),
-                "session_duration_seconds": session_duration,
-                "answer_method": "multiple_choice",
-                "group_id": group_id
-            }
-        )
+        # Firebase Analytics統合 (無効化)
+        # FirebaseAnalytics.log_question_answered(
+        #     uid=uid,
+        #     question_id=qid,
+        #     is_correct=result['is_correct'],
+        #     quality=0,  # 自己評価前なので0
+        #     metadata={
+        #         "session_type": session_type,
+        #         "question_number": question_data.get("number", "unknown"),
+        #         "subject": question_data.get("subject", "unknown"),
+        #         "session_duration_seconds": session_duration,
+        #         "answer_method": "multiple_choice",
+        #         "group_id": group_id
+        #     }
+        # )
         
         # Google Analytics統合
         AnalyticsUtils.track_question_answered(qid, result['is_correct'])
@@ -1285,22 +1284,22 @@ def _process_self_evaluation_improved(q_objects: List[Dict], quality_text: str,
         # Firestoreに保存
         save_user_data(uid, qid, updated_card)
         
-        # Firebase Analytics: 自己評価ログ
+        # Firebase Analytics: 自己評価ログ (無効化)
         result_data = st.session_state.get(f"result_{group_id}", {}).get(qid, {})
-        FirebaseAnalytics.log_question_answered(
-            uid=uid,
-            question_id=qid,
-            is_correct=result_data.get('is_correct', False),
-            quality=quality,
-            metadata={
-                "session_type": st.session_state.get("session_type", "unknown"),
-                "quality_text": quality_text,
-                "self_evaluation": True,
-                "group_id": group_id,
-                "ef_after": updated_card.get("EF", 2.5),
-                "interval_after": updated_card.get("interval", 0)
-            }
-        )
+        # FirebaseAnalytics.log_question_answered(
+        #     uid=uid,
+        #     question_id=qid,
+        #     is_correct=result_data.get('is_correct', False),
+        #     quality=quality,
+        #     metadata={
+        #         "session_type": st.session_state.get("session_type", "unknown"),
+        #         "quality_text": quality_text,
+        #         "self_evaluation": True,
+        #         "group_id": group_id,
+        #         "ef_after": updated_card.get("EF", 2.5),
+        #         "interval_after": updated_card.get("interval", 0)
+        #     }
+        # )
     
     st.session_state["cards"] = cards
     

@@ -1549,17 +1549,17 @@ class DentalApp:
                     st.success(f"📚 {len(questions)}問の学習セッションを開始します")
                     AnalyticsUtils.track_study_session_start("auto_learning", len(questions))
                     
-                    # Firebase Analytics統合
-                    from firebase_analytics import FirebaseAnalytics
-                    FirebaseAnalytics.log_study_session_start(
-                        uid=uid,
-                        session_type="auto_learning",
-                        metadata={
-                            "target": st.session_state.get("analysis_target", "国試"),
-                            "question_count": len(questions),
-                            "source": "cloud_function"
-                        }
-                    )
+                    # Firebase Analytics統合 (無効化)
+                    # from firebase_analytics import FirebaseAnalytics
+                    # FirebaseAnalytics.log_study_session_start(
+                    #     uid=uid,
+                    #     session_type="auto_learning",
+                    #     metadata={
+                    #         "target": st.session_state.get("analysis_target", "国試"),
+                    #         "question_count": len(questions),
+                    #         "source": "cloud_function"
+                    #     }
+                    # )
                 else:
                     # Cloud Functionが失敗またはデータなし
                     print("Cloud Function returned no valid questions, using fallback")
@@ -1675,18 +1675,18 @@ class DentalApp:
         # 分析ログの記録
         AnalyticsUtils.track_study_session_start("auto_learning_fallback", len(all_questions))
         
-        # Firebase Analytics統合
-        from firebase_analytics import FirebaseAnalytics
-        FirebaseAnalytics.log_study_session_start(
-            uid=st.session_state.get("uid"),
-            session_type="auto_learning_fallback",
-            metadata={
-                "target": st.session_state.get("analysis_target", "国試"),
-                "question_count": len(all_questions),
-                "source": "local_fallback",
-                "fallback_reason": "cloud_function_error"
-            }
-        )
+        # Firebase Analytics統合 (無効化)
+        # from firebase_analytics import FirebaseAnalytics
+        # FirebaseAnalytics.log_study_session_start(
+        #     uid=st.session_state.get("uid"),
+        #     session_type="auto_learning_fallback",
+        #     metadata={
+        #         "target": st.session_state.get("analysis_target", "国試"),
+        #         "question_count": len(all_questions),
+        #         "source": "local_fallback",
+        #         "fallback_reason": "cloud_function_error"
+        #     }
+        # )
         st.info("📚 ローカル問題選択アルゴリズムを使用しています。")
         st.success(f"📚 {len(all_questions)}問の学習セッションを開始します")
     

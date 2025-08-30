@@ -614,53 +614,13 @@ def get_derived_data(all_questions: List[Dict[str, Any]]):
 def log_to_ga(event_name: str, user_id: str, params: Dict[str, Any]):
     """Google Analytics GA4にイベントを送信"""
     try:
-        # Firebase Analytics（Firestore経由）でのイベント記録
-        from firebase_analytics import FirebaseAnalytics
+        # Firebase Analytics（Firestore経由）でのイベント記録は無効化されています
+        # Firebase Analyticsモジュールが利用できないため、ログ出力のみ行います
+        print(f"[DEBUG] Analytics event: {event_name} for user {user_id} with params: {params}")
         
-        # 基本的なユーザーアクティビティ追跡
-        if event_name == "login":
-            FirebaseAnalytics.log_user_engagement(
-                uid=user_id,
-                event_type="login",
-                metadata=params
-            )
-        elif event_name == "logout":
-            FirebaseAnalytics.log_user_engagement(
-                uid=user_id,
-                event_type="logout", 
-                metadata=params
-            )
-        elif event_name == "question_answered":
-            FirebaseAnalytics.log_question_answered(
-                uid=user_id,
-                question_id=params.get("question_id", "unknown"),
-                is_correct=params.get("is_correct", False),
-                quality=params.get("quality", 0),
-                metadata=params
-            )
-        elif event_name == "study_session_start":
-            FirebaseAnalytics.log_study_session_start(
-                uid=user_id,
-                session_type=params.get("session_type", "unknown"),
-                metadata=params
-            )
-        elif event_name in ["ranking_view", "page_view"]:
-            FirebaseAnalytics.log_user_engagement(
-                uid=user_id,
-                event_type=event_name,
-                metadata=params
-            )
-        else:
-            # その他のイベント
-            FirebaseAnalytics.log_user_engagement(
-                uid=user_id,
-                event_type=event_name,
-                metadata=params
-            )
+        # 必要に応じて将来のAnalytics統合のためのプレースホルダー
+        pass
             
-        # 日次アクティブユーザー追跡
-        _track_daily_active_user(user_id)
-        
     except Exception as e:
         print(f"[DEBUG] GA logging error (non-critical): {e}")
 
