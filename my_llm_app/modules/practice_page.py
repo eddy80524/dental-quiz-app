@@ -598,7 +598,9 @@ class ResultModeComponent:
                     st.markdown("---")
         
         # 自己評価エリア
-        return ResultModeComponent._render_self_evaluation(group_id)    @staticmethod
+        return ResultModeComponent._render_self_evaluation(group_id)
+    
+    @staticmethod
     def _render_self_evaluation(group_id: str) -> Dict[str, Any]:
         """自己評価フォームの描画"""
         
