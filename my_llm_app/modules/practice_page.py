@@ -289,16 +289,6 @@ class QuestionComponent:
         </style>
         """, unsafe_allow_html=True)
         
-        # 問題タイプ表示
-        if questions:
-            first_question_id = questions[0].get('number', '')
-            cards = st.session_state.get("cards", {})
-            
-            if first_question_id in cards and cards[first_question_id].get('n', 0) > 0:
-                st.info("🔄 **復習問題**")
-            else:
-                st.info("🆕 **新規問題**")
-        
         # 症例情報エリア（連問の場合）
         if case_data and case_data.get('scenario_text'):
             with st.container():
@@ -416,16 +406,6 @@ class AnswerModeComponent:
         }
         </style>
         """, unsafe_allow_html=True)
-        
-        # 問題タイプ表示
-        if questions:
-            first_question_id = questions[0].get('number', '')
-            cards = st.session_state.get("cards", {})
-            
-            if first_question_id in cards and cards[first_question_id].get('n', 0) > 0:
-                st.info("🔄 **復習問題**")
-            else:
-                st.info("🆕 **新規問題**")
         
         # 症例情報エリア（連問の場合）
         if case_data and case_data.get('scenario_text'):
@@ -554,26 +534,58 @@ class AnswerModeComponent:
                             mapping_key = f"label_mapping_{qid}_{group_id}"
                             label_mapping = st.session_state.get(mapping_key, {})
                             
-                            # 正解選択肢のテキストと表示ラベルを取得（シャッフルとマッピングに対応）
+                            # 正解選択肢のテキストと表示ラベルを取得（複数選択・シャッフル対応）
                             correct_choice_text = ""
                             correct_display_label = correct_answer  # デフォルトは元のラベル
+                            
                             try:
-                                # 元の選択肢順序から正解テキストを取得
+                                # utils.pyのformat_answer_displayを使用して複数選択対応の表示を取得
+                                from utils import QuestionUtils
+                                formatted_answer = QuestionUtils.format_answer_display(correct_answer)
+                                
+                                # 元の選択肢順序から正解テキストを取得（複数選択対応）
                                 original_choices = question.get('choices', [])
-                                if correct_answer and ord(correct_answer) - ord('A') < len(original_choices):
-                                    correct_choice_text = original_choices[ord(correct_answer) - ord('A')]
-                                    
-                                    # ラベルマッピングを使用してシャッフル後の表示ラベルを取得
-                                    if label_mapping:
-                                        # マッピングを逆引きして、元のラベルから表示ラベルを取得
-                                        for display_label, original_label in label_mapping.items():
-                                            if original_label == correct_answer:
-                                                correct_display_label = display_label
-                                                break
+                                choice_texts = []
+                                
+                                if len(correct_answer) == 1:
+                                    # 単一選択の場合
+                                    if correct_answer and ord(correct_answer) - ord('A') < len(original_choices):
+                                        correct_choice_text = original_choices[ord(correct_answer) - ord('A')]
+                                        
+                                        # ラベルマッピングを使用してシャッフル後の表示ラベルを取得
+                                        if label_mapping:
+                                            for display_label, original_label in label_mapping.items():
+                                                if original_label == correct_answer:
+                                                    correct_display_label = display_label
+                                                    break
+                                    else:
+                                        correct_choice_text = "選択肢が見つかりません"
+                                        
                                 else:
-                                    correct_choice_text = "不明"
-                            except:
-                                correct_choice_text = "不明"
+                                    # 複数選択の場合（ACD等）
+                                    display_labels = []
+                                    for char in correct_answer:
+                                        if char and ord(char) - ord('A') < len(original_choices):
+                                            choice_text = original_choices[ord(char) - ord('A')]
+                                            choice_texts.append(f"{char}. {choice_text}")
+                                            
+                                            # シャッフル後の表示ラベルを取得
+                                            display_label = char
+                                            if label_mapping:
+                                                for disp_label, orig_label in label_mapping.items():
+                                                    if orig_label == char:
+                                                        display_label = disp_label
+                                                        break
+                                            display_labels.append(display_label)
+                                    
+                                    # 複数選択の表示フォーマット
+                                    correct_choice_text = "、".join(choice_texts)
+                                    correct_display_label = formatted_answer
+                                    
+                            except Exception as e:
+                                print(f"[DEBUG] 正答表示エラー: {e}")
+                                correct_choice_text = "表示エラー"
+                                correct_display_label = correct_answer
                             
                             # 正解/不正解のアラート表示（シャッフル後の実際の表示ラベルを使用）
                             if is_correct:
@@ -979,12 +991,25 @@ def _render_omakase_session(practice_session: PracticeSession, uid: str):
     """おまかせ演習セッションの表示"""
     st.header("おまかせ演習")
     
-    # セッションリセットボタン
-    col1, col2 = st.columns([3, 1])
-    with col2:
-        if st.button("セッションリセット", help="新しいセッションを開始"):
-            _reset_session()
-            return
+    # ヘッダーと問題の間の余白を調整
+    st.markdown("""
+    <style>
+    /* ヘッダーの下余白を削除 */
+    h1 {
+        margin-bottom: 0.5rem !important;
+    }
+    /* 問題コンテナの上余白を削除 */
+    div[style*="background-color: rgb(250, 250, 250)"] {
+        margin-top: 0 !important;
+        padding-top: 8px !important;
+    }
+    /* 全体的な要素間隔を調整 */
+    [data-testid="stElementContainer"] {
+        margin-top: 0 !important;
+        margin-bottom: 0.25rem !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
     
     # 現在の問題グループを取得
     current_group = st.session_state.get("current_q_group", [])
@@ -1024,13 +1049,6 @@ def _render_free_learning_session(practice_session: PracticeSession, uid: str):
     """自由演習セッションの表示"""
     session_type = st.session_state.get("session_type", "自由演習")
     st.header(session_type)
-    
-    # セッションリセットボタン
-    col1, col2 = st.columns([3, 1])
-    with col2:
-        if st.button("セッションリセット", help="新しいセッションを開始", key="free_reset"):
-            _reset_session()
-            return
     
     # 現在の問題グループを取得
     current_group = st.session_state.get("current_q_group", [])
@@ -1102,15 +1120,6 @@ def _render_custom_settings():
             help="演習したい分野を選択してください"
         )
         
-        # 難易度選択
-        difficulty_levels = ["基礎", "標準", "応用", "すべて"]
-        selected_difficulty = st.selectbox(
-            "⭐ 難易度",
-            difficulty_levels,
-            index=3,  # デフォルトで「すべて」
-            help="問題の難易度を選択してください"
-        )
-        
         # 設定ボタン
         if st.button("問題を生成", type="primary", use_container_width=True):
             if not selected_years:
@@ -1125,7 +1134,6 @@ def _render_custom_settings():
             st.session_state["custom_settings"] = {
                 "years": selected_years,
                 "subjects": selected_subjects,
-                "difficulty": selected_difficulty,
                 "num_questions": num_questions
             }
             
@@ -1142,13 +1150,6 @@ def _render_custom_settings():
 def _render_custom_session(practice_session: PracticeSession, uid: str):
     """カスタム演習セッションの表示"""
     st.header("🎯 カスタム演習")
-    
-    # セッションリセットボタン
-    col1, col2 = st.columns([3, 1])
-    with col2:
-        if st.button("🔄 セッションリセット", help="新しいセッションを開始"):
-            _reset_session()
-            return
     
     # カスタム演習の設定UI
     with st.expander("⚙️ 演習設定", expanded=True):
@@ -1192,6 +1193,21 @@ def _render_custom_session(practice_session: PracticeSession, uid: str):
 
 def _display_current_question(practice_session: PracticeSession, uid: str):
     """現在の問題を表示（コンポーネントベースの実装）"""
+    
+    # 問題表示エリアの余白を調整
+    st.markdown("""
+    <style>
+    div[style*="background-color: rgb(250, 250, 250)"] {
+        margin-top: 0 !important;
+        padding-top: 8px !important;
+    }
+    [data-testid="stElementContainer"] {
+        margin-top: 0 !important;
+        margin-bottom: 0.25rem !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
     # 1. 表示する問題グループの決定
     current_group = st.session_state.get("current_q_group", [])
     
@@ -1889,9 +1905,13 @@ def render_practice_sidebar():
                         has_gakushi_permission = check_gakushi_permission(uid)
 
                         if has_gakushi_permission:
-                            available_questions = ALL_QUESTIONS
+                            available_questions = ALL_QUESTIONS.copy()
                         else:
                             available_questions = [q for q in ALL_QUESTIONS if not q.get("number", "").startswith("G")]
+                        
+                        # 利用可能な問題を事前にシャッフル（より完全なランダム性を確保）
+                        import random
+                        random.shuffle(available_questions)
 
                         pick_ids = CardSelectionUtils.pick_new_cards_for_today(
                             available_questions,
@@ -1905,6 +1925,9 @@ def render_practice_sidebar():
                             if qid not in st.session_state.cards:
                                 st.session_state.cards[qid] = {}
 
+                        # 復習問題と新規問題を混合してシャッフル（完全ランダム出題順序）
+                        import random
+                        random.shuffle(grouped_queue)
 
                         if grouped_queue:
                             st.session_state.main_queue = grouped_queue
@@ -1986,11 +2009,15 @@ def render_practice_sidebar():
                     if selected_subject:
                         questions_to_load = [q for q in ALL_QUESTIONS if q.get("subject") == selected_subject and not str(q.get("number","")).startswith("G")]
                 else:
+                    GAKUSHI_KISO_SUBJECTS = ["倫理学", "化学", "歯科理工学", "生理学", "法医学教室", "口腔病理学", "薬理学", "生物学", "口腔衛生学", "口腔解剖学", "生化学", "物理学", "解剖学", "細菌学"]
+                    GAKUSHI_RINSHOU_SUBJECTS = ["内科学", "歯周病学", "口腔治療学", "有歯補綴咬合学", "欠損歯列補綴咬合学", "歯科保存学", "口腔インプラント", "口腔外科学1", "口腔外科学2", "歯科放射線学", "歯科麻酔学", "歯科矯正学", "障がい者歯科", "高齢者歯科学", "小児歯科学"]
+                    group = st.radio("科目グループ", ["基礎系科目", "臨床系科目"], key="free_gakushi_subject_group")
+                    subjects_to_display = GAKUSHI_KISO_SUBJECTS if group == "基礎系科目" else GAKUSHI_RINSHOU_SUBJECTS
                     _, _, _, g_subjects = QuestionUtils.build_gakushi_indices(ALL_QUESTIONS)
-                    if g_subjects:
-                        selected_subject = st.selectbox("科目", g_subjects, key="free_g_subject")
-                        if selected_subject:
-                            questions_to_load = [q for q in ALL_QUESTIONS if str(q.get("number","")).startswith("G") and (q.get("subject") == selected_subject)]
+                    available_subjects = [s for s in g_subjects if s in subjects_to_display]
+                    selected_subject = st.selectbox("科目", available_subjects, key="free_g_subject")
+                    if selected_subject:
+                        questions_to_load = [q for q in ALL_QUESTIONS if str(q.get("number","")).startswith("G") and (q.get("subject") == selected_subject)]
 
             elif mode == "必修問題のみ":
                 if target_exam == "国試":

@@ -1,12 +1,13 @@
 """
-歯科国家試験対策アプリ - メインファイル（リファクタリング版）
+歯科国家試験対策アプリ - メインファイル（高速最適化版）
 
 主な変更点:
 - モジュール化された構造
 - UID統一によるユーザー管理
-- パフォーマンス最適化
+- 高速パフォーマンス最適化（練習ページ同等）
 - セキュリティ強化
 - practice_page.py UnboundLocalError修正済み (2025-08-30)
+- 検索・進捗ページ高速化対応
 """
 
 import streamlit as st
@@ -44,8 +45,25 @@ except ImportError:
     HISSHU_Q_NUMBERS_SET = set()
     GAKUSHI_HISSHU_Q_NUMBERS_SET = set()
     print("[WARNING] HISSHU_Q_NUMBERS_SET と GAKUSHI_HISSHU_Q_NUMBERS_SET のインポートに失敗しました")
+
+# ページモジュールのインポート（高速化対応）
 from modules.practice_page import render_practice_page, render_practice_sidebar
 from modules.updated_ranking_page import render_updated_ranking_page
+
+# パフォーマンス最適化モジュールのインポート
+try:
+    from modules.search_page_optimizer import (
+        SearchPageOptimizer, 
+        LazyDataLoader, 
+        ResponsiveUI, 
+        SmartCache
+    )
+    OPTIMIZATION_ENABLED = True
+    print("[INFO] パフォーマンス最適化モジュールが正常にロードされました")
+except ImportError:
+    OPTIMIZATION_ENABLED = False
+    print("[WARNING] パフォーマンス最適化モジュールのインポートに失敗しました")
+
 # from enhanced_analytics import enhanced_ga, EnhancedGoogleAnalytics
 
 # 最適化モジュールのインポート (不要なものはコメントアウト)
@@ -607,7 +625,7 @@ class DentalApp:
 
             # 対象範囲
             if has_gakushi_permission:
-                analysis_target = st.radio("分析対象", ["国試", "学士試験", "全体"], key="analysis_target")
+                analysis_target = st.radio("分析対象", ["国試", "学士試験"], key="analysis_target")
             else:
                 analysis_target = "国試"
 
@@ -682,7 +700,6 @@ class DentalApp:
                         evaluated_marks.append(quality_to_mark[quality])
                         evaluation_found = True
                         cards_with_evaluations += 1
-                        print(f"[DEBUG] カード {card_id}: historyから評価取得 quality={quality}")
                 
                 # パターン2: 直接qualityフィールドから取得
                 if not evaluation_found and card.get('quality'):
@@ -691,7 +708,6 @@ class DentalApp:
                         evaluated_marks.append(quality_to_mark[quality])
                         evaluation_found = True
                         cards_with_evaluations += 1
-                        print(f"[DEBUG] カード {card_id}: 直接qualityから評価取得 quality={quality}")
             
             # パターン3: result_logからも評価を取得（最新の自己評価を反映）
             result_log = st.session_state.get("result_log", {})
@@ -705,10 +721,6 @@ class DentalApp:
                     if q_id not in [cid for cid, _ in current_cards.items() if any(h.get('quality') == quality for h in _.get('history', []))]:
                         evaluated_marks.append(quality_to_mark[quality])
                         cards_with_evaluations += 1
-                        print(f"[DEBUG] カード {q_id}: result_logから評価取得 quality={quality}")
-            
-            print(f"[DEBUG] 評価が見つかったカード数: {cards_with_evaluations}")
-            print(f"[DEBUG] 評価マーク: {evaluated_marks}")
             
             total_evaluated = len(evaluated_marks)
             counter = Counter(evaluated_marks)
@@ -733,8 +745,6 @@ class DentalApp:
                         last_history = history[-1]
                         if last_history.get('timestamp'):
                             cards_with_history.append((q_num, card))
-                
-                print(f"[DEBUG] 履歴があるカード数: {len(cards_with_history)}")
                 
                 if cards_with_history:
                     # タイムスタンプの型を統一してソート
@@ -1375,7 +1385,13 @@ class DentalApp:
             print("[DEBUG] Rendering ranking page...")
             render_updated_ranking_page()
         elif current_page == "検索・進捗":
-            print("[DEBUG] Rendering search page...")
+            print("[DEBUG] Rendering optimized search page...")
+            
+            # パフォーマンス最適化: アクション時刻記録
+            if OPTIMIZATION_ENABLED:
+                SearchPageOptimizer.mark_action_time()
+            
+            # 遅延インポートで初回ロード高速化
             from modules.search_page import render_search_page
             render_search_page()
         else:

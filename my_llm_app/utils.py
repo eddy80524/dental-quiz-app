@@ -238,11 +238,11 @@ class QuestionUtils:
     @staticmethod
     def check_answer(user_choice: str, correct_answer: str) -> bool:
         """
-        複数正解に対応した解答判定
+        複数正解に対応した解答判定（複数選択問題対応）
         
         Args:
-            user_choice: ユーザーの選択 (例: "A", "AD", "ABC")
-            correct_answer: 正解 (例: "A", "A/D", "AD/AC/CD", "ABC/ABD/ACD/BCD")
+            user_choice: ユーザーの選択 (例: "A", "AD", "ABC", "AC")
+            correct_answer: 正解 (例: "A", "A/D", "AD/AC/CD", "ABC/ABD/ACD/BCD", "AC")
         
         Returns:
             bool: 正解かどうか
@@ -251,29 +251,41 @@ class QuestionUtils:
             return False
         
         user_choice = user_choice.strip()
+        correct_answer = correct_answer.strip()
         
         # 複数正解の場合（/区切り）
         if '/' in correct_answer:
             valid_answers = [ans.strip() for ans in correct_answer.split('/')]
             return user_choice in valid_answers
         
+        # 複数選択問題の場合（正答が「AC」「BD」など複数文字）
+        # ユーザーの回答と正答を文字レベルで比較
+        if len(correct_answer) > 1 and len(user_choice) > 1:
+            # 文字を昇順にソートして比較（順序に依存しない）
+            user_sorted = ''.join(sorted(user_choice.upper()))
+            correct_sorted = ''.join(sorted(correct_answer.upper()))
+            return user_sorted == correct_sorted
+        
         # 単一正解の場合
-        return user_choice == correct_answer.strip()
+        return user_choice.upper() == correct_answer.upper()
     
     @staticmethod
     def format_answer_display(correct_answer: str) -> str:
         """
-        正解を表示用にフォーマット
+        正解を表示用にフォーマット（複数選択問題対応）
         
         Args:
-            correct_answer: 正解 (例: "A", "A/D", "AD/AC/CD", "ABC/ABD/ACD/BCD")
+            correct_answer: 正解 (例: "A", "A/D", "AD/AC/CD", "ABC/ABD/ACD/BCD", "AC")
         
         Returns:
             str: 表示用文字列
         """
         if not correct_answer:
-            return ""
+            return "不明"
         
+        correct_answer = correct_answer.strip()
+        
+        # 複数正解の場合（/区切り）
         if '/' in correct_answer:
             answers = [ans.strip() for ans in correct_answer.split('/')]
             if len(answers) == 2:
@@ -281,7 +293,16 @@ class QuestionUtils:
             else:
                 return "、".join(answers[:-1]) + f" または {answers[-1]}"
         
-        return correct_answer.strip()
+        # 複数選択問題の場合（「AC」「BD」など）
+        if len(correct_answer) > 1:
+            # 選択肢を文字ごとに分けて表示
+            choices = list(correct_answer.upper())
+            if len(choices) == 2:
+                return f"{choices[0]} と {choices[1]}"
+            else:
+                return "、".join(choices[:-1]) + f" と {choices[-1]}"
+        
+        return correct_answer.upper()
     
     @staticmethod
     def build_gakushi_indices(all_questions: List[Dict[str, Any]]):
@@ -557,21 +578,25 @@ class CardSelectionUtils:
             # 最近の科目ペナルティ
             recent_penalty = CardSelectionUtils.recent_subject_penalty(q_subject, recent_qids, qid_to_subject)
             
-            # ランダム要素を追加（同じスコアの問題間でランダム性を確保）
+            # ランダム要素を強化（よりランダムな選択を実現）
             import random
-            random_factor = random.uniform(0, 0.1)  # 0-0.1のランダム値
+            random_factor = random.uniform(0, 0.5)  # 0-0.5のランダム値（従来の5倍）
             
             # 総合スコア
             total_score = balance_score - recent_penalty + random_factor
             candidates.append((qid, total_score, q_subject))
 
-        # スコア順にソートして上位N個を選択
+        # 候補を完全にシャッフルしてからスコア順ソート（ランダム性を強化）
+        random.shuffle(candidates)  # 最初にシャッフル
         candidates.sort(key=lambda x: x[1], reverse=True)
         
         # さらに上位候補の中からランダム選択（多様性を確保）
-        top_candidates = candidates[:min(N * 3, len(candidates))]  # 目標数の3倍を候補とする
-        random.shuffle(top_candidates)  # 上位候補をシャッフル
+        top_candidates = candidates[:min(N * 5, len(candidates))]  # 目標数の5倍を候補とする（従来の3倍から5倍に増加）
+        random.shuffle(top_candidates)  # 上位候補を再度シャッフル
         selected = [c[0] for c in top_candidates[:N]]
+        
+        # 最終的に選択されたカードもシャッフル（出題順序もランダムに）
+        random.shuffle(selected)
         
         # デバッグ情報を出力
         print(f"[DEBUG] 新規カード選択: 候補数={len(candidates)}, 選択数={len(selected)}")
