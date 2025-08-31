@@ -15,17 +15,35 @@ import time
 import re
 import random
 from typing import Optional
+from collections import Counter
+
+# Streamlit設定 - サイドバーを自動展開
+st.set_page_config(
+    page_title="歯科国家試験AI対策アプリ",
+    page_icon="🦷",
+    layout="wide",
+    initial_sidebar_state="expanded"  # サイドバーを展開状態で開始
+)
 
 # モジュールのインポート
 from auth import AuthManager, CookieManager, call_cloud_function
-from firestore_db import get_firestore_manager, check_gakushi_permission
+from firestore_db import get_firestore_manager, check_gakushi_permission, save_user_data
 from utils import (
-    ALL_QUESTIONS, 
+    ALL_QUESTIONS,
+    ALL_QUESTIONS_DICT, 
     log_to_ga, 
-    HISSHU_Q_NUMBERS_SET, 
-    GAKUSHI_HISSHU_Q_NUMBERS_SET, 
-    AnalyticsUtils
+    AnalyticsUtils,
+    get_natural_sort_key
 )
+
+# 必修問題セットは後でインポート（循環import回避）
+try:
+    from utils import HISSHU_Q_NUMBERS_SET, GAKUSHI_HISSHU_Q_NUMBERS_SET
+except ImportError:
+    # フォールバック: 空のセットを定義
+    HISSHU_Q_NUMBERS_SET = set()
+    GAKUSHI_HISSHU_Q_NUMBERS_SET = set()
+    print("[WARNING] HISSHU_Q_NUMBERS_SET と GAKUSHI_HISSHU_Q_NUMBERS_SET のインポートに失敗しました")
 from modules.practice_page import render_practice_page, render_practice_sidebar
 from modules.updated_ranking_page import render_updated_ranking_page
 # from enhanced_analytics import enhanced_ga, EnhancedGoogleAnalytics
@@ -47,677 +65,14 @@ from subject_mapping import get_standardized_subject, get_all_standardized_subje
 
 def apply_sidebar_button_styles():
     """
-    サイドバーのボタンにスタイリッシュなデザインを適用する関数
+    サイドバーのボタンにシンプルなスタイリングを適用する関数
     """
-    st.markdown("""
-    <style>
-    /* サイドバーのプライマリボタンのスタイル */
-    .stSidebar .stButton > button[kind="primary"] {
-        background-color: #0066cc !important;
-        color: white !important;
-        border: none !important;
-        border-radius: 8px !important;
-        font-weight: 600 !important;
-        padding: 0.5rem 1rem !important;
-        transition: all 0.3s ease !important;
-        box-shadow: 0 2px 4px rgba(0, 102, 204, 0.2) !important;
-    }
-
-    /* プライマリボタンのホバー効果 */
-    .stSidebar .stButton > button[kind="primary"]:hover {
-        background-color: #0052a3 !important;
-        color: white !important;
-        transform: translateY(-1px) !important;
-        box-shadow: 0 4px 8px rgba(0, 82, 163, 0.3) !important;
-    }
-
-    /* セカンダリボタンのスタイル */
-    .stSidebar .stButton > button[kind="secondary"] {
-        background-color: #f8f9fa !important;
-        color: #0066cc !important;
-        border: 2px solid #0066cc !important;
-        border-radius: 8px !important;
-        font-weight: 600 !important;
-        padding: 0.5rem 1rem !important;
-        transition: all 0.3s ease !important;
-    }
-
-    /* セカンダリボタンのホバー効果 */
-    .stSidebar .stButton > button[kind="secondary"]:hover {
-        background-color: #0066cc !important;
-        color: white !important;
-        border-color: #0052a3 !important;
-        transform: translateY(-1px) !important;
-        box-shadow: 0 4px 8px rgba(0, 102, 204, 0.2) !important;
-    }
-
-    /* 通常ボタンのスタイル */
-    .stSidebar .stButton > button {
-        background-color: #6c757d !important;
-        color: white !important;
-        border: none !important;
-        border-radius: 8px !important;
-        font-weight: 500 !important;
-        padding: 0.5rem 1rem !important;
-        transition: all 0.3s ease !important;
-        width: auto !important;
-        min-width: 120px !important;
-        max-width: 200px !important;
-    }
-
-    /* 通常ボタンのホバー効果 */
-    .stSidebar .stButton > button:hover {
-        background-color: #5a6268 !important;
-        color: white !important;
-        transform: translateY(-1px) !important;
-        box-shadow: 0 4px 8px rgba(108, 117, 125, 0.2) !important;
-    }
-
-    /* フォーカス時のアウトライン除去 */
-    .stSidebar .stButton > button:focus {
-        outline: none !important;
-        box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.3) !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-
-def get_natural_sort_key(q_dict):
-    """
-    問題辞書を受け取り、自然順ソート用のキー（タプル）を返す。
-    例: "112A5" -> (112, 'A', 5)
-    学士試験形式: "G24-1-1-A-1" や "G24-2再-A-1" -> ('G', 24, '1-1', 'A', 1)
-    """
-    try:
-        q_num_str = q_dict.get('number', '0')
-        # 学士試験形式: G24-1-1-A-1 や G24-2再-A-1 に対応
-        # データ正規化済みでハイフンのみ使用
-        m_gakushi = re.match(r'^(G)(\d+)-([\d\-再]+)-([A-Z])-(\d+)$', q_num_str)
-        if m_gakushi:
-            return (
-                0,                       # 学士試験は先頭に0を置いて従来形式と区別
-                m_gakushi.group(1),      # G
-                int(m_gakushi.group(2)), # 年度
-                m_gakushi.group(3),      # 1-1や2再
-                m_gakushi.group(4),      # A
-                int(m_gakushi.group(5))  # 問題番号
-            )
-        
-        # 従来形式: 112A5 → (1, 112, 'A', 5)
-        m = re.match(r'^(\d+)([A-Z])(\d+)$', q_num_str)
-        if m:
-            return (
-                1,                    # 従来形式は1を置く
-                int(m.group(1)),      # 回数
-                m.group(2),           # 領域 (A, B, C, D)
-                int(m.group(3))       # 問題番号
-            )
-        
-        # その他の形式はそのまま文字列でソート
-        return (2, q_num_str)
-        
-    except Exception as e:
-        print(f"[DEBUG] ソートキー生成エラー: {q_num_str}, {e}")
-        return (999, q_num_str)
+    # デフォルトのスタイルを使用するため、何も適用しない
+    pass
 
 
 # アプリバージョン
 APP_VERSION = "2024-08-24-refactored"
-
-# ページ設定
-st.set_page_config(
-    page_title="歯科国試アプリ | AI対策システム",
-    page_icon="🦷",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# スタイル設定
-st.markdown("""
-<style>
-/* カラーパレット定義 */
-:root {
-    --primary-color: #1c83e1;     /* 明るい青 (Streamlitのアクセント色に近い) */
-    --primary-hover: #1a73c7;     /* 少し暗い青 */
-    --primary-light: rgba(28, 131, 225, 0.1);  /* 淡い青背景 */
-    --secondary-color: #4caf50;   /* 緑（正解表示等に使用） */
-    --danger-color: #f44336;      /* 赤（エラー表示等に使用） */
-    --warning-color: #ff9800;     /* オレンジ（警告表示等に使用） */
-    --background-light: #f8f9fa;  /* 明るいグレー背景 */
-    --border-color: #e0e0e0;      /* ボーダーカラー */
-    --text-primary: #2c3e50;      /* 濃いグレー文字 */
-    --text-secondary: #6c757d;    /* セカンダリ文字 */
-}
-
-/* ライトモード固定設定 */
-.stApp {
-    background-color: #ffffff;
-    color: var(--text-primary);
-}
-
-.stSidebar {
-    background-color: var(--background-light);
-}
-
-/* プライマリボタンのスタイル統一 */
-.stButton > button[kind="primary"] {
-    background-color: var(--primary-color) !important;
-    color: white !important;
-    border: none !important;
-    border-radius: 8px !important;
-    font-weight: 500 !important;
-    transition: all 0.2s ease !important;
-    box-shadow: 0 2px 4px rgba(28, 131, 225, 0.2) !important;
-}
-
-.stButton > button[kind="primary"]:hover {
-    background-color: var(--primary-hover) !important;
-    color: white !important;
-    transform: translateY(-1px) !important;
-    box-shadow: 0 4px 8px rgba(28, 131, 225, 0.3) !important;
-}
-
-.stButton > button[kind="primary"]:focus {
-    background-color: var(--primary-color) !important;
-    color: white !important;
-    box-shadow: 0 0 0 0.2rem rgba(28, 131, 225, 0.25) !important;
-}
-
-/* セカンダリボタンのスタイル */
-.stButton > button[kind="secondary"] {
-    background-color: transparent !important;
-    color: var(--primary-color) !important;
-    border: 2px solid var(--primary-color) !important;
-    border-radius: 8px !important;
-    font-weight: 500 !important;
-    transition: all 0.2s ease !important;
-}
-
-.stButton > button[kind="secondary"]:hover {
-    background-color: var(--primary-light) !important;
-    color: var(--primary-hover) !important;
-    border-color: var(--primary-hover) !important;
-}
-
-/* セレクトボックスのスタイル改善 */
-.stSelectbox > div > div {
-    border-radius: 8px !important;
-    border-color: var(--border-color) !important;
-}
-
-.stSelectbox > div > div:focus-within {
-    border-color: var(--primary-color) !important;
-    box-shadow: 0 0 0 0.2rem rgba(28, 131, 225, 0.25) !important;
-}
-
-/* マルチセレクトのスタイル改善 */
-.stMultiSelect > div > div {
-    border-radius: 8px !important;
-    border-color: var(--border-color) !important;
-}
-
-.stMultiSelect > div > div:focus-within {
-    border-color: var(--primary-color) !important;
-    box-shadow: 0 0 0 0.2rem rgba(28, 131, 225, 0.25) !important;
-}
-
-/* アラートのスタイル統一 */
-.stAlert {
-    border-radius: 8px !important;
-    border: 1px solid var(--border-color) !important;
-}
-
-/* 情報アラート */
-.stAlert[data-baseweb="notification"] {
-    background-color: var(--primary-light) !important;
-    border-color: var(--primary-color) !important;
-}
-
-/* 問題カードのスタイル */
-.question-card {
-    background-color: var(--background-light);
-    border: 1px solid var(--border-color);
-    border-radius: 12px;
-    padding: 24px;
-    margin: 16px 0;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-    transition: all 0.2s ease;
-}
-
-.question-card:hover {
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-    transform: translateY(-2px);
-}
-
-/* メトリクスのスタイル */
-.metric-container {
-    background-color: var(--background-light);
-    padding: 20px;
-    border-radius: 12px;
-    border-left: 4px solid var(--primary-color);
-    margin: 12px 0;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-}
-
-/* 正解・不正解の色 */
-.correct-answer {
-    color: var(--secondary-color) !important;
-    font-weight: 600 !important;
-}
-
-.incorrect-answer {
-    color: var(--danger-color) !important;
-    font-weight: 600 !important;
-}
-
-/* プログレスバーのスタイル */
-.stProgress > div > div > div > div {
-    background-color: var(--primary-color) !important;
-}
-
-/* タブのスタイル改善 - シンプルなデザイン */
-.stTabs [data-baseweb="tab-list"] {
-    gap: 0px;
-    border-bottom: 1px solid var(--border-color);
-}
-
-.stTabs [data-baseweb="tab"] {
-    border-radius: 0px !important;
-    padding: 12px 20px !important;
-    background-color: transparent !important;
-    color: var(--text-secondary) !important;
-    border: none !important;
-    border-bottom: 2px solid transparent !important;
-    transition: all 0.2s ease !important;
-    font-weight: 400 !important;
-}
-
-.stTabs [data-baseweb="tab"]:hover {
-    background-color: transparent !important;
-    color: var(--primary-color) !important;
-    border-bottom: 2px solid var(--primary-color) !important;
-}
-
-.stTabs [aria-selected="true"] {
-    background-color: transparent !important;
-    color: var(--primary-color) !important;
-    border-bottom: 2px solid var(--primary-color) !important;
-    font-weight: 600 !important;
-}
-
-/* タブハイライト要素を非表示にして重複下線を除去 */
-.stTabs [data-baseweb="tab-highlight"] {
-    display: none !important;
-}
-
-/* 代替案: ハイライト要素の高さを0にして非表示 */
-.stTabs .st-c2.st-cz {
-    height: 0 !important;
-    opacity: 0 !important;
-    visibility: hidden !important;
-}
-
-/* シンプルなデフォルトラジオボタン */
-.stRadio {
-    /* デフォルトのStreamlitラジオボタンを使用 */
-}
-
-/* 通常ボタンのスタイル（青色統一） */
-.stButton > button {
-    background-color: var(--primary-color) !important;
-    color: white !important;
-    border: none !important;
-    border-radius: 8px !important;
-    font-weight: 500 !important;
-    padding: 0.5rem 1rem !important;
-    transition: all 0.2s ease !important;
-    box-shadow: 0 2px 4px rgba(28, 131, 225, 0.2) !important;
-}
-
-.stButton > button:hover {
-    background-color: var(--primary-hover) !important;
-    color: white !important;
-    transform: translateY(-1px) !important;
-    box-shadow: 0 4px 8px rgba(28, 131, 225, 0.3) !important;
-}
-
-.stButton > button:focus {
-    background-color: var(--primary-color) !important;
-    color: white !important;
-    box-shadow: 0 0 0 0.2rem rgba(28, 131, 225, 0.25) !important;
-}
-
-
-/* チェックボックスのスタイル統一 */
-.stCheckbox > div > label {
-    display: flex !important;
-    align-items: center !important;
-    gap: 12px !important;
-    padding: 8px 12px !important;
-    border-radius: 8px !important;
-    border: 2px solid transparent !important;
-    background-color: transparent !important;
-    transition: all 0.2s ease !important;
-    cursor: default !important;
-    margin: 4px 0 !important;
-    pointer-events: none !important; /* ラベル全体のクリックを無効化 */
-}
-
-/* チェックボックス本体のスタイル（クリック可能な部分のみ） */
-.stCheckbox > div > label > div:first-child {
-    width: 24px !important;
-    height: 24px !important;
-    border: 2px solid var(--border-color) !important;
-    border-radius: 6px !important;
-    background-color: white !important;
-    transition: all 0.2s ease !important;
-    cursor: pointer !important;
-    flex-shrink: 0 !important;
-    position: relative !important;
-    pointer-events: auto !important; /* チェックボックス本体のみクリック可能 */
-}
-
-.stCheckbox > div > label > div:first-child:hover {
-    border-color: var(--primary-hover) !important;
-    background-color: var(--primary-light) !important;
-}
-
-/* チェックマーク表示 */
-.stCheckbox > div > label[data-checked="true"] > div:first-child {
-    border-color: var(--primary-color) !important;
-    background-color: var(--primary-color) !important;
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 16 16' fill='white' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M13.854 3.646a.5.5 0 0 1 0 .708l-7 7a.5.5 0 0 1-.708 0l-3.5-3.5a.5.5 0 1 1 .708-.708L6.5 10.293l6.646-6.647a.5.5 0 0 1 .708 0z'/%3E%3C/svg%3E") !important;
-    background-repeat: no-repeat !important;
-    background-position: center !important;
-    background-size: 16px 16px !important;
-}
-
-/* テキスト部分は非クリック可能 */
-.stCheckbox > div > label > span {
-    cursor: text !important;
-    pointer-events: none !important;
-    user-select: text !important; /* テキスト選択可能 */
-}
-
-/* 選択状態のラベル全体の背景削除 */
-.stCheckbox > div > label[data-checked="true"] {
-    border-color: transparent !important;
-    background-color: transparent !important;
-}
-
-
-}
-
-/* ヘッダーのスタイル */
-h1 {
-    color: var(--text-primary) !important;
-    font-weight: 700 !important;
-}
-
-h2, h3 {
-    color: var(--text-primary) !important;
-    font-weight: 600 !important;
-}
-
-/* サイドバー専用のスタイル */
-.stSidebar .stButton > button[kind="primary"] {
-    width: 100% !important;
-    margin: 4px 0 !important;
-}
-
-.stSidebar h1, .stSidebar h2, .stSidebar h3 {
-    color: var(--text-primary) !important;
-}
-
-/* カスタムコンポーネントのスタイル */
-.case-info-box {
-    background-color: var(--primary-light) !important;
-    padding: 16px 20px !important;
-    border-radius: 12px !important;
-    border-left: 4px solid var(--primary-color) !important;
-    margin-bottom: 20px !important;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05) !important;
-}
-
-.case-info-box strong,
-.case-info-box span {
-    color: var(--text-primary) !important;
-}
-
-/* 選択肢ボタンのスタイル */
-.choice-button {
-    margin: 4px 0 !important;
-    width: 100% !important;
-}
-
-.choice-button button {
-    text-align: left !important;
-    padding: 12px 16px !important;
-    border-radius: 8px !important;
-}
-
-/* 結果表示のスタイル */
-.result-correct {
-    background-color: rgba(76, 175, 80, 0.1) !important;
-    border: 2px solid var(--secondary-color) !important;
-    border-radius: 8px !important;
-    padding: 16px !important;
-    margin: 12px 0 !important;
-}
-
-.result-incorrect {
-    background-color: rgba(244, 67, 54, 0.1) !important;
-    border: 2px solid var(--danger-color) !important;
-    border-radius: 8px !important;
-    padding: 16px !important;
-    margin: 12px 0 !important;
-}
-
-/* 統計カードのスタイル */
-.stats-card {
-    background: linear-gradient(135deg, var(--primary-light), rgba(255, 255, 255, 0.8)) !important;
-    border-radius: 12px !important;
-    padding: 20px !important;
-    margin: 12px 0 !important;
-    border: 1px solid var(--border-color) !important;
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1) !important;
-}
-
-/* ダークモード防止 */
-@media (prefers-color-scheme: dark) {
-    .stApp {
-        background-color: #ffffff !important;
-        color: var(--text-primary) !important;
-    }
-}
-
-
-
-/* 余白を最小限に - さらなる最適化 */
-.st-emotion-cache-zy6yx3 {
-    padding: 0.5rem 0.5rem 0.5rem !important;
-}
-
-.st-emotion-cache-4rsbii {
-    padding-top: 0.5rem !important;
-}
-
-.st-emotion-cache-1u02ojh {
-    gap: 0.25rem !important;
-    row-gap: 0.25rem !important;
-    column-gap: 0.25rem !important;
-}
-
-[data-testid="stElementContainer"] {
-    margin-top: 0 !important;
-    margin-bottom: 0.25rem !important;
-}
-
-/* 新規問題表示と問題表示の間の余白を削除 */
-.st-emotion-cache-r44huj {
-    margin-top: 0 !important;
-    margin-bottom: 0 !important;
-    padding-top: 0 !important;
-    padding-bottom: 0 !important;
-}
-
-/* Markdownコンテナの余白調整 */
-.stMarkdown {
-    margin-top: 0 !important;
-    margin-bottom: 0 !important;
-}
-
-/* 情報ボックス（st.info）の余白調整 */
-.stAlert {
-    margin-top: 0 !important;
-    margin-bottom: 0.5rem !important;
-}
-
-/* アラートボックス内のテキストを中央揃え */
-.stAlert .st-emotion-cache-r44huj {
-    text-align: center !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-}
-
-/* アラートコンテナ全体を中央揃え */
-.stAlert [data-testid="stMarkdownContainer"] {
-    text-align: center !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-}
-
-/* アラートボックスのコンテンツ中央揃え */
-.stAlert [data-testid="stAlertContainer"] {
-    text-align: center !important;
-}
-
-/* アラートボックス内のpタグも中央揃え */
-.stAlert p {
-    text-align: center !important;
-    margin: 0 !important;
-}
-
-/* サイドバー内のアラートのみシンプルに左寄せ */
-.stSidebar .stAlert {
-    text-align: left;
-}
-
-.st-emotion-cache-13gev4o {
-    margin: 0 !important;
-    padding: 0 !important;
-}
-
-/* 新規問題表示のコンテナスタイル調整 */
-div[style*="background-color: rgb(250, 250, 250)"] {
-    margin-top: 0 !important;
-    padding-top: 12px !important;
-}
-
-/* 問題表示エリアの余白調整 */
-.stContainer {
-    margin-top: 0 !important;
-    padding-top: 0 !important;
-}
-
-/* アプリ全体の高さ調整 */
-.st-emotion-cache-6px8kg {
-    min-height: auto !important;
-    height: auto !important;
-}
-
-/* メインコンテナの調整 */
-.element-container {
-    margin: 0 !important;
-    padding: 0 !important;
-}
-
-/* iframeコンテナの調整 */
-.stIFrame {
-    margin: 0 !important;
-    padding: 0 !important;
-}
-
-/* 連続する要素間の余白を最小化 */
-.stElementContainer + .stElementContainer {
-    margin-top: 0 !important;
-}
-
-/* 情報ボックスの直後の要素の余白を削除 */
-.stAlert + .stElementContainer {
-    margin-top: 0 !important;
-}
-
-/* 新規問題/復習問題表示の直後の余白を削除 */
-.stAlert + .stMarkdown {
-    margin-top: 0 !important;
-}
-
-/* ログイン後のメインコンテンツエリアの上部マージン追加 */
-.stVerticalBlock.st-emotion-cache-1u02ojh {
-    margin-top: 1rem !important;
-    padding-top: 0.5rem !important;
-}
-
-/* メインコンテンツエリアのヘッダー調整 */
-.stMarkdown h1, .stMarkdown h2, .stMarkdown h3 {
-    margin-top: 0.5rem !important;
-    padding-top: 0.25rem !important;
-}
-
-/* アラートコンテナの上部マージン */
-.stAlert {
-    margin-top: 0.5rem !important;
-}
-
-/* ダウンロードボタンの統一スタイル */
-.stDownloadButton > button {
-    background: linear-gradient(135deg, var(--primary-color), var(--primary-hover)) !important;
-    color: white !important;
-    border: 2px solid var(--primary-color) !important;
-    border-radius: 8px !important;
-    padding: 0.5rem 1rem !important;
-    font-weight: 600 !important;
-    box-shadow: 0 2px 4px rgba(28, 131, 225, 0.3) !important;
-    transition: all 0.3s ease !important;
-}
-
-.stDownloadButton > button:hover {
-    background: linear-gradient(135deg, var(--primary-hover), var(--primary-color)) !important;
-    border-color: var(--primary-hover) !important;
-    transform: translateY(-1px) !important;
-    box-shadow: 0 4px 8px rgba(28, 131, 225, 0.4) !important;
-}
-
-/* ボタンのフォーカス状態を統一 */
-.stButton > button:focus,
-.stDownloadButton > button:focus {
-    outline: none !important;
-    box-shadow: 0 0 0 3px rgba(28, 131, 225, 0.3) !important;
-}
-
-/* その他のフォーム要素の統一 */
-.stSelectbox > div > div {
-    border-color: var(--border-color) !important;
-    background-color: var(--background-light) !important;
-}
-
-.stSelectbox > div > div:focus-within {
-    border-color: var(--primary-color) !important;
-    box-shadow: 0 0 0 2px rgba(28, 131, 225, 0.2) !important;
-}
-</style>""", unsafe_allow_html=True)
-
-# 最小限のスタイル
-st.markdown("""
-<style>
-/* 基本設定のみ */
-.stApp {
-    background-color: #ffffff;
-}
-</style>""", unsafe_allow_html=True)
 
 
 class DentalApp:
@@ -953,14 +308,11 @@ class DentalApp:
             st.session_state["cards"] = {}
     
     def run(self):
-        """アプリケーションのメイン実行（最適化版）"""
+        """アプリケーションのメイン実行（デフォルト設定版）"""
+        # デフォルトのStreamlit設定を使用
+        
         # パフォーマンス最適化の適用
         apply_performance_optimizations()
-        
-        # CSSスタイルを適用（ページ読み込み時に一度だけ実行）
-        if not st.session_state.get("styles_applied"):
-            apply_sidebar_button_styles()
-            st.session_state["styles_applied"] = True
         
         # Google Analytics初期化（ページ読み込み時に一度だけ実行）
         if not st.session_state.get("ga_initialized"):
@@ -970,9 +322,10 @@ class DentalApp:
         # ユーザーのアクティビティ追跡
         self._track_user_activity()
         
-        # 🔄 1. Automatic Login Attempt
+        # 🔄 1. Automatic Login Attempt (ログイン画面表示中は実行しない)
         if (not st.session_state.get("user_logged_in") and 
-            not st.session_state.get("auto_login_attempted")):
+            not st.session_state.get("auto_login_attempted") and
+            not st.session_state.get("manual_login_in_progress")):
             
             st.session_state["auto_login_attempted"] = True
             if self.cookie_manager.try_auto_login():
@@ -994,21 +347,26 @@ class DentalApp:
         
         # ログイン状態をチェック
         if not st.session_state.get("user_logged_in") or not self.auth_manager.ensure_valid_session():
-            # ログイン画面ではサイドバーを非表示
-            self._hide_sidebar()
+            # 手動ログイン中フラグを設定
+            st.session_state["manual_login_in_progress"] = True
             self._render_login_page()
             
             # ログインページビュー追跡
             self.track_page_navigation("login")
         else:
+            # ログイン成功時にフラグをクリア
+            st.session_state.pop("manual_login_in_progress", None)
             # ログイン済みの場合はサイドバーとメインコンテンツを表示
+            
             # 科目が初期化されていない場合は初期化
             if not hasattr(st.session_state, 'available_subjects') or not st.session_state.available_subjects:
                 self._initialize_available_subjects()
             
-            # 最適化されたUI描画
-            UIOptimizer.render_optimized_sidebar(self._render_sidebar)
+            # メインコンテンツを先に描画
             self._render_main_content()
+            
+            # その後でサイドバーを描画
+            self._render_sidebar()
             
             # ログイン後のページビュー追跡
             current_page = st.session_state.get("page", "練習")
@@ -1043,77 +401,12 @@ class DentalApp:
         except Exception as e:
             print(f"[DEBUG] User activity tracking error: {e}")
     
-    def _hide_sidebar(self):
-        """サイドバーを非表示にする"""
-        st.markdown("""
-        <style>
-        /* サイドバーを完全に非表示にする */
-        .css-1d391kg {display: none !important}
-        section[data-testid="stSidebar"] {display: none !important}
-        .sidebar .sidebar-content {display: none !important}
-        
-        /* メインコンテンツエリアを調整（サイドバー分の余白を削除） */
-        .css-18e3th9 {padding-left: 1rem !important}
-        .css-1lcbmhc {margin-left: 0 !important}
-        .main .block-container {padding-left: 1rem !important}
-        
-        /* Streamlit 1.28+ の新しいサイドバークラス */
-        [data-testid="stSidebar"][aria-expanded="true"] {display: none !important}
-        [data-testid="stSidebar"][aria-expanded="false"] {display: none !important}
-        
-        /* サイドバートグルボタンも非表示 */
-        .css-1v0mbdj {display: none !important}
-        button[kind="header"] {display: none !important}
-        
-        /* ログイン画面の余白を詰める */
-        .st-emotion-cache-zy6yx3 {
-            padding: 1rem 1rem 1rem !important;
-        }
-        
-        /* メインコンテナの余白調整 */
-        .st-emotion-cache-4rsbii {
-            padding-top: 1rem !important;
-            justify-content: flex-start !important;
-        }
-        
-        /* 全体の高さ調整 */
-        .st-emotion-cache-6px8kg {
-            min-height: auto !important;
-            height: auto !important;
-        }
-        
-        /* ログイン画面のコンテナ全体 */
-        .st-emotion-cache-1u02ojh {
-            gap: 0.5rem !important;
-            margin-top: 0 !important;
-            padding-top: 0 !important;
-        }
-        
-        /* 追加の余白削除 */
-        [data-testid="stElementContainer"] {
-            margin-top: 0 !important;
-            margin-bottom: 0.5rem !important;
-        }
-        
-        /* タイトルや見出しの余白削除 */
-        .st-emotion-cache-1u02ojh h1,
-        .st-emotion-cache-1u02ojh h2,
-        .st-emotion-cache-1u02ojh h3 {
-            margin-top: 0 !important;
-            margin-bottom: 0.5rem !important;
-        }
-        
-        /* iframeの余白も削除 */
-        .st-emotion-cache-13gev4o {
-            margin: 0 !important;
-            padding: 0 !important;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-    
     def _render_sidebar(self):
         """サイドバーの描画（ログイン済みユーザー向け）"""
+        print("[DEBUG] _render_sidebar called")
+        
         with st.sidebar:
+            print("[DEBUG] Inside st.sidebar context")
             self._render_user_menu()
     
     def _render_login_page(self):
@@ -1134,36 +427,50 @@ class DentalApp:
     
     def _render_login_tab(self):
         """ログインタブの描画"""
-        # クッキーから保存されたメールアドレスを取得
-        saved_email = ""
-        if self.cookie_manager.cookies:
-            try:
-                saved_email = self.cookie_manager.cookies.get("email", "")
-            except:
-                pass
+        # セッション状態を使って入力値を保持
+        if "login_email_value" not in st.session_state:
+            # クッキーから保存されたメールアドレスを取得
+            saved_email = ""
+            if self.cookie_manager.cookies:
+                try:
+                    saved_email = self.cookie_manager.cookies.get("email", "")
+                except:
+                    pass
+            st.session_state["login_email_value"] = saved_email
         
-        email = st.text_input(
-            "メールアドレス", 
-            value=saved_email,
-            placeholder="your-email@example.com",
-            key="login_email"
-        )
-        password = st.text_input(
-            "パスワード", 
-            type="password",
-            key="login_password"
-        )
-        remember_me = st.checkbox(
-            "ログイン状態を保存する",
-            value=False,
-            key="login_remember"
-        )
+        if "login_password_value" not in st.session_state:
+            st.session_state["login_password_value"] = ""
         
-        if st.button("ログイン", type="primary", use_container_width=True):
-            if email and password:
-                self._handle_login(email, password, remember_me)
-            else:
-                st.error("メールアドレスとパスワードを入力してください")
+        # フォーム内で入力フィールドをグループ化
+        with st.form("login_form", clear_on_submit=False):
+            email = st.text_input(
+                "メールアドレス", 
+                value=st.session_state["login_email_value"],
+                placeholder="your-email@example.com",
+                key="login_email_input"
+            )
+            password = st.text_input(
+                "パスワード", 
+                type="password",
+                value=st.session_state["login_password_value"],
+                key="login_password_input"
+            )
+            remember_me = st.checkbox(
+                "ログイン状態を保存する",
+                value=False,
+                key="login_remember_input"
+            )
+            
+            submitted = st.form_submit_button("ログイン", type="primary", use_container_width=True)
+            
+            if submitted:
+                if email and password:
+                    # セッション状態を更新
+                    st.session_state["login_email_value"] = email
+                    st.session_state["login_password_value"] = password
+                    self._handle_login(email, password, remember_me)
+                else:
+                    st.error("メールアドレスとパスワードを入力してください")
     
     def _render_signup_tab(self):
         """新規登録タブの描画"""
@@ -1197,17 +504,20 @@ class DentalApp:
     
     def _render_reset_tab(self):
         """パスワードリセットタブの描画"""
-        email = st.text_input(
-            "メールアドレス", 
-            placeholder="your-email@example.com",
-            key="reset_email"
-        )
-        
-        if st.button("パスワードリセットメールを送信", type="primary", use_container_width=True):
-            if email:
-                self._handle_password_reset(email)
-            else:
-                st.error("メールアドレスを入力してください")
+        with st.form("reset_form", clear_on_submit=False):
+            email = st.text_input(
+                "メールアドレス", 
+                placeholder="your-email@example.com",
+                key="reset_email_input"
+            )
+            
+            submitted = st.form_submit_button("パスワードリセットメールを送信", type="primary", use_container_width=True)
+            
+            if submitted:
+                if email:
+                    self._handle_password_reset(email)
+                else:
+                    st.error("メールアドレスを入力してください")
     
     def _render_user_menu(self):
         """ユーザーメニューの描画"""
@@ -1234,7 +544,7 @@ class DentalApp:
         elif current_page == "ランキング":
             current_index = 2
         
-        selected_page = st.radio(
+        selected_page = st.selectbox(
             "ページを選択",
             page_labels,
             index=current_index,
@@ -1250,122 +560,75 @@ class DentalApp:
         elif selected_page == "🏆 ランキング":
             new_page = "ランキング"
         
-        # ページが変更された場合はイベントを送信（最適化版）
+        # ページが変更された場合はイベントを送信（簡素化版）
         if new_page and new_page != st.session_state.get("page"):
             old_page = st.session_state.get("page", "unknown")
+            print(f"[DEBUG] Page transition: {old_page} -> {new_page}")
             
-            # ページ遷移の最適化チェック
-            if UIOptimizer.optimize_page_transition(new_page, old_page):
-                st.session_state["page"] = new_page
-                st.session_state["current_page"] = new_page  # _track_user_activityで使用
-                
-                # 包括的なページ変更追跡
-                self.track_page_navigation(new_page)
-                
-                # 機能使用追跡
-                self.track_feature_interaction(
-                    feature="page_navigation",
-                    action="page_change",
-                    context={
-                        "from_page": old_page,
-                        "to_page": new_page,
-                        "navigation_method": "sidebar"
-                    }
-                )
-                
-                if uid:
-                    log_to_ga("page_change", uid, {
-                        "previous_page": old_page,
-                        "new_page": new_page,
-                        "navigation_method": "sidebar"
-                    })
-                
-                # 強制リロードを削除してパフォーマンス向上
-                # st.rerun() を削除
+            # ページ遷移を実行（デバウンス処理を回避）
+            st.session_state["page"] = new_page
+            st.session_state["current_page"] = new_page  # _track_user_activityで使用
+            
+            # 包括的なページ変更追跡
+            self.track_page_navigation(new_page)
+            
+            # 機能使用追跡
+            self.track_feature_interaction(
+                feature="page_navigation",
+                action="page_change",
+                context={
+                    "from_page": old_page,
+                    "to_page": new_page,
+                    "navigation_method": "sidebar"
+                }
+            )
+            
+            if uid:
+                log_to_ga("page_change", uid, {
+                    "previous_page": old_page,
+                    "new_page": new_page,
+                    "navigation_method": "sidebar"
+                })
+            
+            # ページ変更時に強制リロード
+            print(f"[DEBUG] Triggering rerun for page change to: {new_page}")
+            st.rerun()
         
         # 選択されたページに応じて異なるサイドバーコンテンツを表示
         if st.session_state.get("page") == "ランキング":
             st.markdown("**週間ランキング**で他の学習者と競い合いましょう！")
         elif st.session_state.get("page") == "検索・進捗":
-            # セクションヘッダー
-            st.markdown("### 📊 分析・検索ツール")
-            
-            # 学士試験権限の確認
-            has_gakushi_permission = check_gakushi_permission(uid) if uid else False
-            
-            # 分析対象フィルター（最適化版）
+            # --- 検索・進捗ページのサイドバー ---
+            # 検索・分析用のフィルター機能のみ
+            uid = st.session_state.get("uid")
+            has_gakushi_permission = check_gakushi_permission(uid)
+
+            st.markdown("#### 🔍 表示フィルター")
+
+            # 対象範囲
             if has_gakushi_permission:
-                # 分析対象変更時のコールバック（最適化版）
-                def on_analysis_target_change():
-                    # デバウンス処理を適用
-                    if PerformanceOptimizer.debounce_action("analysis_target_change", 0.5):
-                        # キャッシュをクリア
-                        PerformanceOptimizer.get_cached_subjects.clear()
-                        # 科目リストを強制再初期化
-                        if 'available_subjects' in st.session_state:
-                            del st.session_state['available_subjects']
-                        if 'subject_filter' in st.session_state:
-                            del st.session_state['subject_filter']
-                        # 科目を即座に再初期化
-                        self._initialize_available_subjects()
-                        print(f"[DEBUG] 分析対象変更: {st.session_state.get('analysis_target')}, 利用可能科目数: {len(st.session_state.get('available_subjects', []))}")
-                
-                analysis_target = st.radio(
-                    "分析対象試験",
-                    options=["国試問題", "学士試験問題"],
-                    index=0,  # 常に国試問題をデフォルトに設定
-                    key="analysis_target",
-                    on_change=on_analysis_target_change,
-                    help="分析や検索を行う試験の種類を選択してください"
-                )
+                analysis_target = st.radio("分析対象", ["国試", "学士試験", "全体"], key="analysis_target")
             else:
-                st.session_state["analysis_target"] = "国試問題"
-                st.info("💡 現在は国試問題のみ利用可能です")
-            
-            # 科目フィルター（最適化版）
-            if not hasattr(st.session_state, 'available_subjects') or not st.session_state.available_subjects:
-                # 科目が初期化されていない場合は再初期化
-                self._initialize_available_subjects()
-            
-            if hasattr(st.session_state, 'available_subjects') and st.session_state.available_subjects:
-                # 現在の科目フィルター値を取得（なければ全選択をデフォルト）
-                current_subject_filter = st.session_state.get('subject_filter', st.session_state.available_subjects)
-                # 利用可能な科目に含まれないものを除外
-                valid_subject_filter = [s for s in current_subject_filter if s in st.session_state.available_subjects]
-                if not valid_subject_filter:  # 有効な科目が1つもない場合は全選択
-                    valid_subject_filter = st.session_state.available_subjects
-                    # 無効な値だった場合のみSession Stateを更新
-                    st.session_state.subject_filter = valid_subject_filter
-                
+                analysis_target = "国試"
+
+            # 学習レベルフィルター
+            level_filter = st.multiselect(
+                "学習レベル",
+                ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "レベル5", "習得済み"],
+                default=["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "レベル5", "習得済み"],
+                key="level_filter"
+            )
+
+            # 科目フィルター（動的に設定されるため、デフォルトは空）
+            if "available_subjects" in st.session_state:
                 subject_filter = st.multiselect(
                     "表示する科目",
                     st.session_state.available_subjects,
-                    key="subject_filter",
-                    help=f"現在利用可能な科目: {len(st.session_state.available_subjects)}科目"
+                    default=st.session_state.available_subjects,
+                    key="subject_filter"
                 )
             else:
-                st.warning("科目データを読み込み中...")
-            
-            # 必修問題フィルター
-            show_hisshu_only = st.checkbox(
-                "必修問題のみ表示",
-                value=st.session_state.get('show_hisshu_only', False),
-                key="show_hisshu_only"
-            )
-            
-            # レベルフィルター
-            st.markdown("### 📈 習熟度フィルター")
-            
-            level_options = ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "レベル5", "習得済み"]
-            default_levels = st.session_state.get('level_filter', level_options)
-            
-            level_filter = st.multiselect(
-                "表示する習熟度レベル",
-                level_options,
-                default=default_levels,
-                key="level_filter",
-                help="表示したい習熟度レベルを選択してください"
-            )
+                subject_filter = []
             
         else:
             # 練習ページのサイドバー
@@ -1373,10 +636,167 @@ class DentalApp:
             from modules.practice_page import render_practice_sidebar
             render_practice_sidebar()
         
+        # 学習記録セクション
+        st.divider()
+        st.markdown("#### 📈 学習記録")
+        
+        # サイドバーの強制更新チェック
+        sidebar_refresh = st.session_state.get("sidebar_refresh_needed", False)
+        if sidebar_refresh:
+            st.session_state["sidebar_refresh_needed"] = False
+            print(f"[DEBUG] サイドバー強制更新実行")
+        
+        # 評価更新のタイムスタンプをチェック（強制更新のため）
+        last_update = st.session_state.get("last_evaluation_update", "")
+        if last_update:
+            print(f"[DEBUG] 最終評価更新: {last_update}")
+        
+        # cardsの存在確認を強化
+        cards = st.session_state.get("cards", {})
+        if cards and len(cards) > 0:
+            quality_to_mark = {1: "×", 2: "△", 4: "◯", 5: "◎"}
+            mark_to_label = {"◎": "簡単", "◯": "普通", "△": "難しい", "×": "もう一度"}
+            
+            # デバッグ情報（最初の数枚のカードの構造を確認）
+            print(f"[DEBUG] カード総数: {len(st.session_state.cards)}")
+            sample_cards = list(st.session_state.cards.items())[:3]
+            for i, (card_id, card_data) in enumerate(sample_cards):
+                print(f"[DEBUG] カード{i+1} ({card_id}): {card_data}")
+            
+            # カードデータから評価を取得（複数のパターンに対応）
+            evaluated_marks = []
+            cards_with_evaluations = 0
+            
+            # セッション状態から最新のcardsを取得
+            current_cards = st.session_state.get("cards", cards)
+            
+            for card_id, card in current_cards.items():
+                evaluation_found = False
+                
+                # パターン1: historyから最新の評価を取得
+                history = card.get('history', [])
+                if history:
+                    last_eval = history[-1]
+                    quality = last_eval.get('quality')
+                    if quality and quality in quality_to_mark:
+                        evaluated_marks.append(quality_to_mark[quality])
+                        evaluation_found = True
+                        cards_with_evaluations += 1
+                        print(f"[DEBUG] カード {card_id}: historyから評価取得 quality={quality}")
+                
+                # パターン2: 直接qualityフィールドから取得
+                if not evaluation_found and card.get('quality'):
+                    quality = card.get('quality')
+                    if quality in quality_to_mark:
+                        evaluated_marks.append(quality_to_mark[quality])
+                        evaluation_found = True
+                        cards_with_evaluations += 1
+                        print(f"[DEBUG] カード {card_id}: 直接qualityから評価取得 quality={quality}")
+            
+            # パターン3: result_logからも評価を取得（最新の自己評価を反映）
+            result_log = st.session_state.get("result_log", {})
+            for q_id, result in result_log.items():
+                if q_id not in current_cards:  # cardsに既に含まれている場合はスキップ
+                    continue
+                
+                quality = result.get("quality")
+                if quality and quality in quality_to_mark:
+                    # 既にこの問題の評価が processed されていない場合のみ追加
+                    if q_id not in [cid for cid, _ in current_cards.items() if any(h.get('quality') == quality for h in _.get('history', []))]:
+                        evaluated_marks.append(quality_to_mark[quality])
+                        cards_with_evaluations += 1
+                        print(f"[DEBUG] カード {q_id}: result_logから評価取得 quality={quality}")
+            
+            print(f"[DEBUG] 評価が見つかったカード数: {cards_with_evaluations}")
+            print(f"[DEBUG] 評価マーク: {evaluated_marks}")
+            
+            total_evaluated = len(evaluated_marks)
+            counter = Counter(evaluated_marks)
+
+            with st.expander("自己評価の分布", expanded=True):
+                st.markdown(f"**合計評価数：{total_evaluated}問**")
+                if total_evaluated > 0:
+                    for mark, label in mark_to_label.items():
+                        count = counter.get(mark, 0)
+                        percent = int(round(count / total_evaluated * 100)) if total_evaluated else 0
+                        st.markdown(f"{mark} {label}：{count}問 ({percent}％)")
+                else:
+                    st.info("まだ評価された問題がありません。")
+
+            with st.expander("最近の評価ログ", expanded=False):
+                # historyがあるカードを検索（より幅広く）
+                cards_with_history = []
+                for q_num, card in st.session_state.cards.items():
+                    history = card.get('history', [])
+                    if history and len(history) > 0:
+                        # 有効なタイムスタンプを持つhistoryのみ
+                        last_history = history[-1]
+                        if last_history.get('timestamp'):
+                            cards_with_history.append((q_num, card))
+                
+                print(f"[DEBUG] 履歴があるカード数: {len(cards_with_history)}")
+                
+                if cards_with_history:
+                    # タイムスタンプの型を統一してソート
+                    def get_timestamp_for_sort(item):
+                        try:
+                            last_history = item[1]['history'][-1]
+                            timestamp = last_history.get('timestamp')
+                            
+                            # DatetimeWithNanosecondsオブジェクトの場合
+                            if hasattr(timestamp, 'isoformat'):
+                                return timestamp.isoformat()
+                            # 文字列の場合
+                            elif isinstance(timestamp, str):
+                                return timestamp
+                            # その他の場合はデフォルト値
+                            else:
+                                return "1970-01-01T00:00:00"
+                        except Exception:
+                            return "1970-01-01T00:00:00"
+                    
+                    sorted_cards = sorted(cards_with_history, key=get_timestamp_for_sort, reverse=True)
+                    
+                    for q_num, card in sorted_cards[:10]:
+                        last_history = card['history'][-1]
+                        last_eval_mark = quality_to_mark.get(last_history.get('quality'))
+                        
+                        # タイムスタンプの表示も安全に処理
+                        timestamp = last_history.get('timestamp')
+                        try:
+                            if hasattr(timestamp, 'strftime'):
+                                # DatetimeWithNanosecondsオブジェクトの場合
+                                timestamp_str = timestamp.strftime('%Y-%m-%d %H:%M')
+                            elif isinstance(timestamp, str):
+                                # 文字列の場合はISO形式から変換
+                                timestamp_str = datetime.datetime.fromisoformat(timestamp.replace('Z', '+00:00')).strftime('%Y-%m-%d %H:%M')
+                            else:
+                                timestamp_str = "不明"
+                        except Exception:
+                            timestamp_str = "不明"
+                        
+                        jump_btn = st.button(f"{q_num}", key=f"jump_{q_num}")
+                        if last_eval_mark:
+                            st.markdown(f"- `{q_num}` : **{last_eval_mark}** ({timestamp_str})", unsafe_allow_html=True)
+                        else:
+                            st.markdown(f"- `{q_num}` : **未評価** ({timestamp_str})", unsafe_allow_html=True)
+                        
+                        if jump_btn:
+                            st.session_state.current_q_group = [q_num]
+                            for key in list(st.session_state.keys()):
+                                if key.startswith("checked_") or key.startswith("user_selection_") or key.startswith("shuffled_") or key.startswith("free_input_"):
+                                    del st.session_state[key]
+                            st.rerun()
+                else:
+                    st.info("まだ履歴がある問題がありません。")
+        else:
+            st.info("まだ評価された問題がありません。")
+        
         # ログアウトボタン
         st.divider()
-        
-        if st.button("🚪 ログアウト", type="secondary", use_container_width=True):
+        if st.button("ログアウト", key="logout_btn"):
+            uid = st.session_state.get("uid")
+            save_user_data(uid, session_state=st.session_state)
             self._handle_logout_real()
 
     def _render_free_learning_mode(self, has_gakushi_permission: bool):
@@ -1500,17 +920,23 @@ class DentalApp:
             cols = st.columns(3)
             for i, (q_id, result) in enumerate(recent_results):
                 with cols[i % 3]:
-                    # 評価に応じたアイコン
-                    if result.get("rating") == "Easy":
+                    # 自己評価のqualityに応じたアイコン（1-5のスケール）
+                    quality = result.get("quality", 3)
+                    if quality == 5:  # ◎ 簡単
                         icon = "🟢"
-                    elif result.get("rating") == "Good":
+                    elif quality == 4:  # ○ 普通
                         icon = "🔵"
-                    elif result.get("rating") == "Hard":
+                    elif quality == 2:  # △ 難しい
                         icon = "🟡"
+                    elif quality == 1:  # × もう一度
+                        icon = "�"
                     else:
-                        icon = "🔴"
+                        icon = "⚪"  # デフォルト
                     
-                    if st.button(f"{icon} {q_id}", key=f"recent_{q_id}", use_container_width=True):
+                    # 正解/不正解のマーク
+                    correct_mark = "✓" if result.get("correct", False) else "✗"
+                    
+                    if st.button(f"{icon}{correct_mark} {q_id}", key=f"recent_{q_id}", use_container_width=True):
                         # 問題に直接ジャンプ
                         self._jump_to_question(q_id)
 
@@ -1943,13 +1369,17 @@ class DentalApp:
     def _render_main_content(self):
         """メインコンテンツの描画（ページ選択対応）"""
         current_page = st.session_state.get("page", "練習")
+        print(f"[DEBUG] _render_main_content called with page: {current_page}")
         
         if current_page == "ランキング":
+            print("[DEBUG] Rendering ranking page...")
             render_updated_ranking_page()
         elif current_page == "検索・進捗":
+            print("[DEBUG] Rendering search page...")
             from modules.search_page import render_search_page
             render_search_page()
         else:
+            print("[DEBUG] Rendering practice page...")
             render_practice_page(self.auth_manager)
     
     def _handle_login(self, email: str, password: str, remember_me: bool):
@@ -1991,6 +1421,9 @@ class DentalApp:
                 
                 # ユーザーデータを読み込み
                 self._load_user_data()
+                
+                # スタイルを再初期化するためのフラグをリセット
+                st.session_state["styles_applied"] = False
                 
                 # Rerun: アプリをリロードしてメインインターフェースへ
                 time.sleep(0.5)

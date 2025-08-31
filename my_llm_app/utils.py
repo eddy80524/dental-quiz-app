@@ -28,6 +28,46 @@ import streamlit.components.v1 as components
 # 日本時間のタイムゾーン設定
 JST = pytz.timezone('Asia/Tokyo')
 
+
+def get_natural_sort_key(q_dict):
+    """
+    問題辞書を受け取り、自然順ソート用のキー（タプル）を返す。
+    例: "112A5" -> (112, 'A', 5)
+    学士試験形式: "G24-1-1-A-1" や "G24-2再-A-1" -> ('G', 24, '1-1', 'A', 1)
+    """
+    try:
+        q_num_str = q_dict.get('number', '0')
+        # 学士試験形式: G24-1-1-A-1 や G24-2再-A-1 に対応
+        # データ正規化済みでハイフンのみ使用
+        m_gakushi = re.match(r'^(G)(\d+)-([\d\-再]+)-([A-Z])-(\d+)$', q_num_str)
+        if m_gakushi:
+            return (
+                0,                       # 学士試験は先頭に0を置いて従来形式と区別
+                m_gakushi.group(1),      # G
+                int(m_gakushi.group(2)), # 年度
+                m_gakushi.group(3),      # 1-1や2再
+                m_gakushi.group(4),      # A
+                int(m_gakushi.group(5))  # 問題番号
+            )
+        
+        # 従来形式: 112A5 → (1, 112, 'A', 5)
+        m = re.match(r'^(\d+)([A-Z])(\d+)$', q_num_str)
+        if m:
+            return (
+                1,                    # 従来形式は1を置く
+                int(m.group(1)),      # 回数
+                m.group(2),           # 領域 (A, B, C, D)
+                int(m.group(3))       # 問題番号
+            )
+        
+        # その他の形式はそのまま文字列でソート
+        return (2, q_num_str)
+        
+    except Exception as e:
+        print(f"[DEBUG] ソートキー生成エラー: {q_num_str}, {e}")
+        return (999, q_num_str)
+
+
 # 科目マッピング機能をインポート
 try:
     from subject_mapping import get_standardized_subject
@@ -495,9 +535,16 @@ class CardSelectionUtils:
         candidates = []
         for q in all_questions:
             qid = q.get("number")
-            if not qid or qid in cards:
+            if not qid:
                 continue
-
+            
+            # 未学習の条件を修正：cardsに存在しない OR (historyが空 AND n=0)
+            if qid in cards:
+                card = cards[qid]
+                # historyがあるか、nが0より大きい場合は学習済み
+                if card.get("history", []) or card.get("n", 0) > 0:
+                    continue
+            
             q_subject = QuestionUtils.get_subject_of(q)
             
             # 科目バランススコア
@@ -510,13 +557,28 @@ class CardSelectionUtils:
             # 最近の科目ペナルティ
             recent_penalty = CardSelectionUtils.recent_subject_penalty(q_subject, recent_qids, qid_to_subject)
             
+            # ランダム要素を追加（同じスコアの問題間でランダム性を確保）
+            import random
+            random_factor = random.uniform(0, 0.1)  # 0-0.1のランダム値
+            
             # 総合スコア
-            total_score = balance_score - recent_penalty
+            total_score = balance_score - recent_penalty + random_factor
             candidates.append((qid, total_score, q_subject))
 
         # スコア順にソートして上位N個を選択
         candidates.sort(key=lambda x: x[1], reverse=True)
-        selected = [c[0] for c in candidates[:N]]
+        
+        # さらに上位候補の中からランダム選択（多様性を確保）
+        top_candidates = candidates[:min(N * 3, len(candidates))]  # 目標数の3倍を候補とする
+        random.shuffle(top_candidates)  # 上位候補をシャッフル
+        selected = [c[0] for c in top_candidates[:N]]
+        
+        # デバッグ情報を出力
+        print(f"[DEBUG] 新規カード選択: 候補数={len(candidates)}, 選択数={len(selected)}")
+        if selected:
+            selected_subjects = [c[2] for c in top_candidates[:N]]
+            print(f"[DEBUG] 選択された新規カード: {selected}")
+            print(f"[DEBUG] 選択された科目: {selected_subjects}")
         
         return selected
 
