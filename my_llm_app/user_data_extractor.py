@@ -143,7 +143,6 @@ class UserDataExtractor:
             # 今日の学習数を計算
             try:
                 today_study_count = self._calculate_today_study_count(evaluation_logs)
-                print(f"[DEBUG] 今日の学習数計算完了: {today_study_count}問")
             except Exception as e:
                 print(f"今日の学習数計算エラー: {e}")
                 today_study_count = 0
@@ -158,8 +157,6 @@ class UserDataExtractor:
                 '今日の学習数': today_study_count
             }
             
-            print(f"[DEBUG] 統計辞書のキー: {list(result.keys())}")
-            print(f"[DEBUG] 今日の学習数の値: {result.get('今日の学習数', 'NOT_FOUND')}")
             
             return result
             
@@ -213,7 +210,7 @@ class UserDataExtractor:
                 try:
                     # 詳細ログ
                     if i < 3:  # 最初の3件だけログ出力
-                        print(f"[DEBUG] card[{i}] type: {type(card)}, content: {card}")
+                        pass
                     
                     level = None
                     mastery_status = None
@@ -270,7 +267,6 @@ class UserDataExtractor:
                     print(f"[ERROR] カード処理エラー (index {i}): {e}")
                     continue
             
-            print(f"[DEBUG] 詳細レベル分布: {distribution}")
             return distribution
             
         except Exception as e:
@@ -296,8 +292,6 @@ class UserDataExtractor:
             comprehensive_distribution = studied_distribution.copy()
             comprehensive_distribution['未学習'] = unstudied_count
             
-            print(f"[DEBUG] 包括的レベル分布({analysis_target}): 全問題{total_questions_count}問, 学習済み{studied_count}問, 未学習{unstudied_count}問")
-            print(f"[DEBUG] 分布詳細: {comprehensive_distribution}")
             
             return comprehensive_distribution
             

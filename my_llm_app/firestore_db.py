@@ -105,7 +105,6 @@ class FirestoreManager:
             
             if doc.exists:
                 data = doc.to_dict()
-                print(f"[DEBUG] ユーザープロフィール読み込み成功: {time.time() - start:.3f}s")
                 return data
             else:
                 # 新規ユーザーのデフォルトプロフィール作成
@@ -117,7 +116,6 @@ class FirestoreManager:
                     "settings": {"new_cards_per_day": 10}
                 }
                 doc_ref.set(default_profile)
-                print(f"[DEBUG] 新規ユーザープロフィール作成: {uid}")
                 return default_profile
                 
         except Exception as e:
@@ -139,7 +137,6 @@ class FirestoreManager:
             for doc in cards_docs:
                 cards[doc.id] = doc.to_dict()
             
-            print(f"[DEBUG] カードデータ読み込み完了: {len(cards)}枚, 時間: {time.time() - start:.3f}s")
             return cards
             
         except Exception as e:
@@ -183,7 +180,6 @@ class FirestoreManager:
                     "short_term_review_queue": session_data.get("short_term_review_queue", [])
                 }
                 
-                print(f"[DEBUG] セッション状態復元成功: {time.time() - start:.3f}s")
                 return result
             else:
                 return {
@@ -227,7 +223,6 @@ class FirestoreManager:
             learned_cards = len([card for card in cards.values() if card.get("level", -1) >= 0])
             mastered_cards = len([card for card in cards.values() if card.get("level", -1) >= 5])
             
-            print(f"[DEBUG] 学習データ取得完了: 学習済み {learned_cards}問 / 習得済み {mastered_cards}問, 時間: {time.time() - start:.3f}s")
             return cards
             
         except Exception as e:
@@ -287,7 +282,6 @@ class FirestoreManager:
                 if doc.exists:
                     cards[doc.id] = self._to_dict(doc.to_dict())
             
-            print(f"[DEBUG] レガシー構造から学習データ取得: {len(cards)}問")
             return cards
             
         except Exception as e:
@@ -310,7 +304,6 @@ class FirestoreManager:
             # study_cardsコレクションに保存
             card_ref = self.db.collection("study_cards").document(f"{uid}_{question_id}")
             card_ref.set(optimized_card, merge=True)
-            print(f"[DEBUG] カード保存完了: {question_id}")
         except Exception as e:
             print(f"[ERROR] カード保存エラー: {e}")
     
@@ -379,7 +372,6 @@ class FirestoreManager:
             
             session_ref = self.db.collection("users").document(uid).collection("sessionState").document("current")
             session_ref.set(serialized_data, merge=True)
-            print(f"[DEBUG] セッション状態保存完了")
             
         except Exception as e:
             print(f"[ERROR] セッション状態保存エラー: {e}")
@@ -396,7 +388,6 @@ class FirestoreManager:
                 "lastUpdated": datetime.datetime.utcnow().isoformat()
             }
             user_ref.update(settings_update)
-            print(f"[DEBUG] ユーザー設定更新完了")
         except Exception as e:
             print(f"[ERROR] ユーザー設定更新エラー: {e}")
     
@@ -413,10 +404,8 @@ class FirestoreManager:
             if doc.exists:
                 data = doc.to_dict()
                 result = bool(data.get(permission_key, False))
-                print(f"[DEBUG] 権限チェック({permission_key}): {result} (user_permissions)")
                 return result
             else:
-                print(f"[DEBUG] 権限チェック({permission_key}): False (権限ドキュメントなし)")
                 return False
                 
         except Exception as e:
@@ -431,7 +420,6 @@ class FirestoreManager:
         try:
             doc_ref = self.db.collection("user_permissions").document(uid)
             doc_ref.set({permission_key: value}, merge=True)
-            print(f"[DEBUG] 権限設定完了: {uid} - {permission_key}: {value}")
             return True
         except Exception as e:
             print(f"[ERROR] 権限設定エラー: {e}")
@@ -595,7 +583,6 @@ class FirestoreManager:
                         "mastery_rate": mastery_rate
                     })
                     
-                    print(f"[DEBUG] ユーザー {doc.id[:8]}: 習熟度={mastery_rate:.2f}%, カード数={total_cards}, 習得済み={sum(1 for card in cards.values() if card.get('level', 0) >= 4)}")
                 
                 except Exception as e:
                     print(f"[ERROR] ユーザー {doc.id} のポイント計算エラー: {e}")
@@ -604,7 +591,6 @@ class FirestoreManager:
             # 週間ポイントでソート
             ranking_data.sort(key=lambda x: x["weekly_points"], reverse=True)
             
-            print(f"[DEBUG] リアルタイムランキング計算完了: {len(ranking_data)}件")
             return ranking_data
             
         except Exception as e:
@@ -824,7 +810,6 @@ def get_user_profiles_bulk(uids: List[str]) -> Dict[str, Dict[str, Any]]:
                     "lastUpdated": None
                 }
         
-        print(f"[DEBUG] プロファイル一括取得完了: {len(profiles)}件")
         return profiles
         
     except Exception as e:
@@ -855,7 +840,6 @@ def save_user_profile(uid: str, nickname: str, show_on_leaderboard: bool) -> boo
         
         # merge=Trueで既存のデータを保持
         doc_ref.set(update_data, merge=True)
-        print(f"[DEBUG] プロファイル保存完了: {uid}")
         return True
         
     except Exception as e:

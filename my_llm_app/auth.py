@@ -152,7 +152,6 @@ class AuthManager:
                         "refresh_token": result["refreshToken"],
                         "token_timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
                     })
-                    print(f"[DEBUG] ログイン成功 - UID: {result['localId']}, 時間: {time.time() - start:.3f}s")
                 except Exception as e:
                     print(f"Warning: Could not update session state: {e}")
             
@@ -192,7 +191,7 @@ class AuthManager:
                     pass
                 return result
         except Exception as e:
-            print(f"[DEBUG] Token refresh error: {e}")
+            pass
         return None
     
     def reset_password(self, email: str) -> Dict[str, Any]:
@@ -372,13 +371,9 @@ def call_cloud_function(function_name: str, data: Dict[str, Any]) -> Optional[Di
         if "id_token" in st.session_state:
             headers["Authorization"] = f"Bearer {st.session_state['id_token']}"
         
-        print(f"[DEBUG] Cloud Function URL: {url}")
-        print(f"[DEBUG] Request data: {data}")
         
         response = requests.post(url, json=data, headers=headers, timeout=15)
         
-        print(f"[DEBUG] Response status: {response.status_code}")
-        print(f"[DEBUG] Response headers: {dict(response.headers)}")
         
         # レスポンスステータスの確認
         if response.status_code != 200:
@@ -393,7 +388,6 @@ def call_cloud_function(function_name: str, data: Dict[str, Any]) -> Optional[Di
         # JSONパースを試行
         try:
             result = response.json()
-            print(f"[DEBUG] Parsed response: {result}")
             return result
         except ValueError as json_error:
             print(f"Cloud Function JSON parse error: {json_error}, Content: {response.text[:500]}")

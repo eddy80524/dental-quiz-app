@@ -2734,7 +2734,7 @@
         "心室性期外収縮",
         "高度房室ブロック"
       ],
-      "answer": "b",
+      "answer": "B",
       "subject": "歯科麻酔学",
       "image_paths": []
     },
@@ -2794,7 +2794,7 @@
         "気管支",
         "椎間円板"
       ],
-      "answer": "b",
+      "answer": "B",
       "subject": "解剖学",
       "image_paths": []
     },
@@ -2864,7 +2864,7 @@
         "18トリソミー",
         "21トリソミー"
       ],
-      "answer": "b",
+      "answer": "B",
       "subject": "障がい者歯科",
       "image_paths": []
     },
@@ -2934,7 +2934,7 @@
         "卵巣",
         "眼球"
       ],
-      "answer": "b",
+      "answer": "B",
       "subject": "小児歯科学",
       "image_paths": []
     },
@@ -2962,7 +2962,7 @@
         "内側翼突筋",
         "外側翼突筋"
       ],
-      "answer": "b",
+      "answer": "B",
       "subject": "口腔外科学1",
       "image_paths": []
     },
@@ -3034,7 +3034,7 @@
         "von Recklinghausen病",
         "Melkersson-Rosenthal症候群"
       ],
-      "answer": "b",
+      "answer": "B",
       "subject": "生理学",
       "image_paths": []
     },
@@ -3740,7 +3740,7 @@
         "動揺度検査",
         "根尖部の触診"
       ],
-      "answer": "a,c,e",
+      "answer": "ACE",
       "subject": "口腔外科学1",
       "image_paths": [
         "gakushi/2022/1-3/G22-1-3-C-71a.jpg"
@@ -3756,7 +3756,7 @@
         "前方位でのチェックバイト採得 — 矢状顆路傾斜角再調節",
         "中心咬合位でのチェックバイト採得 — 下顎模型咬合器再装着"
       ],
-      "answer": "e",
+      "answer": "E",
       "subject": "欠損歯列補綴咬合学",
       "image_paths": [
         "gakushi/2022/1-3/G22-1-3-C-72a.jpg",
@@ -3773,7 +3773,7 @@
         "鼻咽腔閉鎖機能の改善",
         "舌骨上筋群の筋力強化"
       ],
-      "answer": "c,e",
+      "answer": "CE",
       "subject": "高齢者歯科学",
       "image_paths": [
         "gakushi/2022/1-3/G22-1-3-C-73a.jpg"
@@ -3789,7 +3789,7 @@
         "歯型トリミング後の作業用模型",
         "プロビジョナルブリッジ装着時の模型"
       ],
-      "answer": "e",
+      "answer": "E",
       "subject": "有歯補綴咬合学",
       "image_paths": [
         "gakushi/2022/1-3/G22-1-3-C-74a.jpg"
@@ -3805,7 +3805,7 @@
         "抗ウイルス薬軟膏の塗布",
         "副腎皮質ステロイド薬軟膏の塗布"
       ],
-      "answer": "e",
+      "answer": "E",
       "subject": "口腔外科学1",
       "image_paths": [
         "gakushi/2022/1-3/G22-1-3-C-75a.jpg",
@@ -4001,7 +4001,7 @@
         "グライドパス",
         "パーフォレーション"
       ],
-      "answer": "b",
+      "answer": "B",
       "subject": "口腔治療学",
       "image_paths": [
         "gakushi/2022/1-3/G22-1-3-C-86a.jpg"

@@ -13,32 +13,133 @@ import streamlit as st
 import datetime
 import time
 import random
+import pytz
 from typing import Dict, Any, List, Optional, Tuple
 
-from auth import AuthManager
-from firestore_db import FirestoreManager, get_firestore_manager, save_user_data, check_gakushi_permission, get_user_profile_for_ranking, save_user_profile
-from utils import (
-    log_to_ga, QuestionUtils, ALL_QUESTIONS, ALL_QUESTIONS_DICT, 
-    CardSelectionUtils, SM2Algorithm, AnalyticsUtils,
-    ALL_EXAM_NUMBERS, ALL_EXAM_SESSIONS, ALL_SUBJECTS, CASES
-)
+# 日本時間用のタイムゾーン
+JST = pytz.timezone('Asia/Tokyo')
+
+def get_japan_now() -> datetime.datetime:
+    """日本時間の現在時刻を取得"""
+    return datetime.datetime.now(JST)
+
+def get_japan_today() -> datetime.date:
+    """
+    日本時間の今日の日付を取得
+    
+    新規学習目標のリセットタイミング：
+    - 日本時間の0時にカウントがリセットされる
+    - ユーザーが日本にいることを想定したタイムゾーン設定
+    """
+    return get_japan_now().date()
+
+def get_japan_datetime_from_timestamp(timestamp) -> datetime.datetime:
+    """タイムスタンプから日本時間のdatetimeオブジェクトを取得"""
+    if hasattr(timestamp, 'replace'):
+        # DatetimeWithNanoseconds または datetime オブジェクト
+        if hasattr(timestamp, 'tzinfo') and timestamp.tzinfo is None:
+            # ナイーブなdatetimeの場合、UTCとして扱って日本時間に変換
+            return pytz.UTC.localize(timestamp).astimezone(JST)
+        else:
+            return timestamp.astimezone(JST)
+    elif isinstance(timestamp, str):
+        try:
+            # ISO文字列をパース
+            dt = datetime.datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+            return dt.astimezone(JST)
+        except ValueError:
+            try:
+                # 日付部分のみの場合
+                dt = datetime.datetime.strptime(timestamp[:10], '%Y-%m-%d')
+                return JST.localize(dt)
+            except ValueError:
+                return get_japan_now()
+    return get_japan_now()
+
+# インポートエラーハンドリング
+try:
+    from auth import AuthManager
+except ImportError:
+    try:
+        from ..auth import AuthManager
+    except ImportError:
+        AuthManager = None
+
+try:
+    from firestore_db import FirestoreManager, get_firestore_manager, save_user_data, check_gakushi_permission, get_user_profile_for_ranking, save_user_profile
+except ImportError:
+    try:
+        from ..firestore_db import FirestoreManager, get_firestore_manager, save_user_data, check_gakushi_permission, get_user_profile_for_ranking, save_user_profile
+    except ImportError:
+        FirestoreManager = None
+        get_firestore_manager = None
+        save_user_data = None
+        check_gakushi_permission = None
+        get_user_profile_for_ranking = None
+        save_user_profile = None
+
+try:
+    from utils import (
+        log_to_ga, QuestionUtils, ALL_QUESTIONS, ALL_QUESTIONS_DICT, 
+        CardSelectionUtils, SM2Algorithm, AnalyticsUtils,
+        ALL_EXAM_NUMBERS, ALL_EXAM_SESSIONS, ALL_SUBJECTS, CASES
+    )
+except ImportError:
+    try:
+        from ..utils import (
+            log_to_ga, QuestionUtils, ALL_QUESTIONS, ALL_QUESTIONS_DICT, 
+            CardSelectionUtils, SM2Algorithm, AnalyticsUtils,
+            ALL_EXAM_NUMBERS, ALL_EXAM_SESSIONS, ALL_SUBJECTS, CASES
+        )
+    except ImportError:
+        log_to_ga = None
+        QuestionUtils = None
+        ALL_QUESTIONS = []
+        ALL_QUESTIONS_DICT = {}
+        CardSelectionUtils = None
+        SM2Algorithm = None
+        AnalyticsUtils = None
+        ALL_EXAM_NUMBERS = []
+        ALL_EXAM_SESSIONS = []
+        ALL_SUBJECTS = []
+        CASES = []
 
 # 必修問題セットは後でインポート（循環import回避）
 try:
     from utils import HISSHU_Q_NUMBERS_SET, GAKUSHI_HISSHU_Q_NUMBERS_SET
 except ImportError:
-    # フォールバック: 空のセットを定義
-    HISSHU_Q_NUMBERS_SET = set()
-    GAKUSHI_HISSHU_Q_NUMBERS_SET = set()
-    print("[WARNING] HISSHU_Q_NUMBERS_SET と GAKUSHI_HISSHU_Q_NUMBERS_SET のインポートに失敗しました")
+    try:
+        from ..utils import HISSHU_Q_NUMBERS_SET, GAKUSHI_HISSHU_Q_NUMBERS_SET
+    except ImportError:
+        # フォールバック: 空のセットを定義
+        HISSHU_Q_NUMBERS_SET = set()
+        GAKUSHI_HISSHU_Q_NUMBERS_SET = set()
+        print("[WARNING] HISSHU_Q_NUMBERS_SET と GAKUSHI_HISSHU_Q_NUMBERS_SET のインポートに失敗しました")
 
 # appから必要な関数をインポート
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from utils import get_natural_sort_key
-from subject_mapping import get_standardized_subject
-from performance_optimizer import CachedDataManager, PerformanceOptimizer
+
+try:
+    from utils import get_natural_sort_key
+except ImportError:
+    try:
+        from ..utils import get_natural_sort_key
+    except ImportError:
+        get_natural_sort_key = lambda x: x
+
+try:
+    from subject_mapping import get_standardized_subject
+except ImportError:
+    try:
+        from ..subject_mapping import get_standardized_subject
+    except ImportError:
+        get_standardized_subject = lambda x: x
+
+# パフォーマンス最適化は無効化
+CachedDataManager = None
+PerformanceOptimizer = None
 
 # UserDataExtractor インポート（エラーハンドリング付き・Streamlit Cloud対応）
 try:
@@ -70,12 +171,8 @@ try:
     
     from user_data_extractor import UserDataExtractor
     USER_DATA_EXTRACTOR_AVAILABLE = True
-    print(f"[DEBUG] UserDataExtractor正常にインポート完了")
 except ImportError as e:
     print(f"[WARNING] UserDataExtractor import error: {e}")
-    print(f"[DEBUG] 現在のパス: {sys.path[:5]}")
-    print(f"[DEBUG] 現在のディレクトリ: {os.getcwd()}")
-    print(f"[DEBUG] __file__: {__file__}")
     USER_DATA_EXTRACTOR_AVAILABLE = False
 
 
@@ -119,7 +216,6 @@ def inject_image_quality_css():
 
 def _calculate_legacy_stats_full(cards: Dict, today: str, new_cards_per_day: int) -> Tuple[int, int, int]:
     """従来のロジックを使用してカード統計を計算（完全版・Streamlit Cloud対応強化）"""
-    print(f"[DEBUG] _calculate_legacy_stats_full開始: カード数={len(cards)}, 今日={today}")
     
     # 復習カード数（期限切れ）
     review_count = 0
@@ -133,7 +229,6 @@ def _calculate_legacy_stats_full(cards: Dict, today: str, new_cards_per_day: int
     
     # カードが存在しない場合は即座に0を返す
     if not cards or len(cards) == 0:
-        print(f"[DEBUG] カードデータなし - 全て0を返す")
         return 0, 0, 0
     
     for q_id, card in cards.items():
@@ -164,7 +259,6 @@ def _calculate_legacy_stats_full(cards: Dict, today: str, new_cards_per_day: int
                             today_studied_cards.append(q_id)
                             break
                     except Exception as e:
-                        print(f"[DEBUG] タイムスタンプ処理エラー: {e}")
                         continue
             
             if today_studied:
@@ -191,18 +285,14 @@ def _calculate_legacy_stats_full(cards: Dict, today: str, new_cards_per_day: int
                         if due_date_str <= today:
                             review_count += 1
                     except Exception as e:
-                        print(f"[DEBUG] 復習期限処理エラー: {e}")
                         continue
                         
         except Exception as e:
-            print(f"[DEBUG] カード処理エラー ({q_id}): {e}")
             continue
     
     # 新規カード数を上限で制限
     new_count = min(new_count, new_cards_per_day)
     
-    print(f"[DEBUG] _calculate_legacy_stats_full結果: 復習={review_count}, 新規={new_count}, 完了={completed_count}")
-    print(f"[DEBUG] 今日学習済みカード: {today_studied_cards[:5]}")  # 最初の5件のみ表示
     
     return review_count, new_count, completed_count
 
@@ -349,7 +439,6 @@ class QuestionComponent:
                                 st.warning(f"画像URLの生成に失敗しました: {img_url}")
                         except Exception as e:
                             st.warning(f"画像を読み込めませんでした: {img_url}")
-                            print(f"[DEBUG] 画像読み込みエラー: {e}")
                 
                 # 問題間の区切り
                 if i < len(questions) - 1:
@@ -583,7 +672,6 @@ class AnswerModeComponent:
                                     correct_display_label = formatted_answer
                                     
                             except Exception as e:
-                                print(f"[DEBUG] 正答表示エラー: {e}")
                                 correct_choice_text = "表示エラー"
                                 correct_display_label = correct_answer
                             
@@ -652,7 +740,6 @@ class AnswerModeComponent:
                                     st.warning(f"画像URLの生成に失敗しました: {img_url}")
                             except Exception as e:
                                 st.warning(f"画像を読み込めませんでした: {img_url}")
-                                print(f"[DEBUG] 画像読み込みエラー: {e}")
             
             st.markdown("</div>", unsafe_allow_html=True)
         
@@ -717,7 +804,6 @@ class ResultModeComponent:
                 type="primary"
             )
             
-            print(f"[DEBUG] 自己評価フォーム: quality={quality}, next_submitted={next_submitted}")
         
         return {
             'quality': quality,
@@ -732,8 +818,8 @@ class PracticeSession:
         self.firestore_manager = get_firestore_manager()
     
     def get_next_q_group(self) -> List[str]:
-        """次の問題グループを取得"""
-        now = datetime.datetime.now(datetime.timezone.utc)
+        """次の問題グループを取得（日本時間ベース）"""
+        now = get_japan_now()
         
         # 利用可能な復習問題を取得
         stq = st.session_state.get("short_term_review_queue", [])
@@ -755,7 +841,6 @@ class PracticeSession:
         review_count = len(ready_reviews)
         new_count = len(main_queue)
         
-        print(f"[DEBUG] get_next_q_group: 復習問題={review_count}件, 新規問題={new_count}件")
         
         # 復習問題が5個以上溜まっている場合は復習を優先
         if review_count >= 5:
@@ -764,7 +849,6 @@ class PracticeSession:
                 stq.pop(i)
                 st.session_state["short_term_review_queue"] = stq
                 result_group = item.get("group", [])
-                print(f"[DEBUG] 復習問題優先選択: {result_group}")
                 return result_group
         
         # 通常時：復習30%、新規70%の確率で選択
@@ -774,12 +858,10 @@ class PracticeSession:
                 stq.pop(i)
                 st.session_state["short_term_review_queue"] = stq
                 result_group = item.get("group", [])
-                print(f"[DEBUG] 復習問題選択(30%): {result_group}")
                 return result_group
             else:
                 result_group = main_queue.pop(0) if main_queue else []
                 st.session_state["main_queue"] = main_queue
-                print(f"[DEBUG] 新規問題選択(70%): {result_group}")
                 return result_group
         
         # 復習問題のみ利用可能
@@ -788,23 +870,20 @@ class PracticeSession:
             stq.pop(i)
             st.session_state["short_term_review_queue"] = stq
             result_group = item.get("group", [])
-            print(f"[DEBUG] 復習問題のみ選択: {result_group}")
             return result_group
         
         # 新規問題のみ利用可能
         elif main_queue:
             result_group = main_queue.pop(0)
             st.session_state["main_queue"] = main_queue
-            print(f"[DEBUG] 新規問題のみ選択: {result_group}")
             return result_group
         
         # 問題がない場合
-        print("[DEBUG] 利用可能な問題がありません")
         return []
     
     def enqueue_short_review(self, group: List[str], minutes: int):
-        """短期復習キューに追加"""
-        ready_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=minutes)
+        """短期復習キューに追加（日本時間ベース）"""
+        ready_at = get_japan_now() + datetime.timedelta(minutes=minutes)
         if "short_term_review_queue" not in st.session_state:
             st.session_state.short_term_review_queue = []
         st.session_state.short_term_review_queue.append({
@@ -907,24 +986,20 @@ class PracticeSession:
 
 def render_practice_page(auth_manager=None):
     """練習ページのメイン描画関数（uid統一版）"""
-    print("[DEBUG] render_practice_page called")
     practice_session = PracticeSession()
     
     # ユーザー認証チェック
     if auth_manager is None:
         auth_manager = AuthManager()
     if not auth_manager.ensure_valid_session():
-        print("[DEBUG] Session invalid")
         st.error("セッションが無効です。再ログインしてください。")
         return
     
     uid = st.session_state.get("uid")
     if not uid:
-        print("[DEBUG] No UID found")
         st.error("ユーザーIDが見つかりません。")
         return
     
-    print(f"[DEBUG] UID found: {uid}")
     
     # 前回セッション復帰処理
     if st.session_state.get("continue_previous") and st.session_state.get("session_choice_made"):
@@ -937,19 +1012,14 @@ def render_practice_page(auth_manager=None):
     # セッション状態をデバッグ
     session_choice_made = st.session_state.get("session_choice_made")
     main_queue = st.session_state.get("main_queue")
-    print(f"[DEBUG] session_choice_made: {session_choice_made}")
-    print(f"[DEBUG] main_queue: {main_queue}")
     
     # サイドバーで学習モードが選択されていない場合は何も表示せずに終了
     if not session_choice_made and not main_queue:
-        print("[DEBUG] No session or queue, showing welcome message instead")
         # 何も表示しないのではなく、ウェルカムメッセージを表示
         try:
             st.markdown("### 📚 学習を開始しましょう")
             st.info("👈 左のサイドバーから学習モードを選択して、学習を開始してください。")
-            print("[DEBUG] Welcome message components rendered successfully")
         except Exception as e:
-            print(f"[DEBUG] Error rendering welcome message: {e}")
             st.error(f"表示エラー: {e}")
         return
     
@@ -969,47 +1039,22 @@ def _render_active_session(practice_session: PracticeSession, uid: str):
     
     # セッションタイプに応じた処理（新規追加: デバッグログ）
     session_type = st.session_state.get("session_type", "")
-    print(f"[DEBUG] セッションタイプ: '{session_type}'")
     
     # バランス学習、弱点強化、復習重視、新規重視は全ておまかせ演習として処理
     if session_type in ["バランス学習", "弱点強化", "復習重視", "新規重視", "おまかせ演習", "自動学習", "おまかせ学習"]:
-        print(f"[DEBUG] おまかせセッションを開始: {session_type}")
         _render_omakase_session(practice_session, uid)
-    elif session_type == "カスタム演習":
-        print(f"[DEBUG] カスタムセッションを開始: {session_type}")
-        _render_custom_session(practice_session, uid)
     elif session_type.startswith("自由演習"):
-        print(f"[DEBUG] 自由学習セッションを開始: {session_type}")
         _render_free_learning_session(practice_session, uid)
     else:
-        print(f"[DEBUG] 不明なセッションタイプ: '{session_type}'")
         st.error(f"セッションタイプが不明です: {session_type}")
         st.info("サイドバーから学習を再開してください。")
 
 
 def _render_omakase_session(practice_session: PracticeSession, uid: str):
     """おまかせ演習セッションの表示"""
-    st.header("おまかせ演習")
+    #st.header("おまかせ演習")
+    st.markdown('<h2 style="margin-bottom: 0px;">おまかせ演習</h2>', unsafe_allow_html=True) # ← 新しいコードを追加
     
-    # ヘッダーと問題の間の余白を調整
-    st.markdown("""
-    <style>
-    /* ヘッダーの下余白を削除 */
-    h1 {
-        margin-bottom: 0.5rem !important;
-    }
-    /* 問題コンテナの上余白を削除 */
-    div[style*="background-color: rgb(250, 250, 250)"] {
-        margin-top: 0 !important;
-        padding-top: 8px !important;
-    }
-    /* 全体的な要素間隔を調整 */
-    [data-testid="stElementContainer"] {
-        margin-top: 0 !important;
-        margin-bottom: 0.25rem !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
     
     # 現在の問題グループを取得
     current_group = st.session_state.get("current_q_group", [])
@@ -1083,112 +1128,10 @@ def _render_free_learning_session(practice_session: PracticeSession, uid: str):
     _display_current_question(practice_session, uid)
 
 
-def _render_custom_settings():
-    """カスタム演習の設定UIを表示"""
-    try:
-        # 年度選択
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            years = ["2024", "2023", "2022", "2021", "2020"]
-            selected_years = st.multiselect(
-                "📅 出題年度",
-                years,
-                default=["2024", "2023"],
-                help="問題の出題年度を選択してください"
-            )
-        
-        with col2:
-            # 問題数選択
-            num_questions = st.slider(
-                "問題数",
-                min_value=5,
-                max_value=100,
-                value=20,
-                step=5,
-                help="演習する問題数を選択してください"
-            )
-        
-        # 分野選択（標準化された科目リストを使用）
-        from subject_mapping import get_all_standardized_subjects
-        subjects = get_all_standardized_subjects()
-        
-        selected_subjects = st.multiselect(
-            "📚 出題分野",
-            subjects,
-            default=subjects[:4] if len(subjects) >= 4 else subjects,  # デフォルトで最初の4つを選択
-            help="演習したい分野を選択してください"
-        )
-        
-        # 設定ボタン
-        if st.button("問題を生成", type="primary", use_container_width=True):
-            if not selected_years:
-                st.error("出題年度を選択してください")
-                return
-            
-            if not selected_subjects:
-                st.error("出題分野を選択してください")
-                return
-            
-            # カスタム設定を保存
-            st.session_state["custom_settings"] = {
-                "years": selected_years,
-                "subjects": selected_subjects,
-                "num_questions": num_questions
-            }
-            
-            # 問題生成フラグを設定
-            st.session_state["custom_questions_selected"] = True
-            
-            st.success(f"{num_questions}問の問題を生成しました！")
-            st.rerun()
-            
-    except Exception as e:
-        st.error(f"カスタム設定でエラーが発生しました: {str(e)}")
 
 
-def _render_custom_session(practice_session: PracticeSession, uid: str):
-    """カスタム演習セッションの表示"""
-    st.header("🎯 カスタム演習")
-    
-    # カスタム演習の設定UI
-    with st.expander("⚙️ 演習設定", expanded=True):
-        _render_custom_settings()
-    
-    # 問題表示
-    if st.session_state.get("custom_questions_selected"):
-        # 現在の問題グループを取得
-        current_group = st.session_state.get("current_q_group", [])
-        
-        # 問題グループが空の場合、次のグループを取得
-        if not current_group:
-            current_group = practice_session.get_next_q_group()
-            if current_group:
-                st.session_state["current_q_group"] = current_group
-                st.session_state["current_question_index"] = 0
-            else:
-                # セッション完了時のイベント追跡
-                if not st.session_state.get("session_completed_logged"):
-                    session_start_time = st.session_state.get("session_start_time", time.time())
-                    session_duration = time.time() - session_start_time
-                    
-                    log_to_ga("study_session_completion", uid, {
-                        "session_type": "カスタム演習",
-                        "session_duration_seconds": session_duration,
-                        "questions_completed": len(st.session_state.get("main_queue", [])),
-                        "completion_method": "all_questions_finished"
-                    })
-                    
-                    st.session_state["session_completed_logged"] = True
-                
-                st.info("📚 全ての問題が完了しました！新しいセッションを開始してください。")
-                if st.button("新しいセッションを開始"):
-                    _reset_session()
-                return
-        
-        _display_current_question(practice_session, uid)
-    else:
-        st.info("上記の設定で問題を選択してください。")
+
+
 
 
 def _display_current_question(practice_session: PracticeSession, uid: str):
@@ -1272,10 +1215,8 @@ def _display_current_question(practice_session: PracticeSession, uid: str):
         # 結果表示用のボタンとメッセージ
         evaluation_result = ResultModeComponent.render(q_objects, group_id, result_data, case_data)
         
-        print(f"[DEBUG] 評価結果取得: {evaluation_result}")
         
         if evaluation_result['next_submitted']:
-            print(f"[DEBUG] 次の問題へボタンが押されました。自己評価処理を開始します...")
             _process_self_evaluation_improved(
                 q_objects,
                 evaluation_result['quality'],
@@ -1360,8 +1301,6 @@ def _process_group_answer_improved(q_objects: List[Dict], user_selections: Dict,
 def _process_self_evaluation_improved(q_objects: List[Dict], quality_text: str, 
                                     group_id: str, practice_session: PracticeSession, uid: str):
     """改善された自己評価処理（学習記録の確定処理）"""
-    print(f"[DEBUG] ===== 自己評価処理開始 =====")
-    print(f"[DEBUG] 問題数: {len(q_objects)}, quality_text: '{quality_text}', group_id: {group_id}")
     
     # 品質スコアの変換（4段階評価）
     quality_mapping = {
@@ -1371,11 +1310,22 @@ def _process_self_evaluation_improved(q_objects: List[Dict], quality_text: str,
         "× もう一度": 1
     }
     quality = quality_mapping.get(quality_text, 3)
-    print(f"[DEBUG] quality_text '{quality_text}' -> quality: {quality}")
     
     # 各問題のSM2更新
     cards = st.session_state.get("cards", {})
     updated_cards = []
+    
+    # 検索進捗ページ用の学習ログ更新
+    try:
+        from modules.search_page import update_session_evaluation_log
+        current_time = datetime.datetime.now()
+        for question in q_objects:
+            qid = question.get('number', '')
+            update_session_evaluation_log(qid, quality, current_time)
+    except ImportError:
+        pass
+    except Exception as e:
+        pass
     
     for question in q_objects:
         qid = question.get('number', '')
@@ -1397,41 +1347,54 @@ def _process_self_evaluation_improved(q_objects: List[Dict], quality_text: str,
         # Firestoreに保存（非同期・エラー無視で軽量化）
         try:
             save_user_data(uid, qid, updated_card)
-            print(f"[DEBUG] 自己評価保存完了: {qid}, quality={quality}")
         except Exception as e:
-            print(f"[DEBUG] 自己評価保存エラー: {qid}, error={e}")
             # 保存エラーは無視（後でリトライ）
             pass
     
     # セッション状態を強制的に更新
     st.session_state["cards"] = cards.copy()  # コピーして確実に更新を検知させる
-    print(f"[DEBUG] セッション状態更新完了: {len(cards)}枚のカード")
+    
+    # ランキングスコア更新（カード更新後に実行）
+    try:
+        from modules.ranking_calculator import update_user_ranking_scores
+        evaluation_logs = st.session_state.get('evaluation_logs', [])
+        user_profile = st.session_state.get('user_profile', {})
+        nickname = user_profile.get('nickname', f"ユーザー{uid[:8]}")
+        # 更新されたカードデータを使用
+        ranking_data = update_user_ranking_scores(uid, cards, evaluation_logs, nickname)
+        
+        # デバッグログ出力
+        if ranking_data:
+            debug_info = ranking_data.get('debug_info', {})
+            print(f"[DEBUG] ランキング更新完了: カード総数={debug_info.get('cards_count', 0)}, 履歴あり={debug_info.get('cards_with_history', 0)}")
+            
+    except ImportError:
+        pass
+    except Exception as e:
+        print(f"[ERROR] ランキングスコア更新エラー: {e}")
+        pass
     
     # サイドバーの評価分布を強制更新するためのキーを更新
-    current_time = datetime.datetime.now().isoformat()
+    current_time = get_japan_now().isoformat()
     st.session_state["last_evaluation_update"] = current_time
-    print(f"[DEBUG] 評価更新タイムスタンプ設定: {current_time}")
     
     # 学習ログに記録（自己評価時のみ）
     result_log = st.session_state.get("result_log", {})
-    print(f"[DEBUG] 現在のresult_log件数: {len(result_log)}")
     
     for question in q_objects:
         qid = question.get('number', '')
         result_data = st.session_state.get(f"result_{group_id}", {}).get(qid, {})
         
         new_record = {
-            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "timestamp": get_japan_now().isoformat(),  # 日本時間で記録
             "correct": result_data.get('is_correct', False),
             "selected": result_data.get('user_answer_str', ''),
             "quality": quality
         }
         
         result_log[qid] = new_record
-        print(f"[DEBUG] 自己評価記録追加: {qid} -> {new_record}")
     
     st.session_state["result_log"] = result_log
-    print(f"[DEBUG] result_log更新完了: {len(result_log)}件の記録")
     
     # Google Analytics ログ（自己評価完了時のみ）
     session_type = st.session_state.get("session_type", "unknown")
@@ -1480,7 +1443,6 @@ def _process_self_evaluation_improved(q_objects: List[Dict], quality_text: str,
     
     # サイドバーの表示を即座に更新するためのフラグ
     st.session_state["sidebar_refresh_needed"] = True
-    print(f"[DEBUG] 自己評価処理完了、サイドバー更新フラグ設定")
     
     st.rerun()
 
@@ -1527,7 +1489,7 @@ def _reset_session():
     """セッションをリセット"""
     keys_to_reset = [
         "session_choice_made", "session_type", "current_q_group", 
-        "main_queue", "short_term_review_queue", "custom_questions_selected",
+        "main_queue", "short_term_review_queue",
         "session_completed_logged", "session_start_time"
     ]
     
@@ -1549,11 +1511,9 @@ def _reset_session():
 
 def render_practice_sidebar():
     """練習ページ専用のサイドバーを描画"""
-    print("[DEBUG] render_practice_sidebar called")
     
     # サイドバー更新フラグをチェック
     if st.session_state.get("sidebar_refresh_needed", False):
-        print("[DEBUG] サイドバー強制更新フラグ検出")
         st.session_state["sidebar_refresh_needed"] = False
         # フラグをクリアした後、少し待ってから処理を続行
         import time
@@ -1562,14 +1522,11 @@ def render_practice_sidebar():
     try:
         uid = st.session_state.get("uid")
         if not uid:
-            print("[DEBUG] No UID in sidebar")
             st.warning("ユーザーIDが見つかりません")
             return
             
-        print(f"[DEBUG] Sidebar UID: {uid}")
         # --- 演習ページのサイドバー ---
         st.markdown("### 🎓 学習ハブ")
-        print("[DEBUG] Learning hub markdown rendered")
 
         # 学習モード選択
         learning_mode = st.radio(
@@ -1577,7 +1534,6 @@ def render_practice_sidebar():
             ['おまかせ学習（推奨）', '自由演習（分野・回数指定）'],
             key="learning_mode"
         )
-        print(f"[DEBUG] Learning mode selected: {learning_mode}")
 
         st.divider()
 
@@ -1589,79 +1545,57 @@ def render_practice_sidebar():
                 # 初期化中は他の表示を全て停止
                 st.stop()
             else:
-                # Anki風の日次目標表示
-                st.markdown("#### 📅 本日の学習目標")
-                today = datetime.datetime.now(datetime.timezone.utc).date()
-                today_str = today.strftime('%Y-%m-%d')
-
-                # 本日の復習対象カード数を計算
-                review_count = 0
+                # Anki風の日次目標表示 + SM-2ベース復習スケジュール
+                st.markdown("#### 📅 本日の学習目標・復習スケジュール")
+                from modules.search_page import get_japan_today
+                today = get_japan_today()  # 日本時間の今日
                 cards = st.session_state.get("cards", {})
-                debug_review_cards = []  # デバッグ用
 
-                for card_id, card in cards.items():
-                    # 履歴がある場合は復習対象として計算
-                    history = card.get('history', [])
-                    if history:
-                        # 最新の学習記録から次回復習日を計算
-                        last_review = history[-1] if history else {}
-                        if isinstance(last_review, dict):
-                            last_timestamp = last_review.get('timestamp')
-                            interval = last_review.get('interval', 1)  # デフォルト1日
-                            
-                            if last_timestamp:
-                                last_date = None
-                                # タイムスタンプから日付を取得
-                                if hasattr(last_timestamp, 'date'):
-                                    last_date = last_timestamp.date()
-                                elif isinstance(last_timestamp, str):
-                                    try:
-                                        last_date = datetime.datetime.fromisoformat(last_timestamp.replace('Z', '+00:00')).date()
-                                    except:
-                                        try:
-                                            last_date = datetime.datetime.strptime(last_timestamp[:10], '%Y-%m-%d').date()
-                                        except:
-                                            pass
-                                
-                                if last_date:
-                                    # 次回復習日を計算
-                                    next_review_date = last_date + datetime.timedelta(days=int(interval))
-                                    if next_review_date <= today:
-                                        review_count += 1
-                                        debug_review_cards.append(f"{card_id}(復習予定:{next_review_date})")
-                    
-                    # 既存のnext_reviewフィールドもチェック（後方互換性）
-                    elif 'next_review' in card:
-                        next_review = card['next_review']
-                        if isinstance(next_review, str):
-                            try:
-                                next_review_date = datetime.datetime.fromisoformat(next_review).date()
-                                if next_review_date <= today:
-                                    review_count += 1
-                                    debug_review_cards.append(f"{card_id}(next_review:{next_review_date})")
-                            except:
-                                pass
-                        elif isinstance(next_review, datetime.datetime):
-                            if next_review.date() <= today:
-                                review_count += 1
-                                debug_review_cards.append(f"{card_id}(next_review:{next_review.date()})")
-                        elif isinstance(next_review, datetime.date):
-                            if next_review <= today:
-                                review_count += 1
-                                debug_review_cards.append(f"{card_id}(next_review:{next_review})")
+                # SM-2アルゴリズムベースの復習スケジュール計算
+                from modules.search_page import calculate_sm2_review_schedule, get_review_priority_cards
+                
+                # 7日分の復習スケジュールを計算
+                review_schedule = calculate_sm2_review_schedule(cards, days_ahead=7)
+                
+                # 今日の復習対象カードを優先度付きで取得
+                today_priority_cards = get_review_priority_cards(cards, today)
+                review_count = len(today_priority_cards)
+                
+                # 今日の復習統計
+                overdue_cards = [card for card in today_priority_cards if card[2] > 0]  # 経過日数 > 0
+                due_today_cards = [card for card in today_priority_cards if card[2] == 0]  # 今日が復習予定日
 
-                # デバッグ情報表示
-                print(f"[DEBUG] 本日の復習対象カード数: {review_count}")
-                if debug_review_cards:
-                    print(f"[DEBUG] 復習カードリスト（最初の10件）: {debug_review_cards[:10]}")
+                # 今日の復習情報のみ表示（シンプル・前向き）
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.metric(
+                        label="今日の復習",
+                        value=f"{review_count}問",
+                        delta=f"期限切れ: {len(overdue_cards)}問" if overdue_cards else "すべて期限内 ✅",
+                        help=f"期限切れ: {len(overdue_cards)}問 / 今日予定: {len(due_today_cards)}問"
+                    )
+                
+                with col2:
+                    # 新規学習目標
+                    new_target = st.session_state.get("new_cards_per_day", 10)
+                    st.metric(
+                        label="新規学習目標",
+                        value=f"{new_target}問",
+                        help="今日の新規学習目標数"
+                    )
+
+                # 復習詳細（シンプル表示）
+                if review_count > 0 and overdue_cards:
+                    st.warning(f"⚠️ 期限切れの復習問題が {len(overdue_cards)}問 あります。優先的に学習することをお勧めします。")
+
+                # デバッグ情報表示（今日にフォーカス）
 
                 # 本日の学習完了数を計算（重複カウント防止強化版）
                 today_reviews_done = 0
                 today_new_done = 0
                 processed_cards = set()  # 重複カウント防止
                 
-                print(f"[DEBUG] ===== 本日の学習統計計算開始 =====")
-                print(f"[DEBUG] cards総数: {len(cards)}")
 
                 try:
                     for q_num, card in cards.items():
@@ -1672,82 +1606,60 @@ def render_practice_sidebar():
                         if not history:
                             continue
 
-                        # 本日の学習履歴があるかチェック
+                        # 本日の学習履歴があるかチェック（日本時間ベース）
                         has_today_session = False
                         for review in history:
                             if isinstance(review, dict):
                                 review_timestamp = review.get('timestamp', '')
                                 review_date_obj = None
                                 
-                                # タイムスタンプのパース処理（DatetimeWithNanoseconds対応）
-                                if hasattr(review_timestamp, 'date'):
-                                    # DatetimeWithNanoseconds または datetime オブジェクト
-                                    review_date_obj = review_timestamp.date()
-                                elif isinstance(review_timestamp, str):
-                                    try:
-                                        # ISO文字列の場合
-                                        review_date_obj = datetime.datetime.fromisoformat(review_timestamp.replace('Z', '+00:00')).date()
-                                    except:
-                                        try:
-                                            # 日付部分のみの場合
-                                            review_date_obj = datetime.datetime.strptime(review_timestamp[:10], '%Y-%m-%d').date()
-                                        except:
-                                            pass
+                                # タイムスタンプのパース処理（日本時間変換）
+                                try:
+                                    review_datetime_jst = get_japan_datetime_from_timestamp(review_timestamp)
+                                    review_date_obj = review_datetime_jst.date()
+                                except Exception:
+                                    continue
                                 
                                 if review_date_obj == today:
                                     has_today_session = True
-                                    print(f"[DEBUG] {q_num}: 本日の学習記録あり")
                                     break
 
                         if has_today_session:
                             processed_cards.add(q_num)  # 処理済みマーク
 
-                            # 今日より前に学習記録があるかどうかで新規/復習を判定
+                            # 今日より前に学習記録があるかどうかで新規/復習を判定（日本時間ベース）
                             has_previous_learning = False
                             
                             for review in history:
                                 if isinstance(review, dict):
                                     timestamp = review.get('timestamp', '')
-                                    review_date_obj = None
                                     
-                                    # 日付を取得
-                                    if hasattr(timestamp, 'date'):
-                                        review_date_obj = timestamp.date()
-                                    elif isinstance(timestamp, str):
-                                        try:
-                                            review_date_obj = datetime.datetime.fromisoformat(timestamp.replace('Z', '+00:00')).date()
-                                        except:
-                                            try:
-                                                review_date_obj = datetime.datetime.strptime(timestamp[:10], '%Y-%m-%d').date()
-                                            except:
-                                                continue
-                                    
-                                    # 今日より前の学習記録があるかチェック
-                                    if review_date_obj and review_date_obj < today:
-                                        has_previous_learning = True
-                                        print(f"[DEBUG] {q_num}: 過去の学習記録発見 - {review_date_obj}")
-                                        break
+                                    try:
+                                        review_datetime_jst = get_japan_datetime_from_timestamp(timestamp)
+                                        review_date_obj = review_datetime_jst.date()
+                                        
+                                        # 今日より前の学習記録があるかチェック
+                                        if review_date_obj and review_date_obj < today:
+                                            has_previous_learning = True
+                                            break
+                                    except Exception:
+                                        continue
 
                             if has_previous_learning:
                                 # 過去に学習記録があるので復習
                                 today_reviews_done += 1
-                                print(f"[DEBUG] {q_num}: 復習としてカウント（過去に学習歴あり）")
                             else:
                                 # 今日が初回学習なので新規
                                 today_new_done += 1
-                                print(f"[DEBUG] {q_num}: 新規学習としてカウント（今日が初回学習）")
                                 
-                    print(f"[DEBUG] 統計計算結果: today_new_done={today_new_done}, today_reviews_done={today_reviews_done}")
                                 
                 except Exception as e:
-                    print(f"[DEBUG] 統計計算エラー: {e}")
                     # エラーが発生した場合は0で初期化
                     today_reviews_done = 0
                     today_new_done = 0
 
                 # result_logからも本日のデータを取得（補完用）
                 result_log = st.session_state.get("result_log", {})
-                print(f"[DEBUG] result_log件数: {len(result_log)}")
                 
                 for q_id, result_data in result_log.items():
                     if q_id in processed_cards:
@@ -1761,11 +1673,9 @@ def render_practice_sidebar():
                                 # result_logでは全て新規として扱う（自己評価時のログなので）
                                 today_new_done += 1
                                 processed_cards.add(q_id)
-                                print(f"[DEBUG] {q_id}: result_logから新規学習追加")
                         except:
                             pass
                 
-                print(f"[DEBUG] 最終統計: today_new_done={today_new_done}, today_reviews_done={today_reviews_done}")
 
                 # 新規学習目標数（安全な取得）
                 new_target = st.session_state.get("new_cards_per_day", 10)
@@ -1850,54 +1760,16 @@ def render_practice_sidebar():
                     st.session_state["initializing_study"] = True
 
                     with st.spinner("学習セッションを準備中..."):
-                        # 復習カードをメインキューに追加
+                        # SM-2アルゴリズムベースの復習カード選択
                         grouped_queue = []
-
-                        # 復習カードの追加
-                        for q_num, card in cards.items():
-                            should_review = False
-                            
-                            # 履歴から復習日を計算
-                            history = card.get('history', [])
-                            if history:
-                                last_review = history[-1] if history else {}
-                                if isinstance(last_review, dict):
-                                    last_timestamp = last_review.get('timestamp')
-                                    interval = last_review.get('interval', 1)
-                                    
-                                    if last_timestamp:
-                                        last_date = None
-                                        if hasattr(last_timestamp, 'date'):
-                                            last_date = last_timestamp.date()
-                                        elif isinstance(last_timestamp, str):
-                                            try:
-                                                last_date = datetime.datetime.fromisoformat(last_timestamp.replace('Z', '+00:00')).date()
-                                            except:
-                                                try:
-                                                    last_date = datetime.datetime.strptime(last_timestamp[:10], '%Y-%m-%d').date()
-                                                except:
-                                                    pass
-                                        
-                                        if last_date:
-                                            next_review_date = last_date + datetime.timedelta(days=int(interval))
-                                            should_review = next_review_date <= today
-                            
-                            # 既存のnext_reviewフィールドもチェック
-                            elif 'next_review' in card:
-                                next_review = card['next_review']
-                                if isinstance(next_review, str):
-                                    try:
-                                        next_review_date = datetime.datetime.fromisoformat(next_review).date()
-                                        should_review = next_review_date <= today
-                                    except:
-                                        pass
-                                elif isinstance(next_review, datetime.datetime):
-                                    should_review = next_review.date() <= today
-                                elif isinstance(next_review, datetime.date):
-                                    should_review = next_review <= today
-
-                            if should_review:
-                                grouped_queue.append([q_num])
+                        
+                        # 今日の復習対象カードを優先度順で取得
+                        priority_cards = get_review_priority_cards(cards, today)
+                        
+                        
+                        # 復習カードを優先度順で追加（最大100問まで）
+                        for q_id, priority_score, days_overdue in priority_cards[:100]:
+                            grouped_queue.append([q_id])
 
                         # 新規カードの追加
                         recent_ids = list(st.session_state.get("result_log", {}).keys())[-15:]
@@ -2133,12 +2005,12 @@ def render_practice_sidebar():
                         st.success(f"演習を開始します！（{len(grouped_queue)}グループ）")
                         st.rerun()
 
-        # 現在の学習キュー状況表示
+        # 現在の学習キュー状況表示 + SM-2復習スケジュール
         st.divider()
-        st.markdown("#### 📚 学習キュー状況")
+        st.markdown("#### 📚 学習キュー状況・復習スケジュール")
 
-        # 短期復習の「準備完了」件数を表示
-        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        # 短期復習の「準備完了」件数を表示（日本時間ベース）
+        now_jst = get_japan_now()
         ready_short = 0
         for item in st.session_state.get("short_term_review_queue", []):
             ra = item.get("ready_at")
@@ -2146,12 +2018,33 @@ def render_practice_sidebar():
                 try:
                     ra = datetime.datetime.fromisoformat(ra)
                 except Exception:
-                    ra = now_utc
-            if not ra or ra <= now_utc:
+                    ra = now_jst
+            if not ra or ra <= now_jst:
                 ready_short += 1
 
         st.write(f"メインキュー: **{len(st.session_state.get('main_queue', []))}** グループ")
         st.write(f"短期復習: **{ready_short}** グループ準備完了")
+
+        # SM-2復習状況（今日のみ表示、日本時間ベース）
+        try:
+            cards = st.session_state.get("cards", {})
+            from modules.search_page import get_review_priority_cards, get_japan_today
+            
+            # 今日の復習状況のみ表示（日本時間）
+            today = get_japan_today()
+            today_priority_cards = get_review_priority_cards(cards, today)
+            today_count = len(today_priority_cards)
+            overdue_count = len([card for card in today_priority_cards if card[2] > 0])
+            
+            if today_count > 0:
+                st.markdown("**📅 今日の復習:**")
+                if overdue_count > 0:
+                    st.write(f"復習: {today_count}問 (期限切れ: {overdue_count}問)")
+                else:
+                    st.write(f"復習: {today_count}問")
+        
+        except Exception as e:
+            pass
 
         # セッション初期化
         if st.button("🔄 セッションを初期化", key="reset_session"):
@@ -2169,7 +2062,6 @@ def render_practice_sidebar():
 
 def _render_auto_learning_mode():
     """🚀 2. 「おまかせ学習」モードのUI（シンプル版）"""
-    print("[DEBUG] practice_page.py: _render_auto_learning_mode() を開始...")
     
     # cardsの初期化（安全のため最初に実行）
     cards = {}
@@ -2189,11 +2081,9 @@ def _render_auto_learning_mode():
         try:
             # 1. セッション状態のカードデータを最優先で使用
             session_cards = st.session_state.get("cards", {})
-            print(f"[DEBUG] セッション状態確認: カード数={len(session_cards)}")
             
             # 2. セッション状態にデータがない、または空の場合はFirestoreから強制取得
             if not session_cards or len(session_cards) == 0:
-                print(f"[DEBUG] セッション状態が空 - Firestoreから直接取得")
                 
                 if firestore_manager and firestore_manager.db:
                     # Firestoreから直接study_cardsを取得
@@ -2201,7 +2091,6 @@ def _render_auto_learning_mode():
                     user_cards_query = study_cards_ref.where("uid", "==", uid)
                     user_cards_docs = list(user_cards_query.stream())
                     
-                    print(f"[DEBUG] Firestore取得: {len(user_cards_docs)}件のドキュメント")
                     
                     # カードデータを変換
                     for doc in user_cards_docs:
@@ -2238,24 +2127,20 @@ def _render_auto_learning_mode():
                     
                     # セッション状態にも保存
                     st.session_state["cards"] = cards
-                    print(f"[DEBUG] Firestoreから{len(cards)}枚のカードを取得、セッションに保存")
                 else:
                     print(f"[ERROR] Firestoreマネージャーまたはdbが無効")
                     cards = {}
             else:
                 # セッション状態のデータをそのまま使用
                 cards = session_cards
-                print(f"[DEBUG] セッション状態のカードを使用: {len(cards)}枚")
             
             # デバッグ情報を追加
-            print(f"[DEBUG] カードデータ統計:")
             print(f"  - セッションカード数: {len(session_cards)}")
             print(f"  - 使用中カード数: {len(cards)}")
             print(f"  - データソース: {'セッション状態' if session_cards else 'Firestore直接取得'}")
             
         except Exception as e:
             print(f"[ERROR] 学習データ取得エラー: {str(e)}")
-            print(f"[ERROR] エラー詳細: {type(e).__name__}")
             st.warning(f"学習データの取得に失敗: {str(e)}")
             cards = st.session_state.get("cards", {})
 
@@ -2271,16 +2156,15 @@ def _render_auto_learning_mode():
         is_initial_load = not st.session_state.get("stats_calculated", False)
         
         if is_initial_load:
-            print(f"[DEBUG] 初回ページロード - 統計計算をスキップ")
+            pass
         
         if skip_recently:
-            print(f"[DEBUG] スキップ後2秒以内のため統計計算をスキップ")
+            pass
         
         should_skip_stats = skip_recently or is_initial_load
         
         if USER_DATA_EXTRACTOR_AVAILABLE and cards and len(cards) > 0 and not should_skip_stats:
             try:
-                print(f"[DEBUG] UserDataExtractor統計計算開始: uid={uid}, カード数={len(cards)}")
                 
                 # Streamlit Cloud対応：データが存在する場合のみUserDataExtractorを使用
                 extractor = UserDataExtractor()
@@ -2294,16 +2178,13 @@ def _render_auto_learning_mode():
                         st.session_state["cached_detailed_stats"] = detailed_stats
                         # 統計計算完了フラグを設定
                         st.session_state["stats_calculated"] = True
-                        print(f"[DEBUG] UserDataExtractor統計成功: keys={list(detailed_stats.keys())}")
                         
                         # 重要な統計データが存在するか確認
                         if 'level_distribution' in detailed_stats and detailed_stats['level_distribution']:
-                            print(f"[DEBUG] level_distribution取得成功: {detailed_stats.get('level_distribution')}")
+                            pass
                         else:
-                            print(f"[WARNING] level_distributionが空またはなし - フォールバックを使用")
                             detailed_stats = None
                     else:
-                        print(f"[DEBUG] UserDataExtractor: user_statsが無効 - タイプ: {type(user_stats)}")
                         detailed_stats = None
                 except Exception as ude_error:
                     print(f"[ERROR] UserDataExtractor直接計算エラー: {ude_error}")
@@ -2314,37 +2195,25 @@ def _render_auto_learning_mode():
                 detailed_stats = None
         else:
             if not USER_DATA_EXTRACTOR_AVAILABLE:
-                print(f"[DEBUG] UserDataExtractor利用不可")
+                pass
             if not cards or len(cards) == 0:
-                print(f"[DEBUG] カードデータが空 - UserDataExtractor スキップ")
+                pass
             if skip_recently:
                 # スキップ時はキャッシュされた統計を使用
                 detailed_stats = st.session_state.get("cached_detailed_stats", None)
-                print(f"[DEBUG] スキップ時のキャッシュ統計使用: {detailed_stats is not None}")
             elif is_initial_load:
                 # 初回ロード時もキャッシュを使用（統計計算を遅延）
                 detailed_stats = st.session_state.get("cached_detailed_stats", None)
-                print(f"[DEBUG] 初回ロード時のキャッシュ統計使用: {detailed_stats is not None}")
             else:
                 detailed_stats = None
 
         new_cards_per_day = st.session_state.get("new_cards_per_day", 10)
         
-        # デバッグ: セッション状態の確認
-        session_cards_debug = st.session_state.get("cards", {})
-        print(f"[DEBUG] 練習ページでのセッション状態確認:")
-        print(f"  - セッションカード数: {len(session_cards_debug)}")
-        print(f"  - セッションカードキー例: {list(session_cards_debug.keys())[:5] if session_cards_debug else 'なし'}")
-        print(f"  - 使用中カード数: {len(cards)}")
-        
         # リアルタイム計算 - UserDataExtractorが利用可能なら優先使用（Streamlit Cloud対応）
         today = datetime.datetime.now().strftime("%Y-%m-%d")
-        print(f"[DEBUG] 今日の日付: {today}")
-        print(f"[DEBUG] カード総数: {len(cards)}")
         
         if len(cards) == 0:
             # カードデータが存在しない場合のデフォルト値
-            print(f"[DEBUG] カードデータが存在しません - デフォルト値を使用")
             review_count = 0
             new_count = 0
             completed_count = 0
@@ -2353,16 +2222,13 @@ def _render_auto_learning_mode():
             detailed_stats = None
             if USER_DATA_EXTRACTOR_AVAILABLE:
                 try:
-                    print(f"[DEBUG] UserDataExtractor統計計算開始: uid={uid}, カード数={len(cards)}")
                     extractor = UserDataExtractor()
                     user_stats = extractor.get_user_comprehensive_stats(uid)
                     if user_stats and isinstance(user_stats, dict) and user_stats.get('level_distribution'):
                         detailed_stats = user_stats
-                        print(f"[DEBUG] UserDataExtractor統計成功: keys={list(detailed_stats.keys())}")
                         
                         # UserDataExtractorから統計を計算
                         level_distribution = detailed_stats.get("level_distribution", {})
-                        print(f"[DEBUG] level_distribution: {level_distribution}")
                         
                         # 復習期限カード数の計算（レベル0-5）
                         review_count = 0
@@ -2376,13 +2242,11 @@ def _render_auto_learning_mode():
                         # 今日の学習数
                         completed_count = detailed_stats.get("今日の学習数", 0)
                         
-                        print(f"[DEBUG] UserDataExtractor統計使用:")
                         print(f"  - 復習期限: {review_count}問 (レベル0-5の合計)")
                         print(f"  - 新規カード: {new_count}問 (未学習カード)")
                         print(f"  - 今日完了: {completed_count}問")
                         
                     else:
-                        print(f"[DEBUG] UserDataExtractor失敗 - フォールバック使用")
                         detailed_stats = None
                         review_count, new_count, completed_count = _calculate_legacy_stats_full(cards, today, new_cards_per_day)
                         
@@ -2392,7 +2256,6 @@ def _render_auto_learning_mode():
                     review_count, new_count, completed_count = _calculate_legacy_stats_full(cards, today, new_cards_per_day)
             else:
                 # UserDataExtractorが利用できない場合: 従来ロジック
-                print("[DEBUG] UserDataExtractor利用不可 - 従来ロジック使用")
                 detailed_stats = None
                 review_count, new_count, completed_count = _calculate_legacy_stats_full(cards, today, new_cards_per_day)
         # 学習状況を簡潔に表示
@@ -2572,30 +2435,6 @@ def _render_session_status():
     with col2:
         st.metric("短期復習", f"{len(short_review_queue)}問")
     
-    # 最近の評価ログ
-    result_log = st.session_state.get("result_log", {})
-    if result_log:
-        st.markdown("### 🔄 最近の評価")
-        recent_results = list(result_log.items())[-10:]  # 最新10件
-        
-        # 問題番号ボタンを3列で表示
-        cols = st.columns(3)
-        for i, (q_id, result) in enumerate(recent_results):
-            with cols[i % 3]:
-                # 評価に応じたアイコン
-                if result.get("quality") == 5:
-                    icon = "🔥"
-                elif result.get("quality") == 4:
-                    icon = "👍"
-                elif result.get("quality") == 2:
-                    icon = "😅"
-                else:
-                    icon = "🔄"
-                
-                if st.button(f"{icon} {q_id}", key=f"recent_{q_id}", use_container_width=True):
-                    # 問題に直接ジャンプ
-                    _jump_to_question(q_id)
-    
     # 学習記録セクション
     st.divider()
     st.markdown("#### 📈 学習記録")
@@ -2684,7 +2523,6 @@ def _render_session_status():
                                     return str(ts)
                     return '1970-01-01T00:00:00'  # デフォルト値
                 except Exception as e:
-                    print(f"[DEBUG] タイムスタンプ取得エラー: {e}")
                     return '1970-01-01T00:00:00'  # エラー時のデフォルト値
             
             sorted_cards = sorted(cards_with_history, key=get_safe_timestamp, reverse=True)
@@ -2739,7 +2577,6 @@ def _render_session_status():
                                 else:
                                     timestamp_str = str(ts)[:16]
                             except Exception as e:
-                                print(f"[DEBUG] timestamp フォーマットエラー: {e}")
                                 timestamp_str = "フォーマットエラー"
                         elif 'date' in last_history:
                             try:
@@ -2765,7 +2602,6 @@ def _render_session_status():
                                 else:
                                     timestamp_str = str(ts)[:16]
                             except Exception as e:
-                                print(f"[DEBUG] date フォーマットエラー: {e}")
                                 timestamp_str = "フォーマットエラー"
                         
                         # 元のシンプルなUI形式に戻す
@@ -2786,56 +2622,6 @@ def _render_session_status():
                 st.info("履歴のある問題がありません。")
     else:
         st.info("まだ評価された問題がありません。")
-
-
-def _render_profile_settings_in_sidebar(uid: str):
-    """サイドバー用のプロフィール設定UIを描画"""
-    # 現在のプロフィールを取得
-    current_profile = get_user_profile_for_ranking(uid)
-    
-    # デフォルト値の設定
-    default_nickname = ""
-    default_show_on_leaderboard = True
-    
-    if current_profile:
-        default_nickname = current_profile.get("nickname", "")
-        default_show_on_leaderboard = current_profile.get("show_on_leaderboard", True)
-    
-    with st.form("sidebar_profile_form"):
-        st.write("**ランキング表示設定**")
-        
-        # ニックネーム入力
-        nickname = st.text_input(
-            "ニックネーム",
-            value=default_nickname,
-            help="ランキングに表示される名前です",
-            placeholder="例: 勇敢なパンダ123"
-        )
-        
-        # ランキング参加設定
-        show_on_leaderboard = st.checkbox(
-            "ランキングに参加する",
-            value=default_show_on_leaderboard,
-            help="チェックを外すとランキングに表示されません"
-        )
-        
-        # 保存ボタン
-        if st.form_submit_button("💾 保存", type="primary"):
-            if nickname.strip():
-                try:
-                    success = save_user_profile(uid, nickname.strip(), show_on_leaderboard)
-                    if success:
-                        st.success("プロフィールを更新しました！")
-                        # セッションの名前も更新
-                        st.session_state["name"] = nickname.strip()
-                        time.sleep(1)
-                        st.rerun()
-                    else:
-                        st.error("プロフィール更新に失敗しました")
-                except Exception as e:
-                    st.error(f"プロフィール更新エラー: {e}")
-            else:
-                st.error("ニックネームを入力してください")
 
 
 def _start_ai_enhanced_learning(session_type: str, problem_count: int, detailed_stats: Optional[Dict] = None):
@@ -3050,10 +2836,8 @@ def _select_new_questions(user_cards: Dict, count: int) -> List[str]:
     # 権限に応じて利用可能な問題を制限
     if has_gakushi_permission:
         available_questions = ALL_QUESTIONS
-        print(f"[DEBUG] _select_new_questions: 学士権限あり - 全問題対象 ({len(ALL_QUESTIONS)}問)")
     else:
         available_questions = [q for q in ALL_QUESTIONS if not q.get("number", "").startswith("G")]
-        print(f"[DEBUG] _select_new_questions: 学士権限なし - 国試のみ対象 ({len(available_questions)}問)")
     
     # デバッグ: 年代別問題数を確認
     year_counts = {}
@@ -3063,7 +2847,6 @@ def _select_new_questions(user_cards: Dict, count: int) -> List[str]:
             year_prefix = number[:3]  # 例: "100", "101", "118"
             year_counts[year_prefix] = year_counts.get(year_prefix, 0) + 1
     
-    print(f"[DEBUG] 利用可能問題の年代別分布: {dict(sorted(year_counts.items()))}")
     
     # 利用可能な問題をシャッフルしてから未学習のものを選択（順序バイアスを排除）
     shuffled_questions = list(available_questions)
@@ -3101,16 +2884,12 @@ def _select_new_questions(user_cards: Dict, count: int) -> List[str]:
         if len(new_questions) >= count * 5:  # 目標数の5倍で十分
             break
     
-    print(f"[DEBUG] 学習済み問題: {learned_count}問, 未学習問題: {unlearned_count}問")
-    print(f"[DEBUG] 未学習問題の年代別分布: {dict(sorted(unlearned_years.items()))}")
     
     # さらにシャッフル（念のため）
     random.shuffle(new_questions)
     
-    print(f"[DEBUG] _select_new_questions: 候補数={len(new_questions)}, 要求数={count}")
     if new_questions:
         selected_sample = new_questions[:min(10, len(new_questions))]
-        print(f"[DEBUG] 新規問題候補（最初の{len(selected_sample)}件）: {selected_sample}")
     
     return new_questions
 
@@ -3261,7 +3040,6 @@ def _fallback_auto_learning():
         ):
             unlearned_questions.append(q)
     
-    print(f"[DEBUG] おまかせ学習: 利用可能問題={len(available_questions)}問, 未学習問題={len(unlearned_questions)}問")
     
     # 年代別分布を記録（デバッグ用）
     unlearned_years = {}
@@ -3271,12 +3049,10 @@ def _fallback_auto_learning():
             year_prefix = number[:3]
             unlearned_years[year_prefix] = unlearned_years.get(year_prefix, 0) + 1
     
-    print(f"[DEBUG] 未学習問題の年代別分布: {dict(sorted(unlearned_years.items()))}")
     
     # 未学習問題がない場合は全問題から選択
     if not unlearned_questions:
         unlearned_questions = available_questions
-        print("[DEBUG] 未学習問題なし、全問題から選択")
     
     selected_questions = random.sample(unlearned_questions, 
                                      min(new_cards_per_day, len(unlearned_questions)))
@@ -3289,7 +3065,6 @@ def _fallback_auto_learning():
             year_prefix = number[:3]
             selected_years[year_prefix] = selected_years.get(year_prefix, 0) + 1
     
-    print(f"[DEBUG] 選択された問題の年代別分布: {dict(sorted(selected_years.items()))}")
     
     # グループ化せずに直接リストとして設定
     st.session_state["main_queue"] = [[q.get("number")] for q in selected_questions]

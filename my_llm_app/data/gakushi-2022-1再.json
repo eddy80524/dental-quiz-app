@@ -1362,7 +1362,7 @@
         "PO₄³⁻",
         "HCO₃⁻"
       ],
-      "answer": "b",
+      "answer": "B",
       "subject": "生理学",
       "image_paths": []
     },
@@ -1390,7 +1390,7 @@
         "ラテックスアレルギー",
         "全身性エリテマトーデス"
       ],
-      "answer": "b",
+      "answer": "B",
       "subject": "口腔外科学2",
       "image_paths": []
     },
@@ -1404,7 +1404,7 @@
         "アクロメガリー",
         "Cushing症候群"
       ],
-      "answer": "e",
+      "answer": "E",
       "subject": "内科学",
       "image_paths": []
     },
@@ -1432,7 +1432,7 @@
         "根管湾曲度",
         "根管壁スメアー層"
       ],
-      "answer": "a",
+      "answer": "A",
       "subject": "口腔治療学",
       "image_paths": []
     },
@@ -1446,7 +1446,7 @@
         "ヒーリングアバットメント",
         "トランスファーコーピング"
       ],
-      "answer": "d",
+      "answer": "D",
       "subject": "口腔インプラント",
       "image_paths": []
     },
@@ -1460,7 +1460,7 @@
         "内側翼突筋",
         "オトガイ舌筋"
       ],
-      "answer": "b",
+      "answer": "B",
       "subject": "解剖学",
       "image_paths": []
     },
@@ -1474,7 +1474,7 @@
         "うがい",
         "手洗い"
       ],
-      "answer": "d",
+      "answer": "D",
       "subject": "高齢者歯科学",
       "image_paths": []
     },
@@ -1502,7 +1502,7 @@
         "エリオット型セパレーター",
         "タッフルマイヤー型リテーナー"
       ],
-      "answer": "d",
+      "answer": "D",
       "subject": "歯科保存学",
       "image_paths": []
     },
@@ -1516,7 +1516,7 @@
         "ヘルパンギーナ",
         "疱疹性歯肉口内炎"
       ],
-      "answer": "a",
+      "answer": "A",
       "subject": "口腔外科学1",
       "image_paths": []
     },
@@ -1530,7 +1530,7 @@
         "フッ化物濃度は唾液より高い。",
         "最も多く産生される酸はリン酸である。"
       ],
-      "answer": "d",
+      "answer": "D",
       "subject": "口腔衛生学",
       "image_paths": []
     },
@@ -1544,7 +1544,7 @@
         "血腫",
         "肉芽腫"
       ],
-      "answer": "e",
+      "answer": "E",
       "subject": "口腔病理学",
       "image_paths": []
     },
@@ -1574,7 +1574,7 @@
         "口腔保健支援センターの設置",
         "災害時における歯科医師の派遣"
       ],
-      "answer": "d",
+      "answer": "D",
       "subject": "口腔外科学2",
       "image_paths": []
     },
@@ -1588,7 +1588,7 @@
         "臼歯部水平被蓋の過小",
         "リップサポートの不足"
       ],
-      "answer": "a",
+      "answer": "A",
       "subject": "欠損歯列補綴咬合学",
       "image_paths": []
     },
@@ -1602,7 +1602,7 @@
         "苺状舌",
         "黒毛舌"
       ],
-      "answer": "e",
+      "answer": "E",
       "subject": "口腔外科学1",
       "image_paths": []
     },
@@ -1616,7 +1616,7 @@
         "1歳6か月頃",
         "3歳0か月頃"
       ],
-      "answer": "c",
+      "answer": "C",
       "subject": "小児歯科学",
       "image_paths": []
     },
@@ -1644,7 +1644,7 @@
         "法医学者",
         "都道府県知事"
       ],
-      "answer": "c",
+      "answer": "C",
       "subject": "法医学教室",
       "image_paths": []
     },
@@ -1658,7 +1658,7 @@
         "1 mm —— －2 mm",
         "2 mm —— －2 mm"
       ],
-      "answer": "d",
+      "answer": "D",
       "subject": "歯周病学",
       "image_paths": [
         "gakushi/2022/1再/G22-1再-B-22a.jpg"
@@ -1674,7 +1674,7 @@
         "エ",
         "オ"
       ],
-      "answer": "b",
+      "answer": "B",
       "subject": "高齢者歯科学",
       "image_paths": [
         "gakushi/2022/1再/G22-1再-B-23a.jpg"
@@ -1704,7 +1704,7 @@
         "急性化膿性歯髄炎",
         "急性壊疽性歯髄炎"
       ],
-      "answer": "c",
+      "answer": "C",
       "subject": "口腔治療学",
       "image_paths": [
         "gakushi/2022/1再/G22-1再-B-25a.jpg"
@@ -1720,7 +1720,7 @@
         "手術30分後",
         "手術1時間後"
       ],
-      "answer": "b",
+      "answer": "B",
       "subject": "口腔外科学1",
       "image_paths": []
     },
@@ -1734,7 +1734,7 @@
         "グルタミン酸",
         "トリプトファン"
       ],
-      "answer": "e",
+      "answer": "E",
       "subject": "化学",
       "image_paths": []
     },
@@ -1748,7 +1748,7 @@
         "アーラインの前方移動",
         "歯肉頬移行部の幅の増大"
       ],
-      "answer": "a",
+      "answer": "A",
       "subject": "欠損歯列補綴咬合学",
       "image_paths": []
     },
@@ -1776,7 +1776,7 @@
         "軟骨芽細胞",
         "エナメル芽細胞"
       ],
-      "answer": "a",
+      "answer": "A",
       "subject": "生物学",
       "image_paths": []
     },
@@ -1790,7 +1790,7 @@
         "ゲフィチニブ",
         "ドセタキセル水和物"
       ],
-      "answer": "a",
+      "answer": "A",
       "subject": "口腔外科学2",
       "image_paths": []
     },
@@ -1804,7 +1804,7 @@
         "小臼歯部の失活歯",
         "大臼歯部の生活歯"
       ],
-      "answer": "d",
+      "answer": "D",
       "subject": "有歯補綴咬合学",
       "image_paths": []
     },
@@ -1818,7 +1818,7 @@
         "生活環境に対する質問は避ける。",
         "わかりやすいよう幼児語を用いる。"
       ],
-      "answer": "c",
+      "answer": "C",
       "subject": "高齢者歯科学",
       "image_paths": []
     },
@@ -1832,7 +1832,7 @@
         "アルカリホスファターゼ",
         "アラニンアミノトランスフェラーゼ"
       ],
-      "answer": "a",
+      "answer": "A",
       "subject": "口腔外科学1",
       "image_paths": []
     },
@@ -1860,7 +1860,7 @@
         "歯髄組織再生能は上昇する。",
         "象牙質の物質透過性は減少する。"
       ],
-      "answer": "e",
+      "answer": "E",
       "subject": "口腔治療学",
       "image_paths": []
     },
@@ -1874,7 +1874,7 @@
         "ユーティリティワックス",
         "レディキャスティングワックス"
       ],
-      "answer": "c",
+      "answer": "C",
       "subject": "欠損歯列補綴咬合学",
       "image_paths": []
     },
@@ -1949,7 +1949,7 @@
         "7 mm",
         "9 mm"
       ],
-      "answer": "d",
+      "answer": "D",
       "subject": "歯周病学",
       "image_paths": []
     },
@@ -1979,7 +1979,7 @@
         "ポーセレン — 明度の向上",
         "ポーセレン — 透明性の向上"
       ],
-      "answer": "e",
+      "answer": "E",
       "subject": "有歯補綴咬合学",
       "image_paths": []
     },
@@ -1993,7 +1993,7 @@
         "教育",
         "活動"
       ],
-      "answer": "e",
+      "answer": "E",
       "subject": "高齢者歯科学",
       "image_paths": [
         "gakushi/2022/1再/G22-1再-B-45a.jpg"
@@ -2180,7 +2180,7 @@
         "Turner症候群",
         "Marfan症候群"
       ],
-      "answer": "a",
+      "answer": "A",
       "subject": "口腔外科学2",
       "image_paths": []
     },
@@ -2310,7 +2310,7 @@
         "口蓋扁桃",
         "眼瞼結膜"
       ],
-      "answer": "a",
+      "answer": "A",
       "subject": "口腔外科学2",
       "image_paths": [
         "gakushi/2022/1再/G22-1再-B-67a.jpg"
@@ -2525,7 +2525,7 @@
         "抜髄",
         "抜歯"
       ],
-      "answer": "a",
+      "answer": "A",
       "subject": "小児歯科学",
       "image_paths": [
         "gakushi/2022/1再/G22-1再-B-80a.jpg",
@@ -2630,7 +2630,7 @@
         "ディスタルシュー",
         "スペースリゲーナー"
       ],
-      "answer": "d",
+      "answer": "D",
       "subject": "小児歯科学",
       "image_paths": [
         "gakushi/2022/1再/G22-1再-B-86a.jpg",

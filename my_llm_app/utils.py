@@ -64,7 +64,6 @@ def get_natural_sort_key(q_dict):
         return (2, q_num_str)
         
     except Exception as e:
-        print(f"[DEBUG] ソートキー生成エラー: {q_num_str}, {e}")
         return (999, q_num_str)
 
 
@@ -599,11 +598,8 @@ class CardSelectionUtils:
         random.shuffle(selected)
         
         # デバッグ情報を出力
-        print(f"[DEBUG] 新規カード選択: 候補数={len(candidates)}, 選択数={len(selected)}")
         if selected:
             selected_subjects = [c[2] for c in top_candidates[:N]]
-            print(f"[DEBUG] 選択された新規カード: {selected}")
-            print(f"[DEBUG] 選択された科目: {selected_subjects}")
         
         return selected
 
@@ -674,8 +670,6 @@ def load_master_data(version: str = "v2025-08-22-all-gakushi-files") -> tuple:
     gakushi_count = sum(1 for q in all_questions if q.get('number', '').startswith('G'))
     kokushi_count = len(all_questions) - gakushi_count
     
-    print(f"[DEBUG] 問題データ取得完了 - 総時間: {total_time:.3f}s")
-    print(f"[DEBUG] 国試問題: {kokushi_count}問, 学士試験問題: {gakushi_count}問, 合計: {len(all_questions)}問")
     
     return all_cases, all_questions
 
@@ -693,7 +687,6 @@ def get_derived_data(all_questions: List[Dict[str, Any]]):
     gakushi_hisshu_numbers = {q['number'] for q in all_questions if QuestionUtils.is_gakushi_hisshu(q['number'])}
     
     derived_time = time.time() - start
-    print(f"[DEBUG] get_derived_data - 派生データ計算: {derived_time:.3f}s")
     
     return questions_dict, subjects, exam_numbers, exam_sessions, hisshu_numbers, gakushi_hisshu_numbers
 
@@ -703,13 +696,12 @@ def log_to_ga(event_name: str, user_id: str, params: Dict[str, Any]):
     try:
         # Firebase Analytics（Firestore経由）でのイベント記録は無効化されています
         # Firebase Analyticsモジュールが利用できないため、ログ出力のみ行います
-        print(f"[DEBUG] Analytics event: {event_name} for user {user_id} with params: {params}")
         
         # 必要に応じて将来のAnalytics統合のためのプレースホルダー
         pass
             
     except Exception as e:
-        print(f"[DEBUG] GA logging error (non-critical): {e}")
+        pass
 
 
 def _track_daily_active_user(uid: str):
@@ -743,7 +735,7 @@ def _track_daily_active_user(uid: str):
         }, merge=True)
         
     except Exception as e:
-        print(f"[DEBUG] Daily active user tracking error: {e}")
+        pass
 
 
 def get_question_by_id(question_id: str) -> Optional[Dict[str, Any]]:

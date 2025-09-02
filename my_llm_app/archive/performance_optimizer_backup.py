@@ -304,7 +304,6 @@ class CachedDataManager:
                 "timestamp": time.time()
             }
         except Exception as e:
-            print(f"[DEBUG] ユーザー統計取得エラー: {e}")
             return {
                 "success": False,
                 "error": str(e),

@@ -136,7 +136,6 @@ def render_ranking_page(auth_manager=None):
         # 全てのキャッシュをクリア
         st.cache_data.clear()
         st.cache_resource.clear()
-        print("[DEBUG] 全キャッシュクリア完了")
         st.rerun()
 
     # データ取得
@@ -160,11 +159,8 @@ def render_ranking_page(auth_manager=None):
         df['nickname'] = df['uid'].map(lambda uid: profiles.get(uid, {}).get('nickname', f"学習者{uid[:8]}"))
         
         # デバッグ情報の出力
-        print(f"[DEBUG] ランキングデータ処理: {len(df)}件のユーザー")
-        print(f"[DEBUG] プロファイル取得: {len(profiles)}件")
         
         # ランキング参加は強制（全ユーザーが表示される）
-        print(f"[DEBUG] 全ユーザーをランキングに表示: {len(df)}件")
     else:
         st.warning("ランキングデータが空か、表示に必要な'uid'列がありません。")
         return

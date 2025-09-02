@@ -122,8 +122,12 @@ def render_updated_weekly_ranking(user_profile: dict):
         st.info("今週のランキングデータがありません。")
         return
     
-    # ユーザー自身の順位を表示
-    if user_profile:
+    # ユーザー自身の順位を表示（セッション状態から取得）
+    user_ranking_data = st.session_state.get('user_ranking_data', {})
+    if user_ranking_data:
+        weekly_points = int(user_ranking_data.get("weekly_points", 0))
+        st.success(f"あなたの週間ポイント: **{weekly_points} pt** (リアルタイム更新)")
+    elif user_profile:
         uid = user_profile.get("uid")
         user_position = ranking_system.get_user_position(uid, "weekly")
         
@@ -132,7 +136,7 @@ def render_updated_weekly_ranking(user_profile: dict):
             points = int(user_position.get("weekly_points", 0))
             st.success(f"あなたの順位: **{rank}位** ({points} pt)")
         else:
-            st.success("あなたの順位: **12位** (0 pt)")
+            st.info("週間ランキングにまだ登録されていません。")
     
     # ランキングデータフレームの作成
     if rankings:
@@ -176,8 +180,14 @@ def render_updated_total_ranking(user_profile: dict):
         st.info("総合ランキングデータがありません。")
         return
     
-    # ユーザー自身の順位を表示
-    if user_profile:
+    # ユーザー自身の順位を表示（セッション状態から取得）
+    user_ranking_data = st.session_state.get('user_ranking_data', {})
+    if user_ranking_data:
+        total_points = int(user_ranking_data.get("total_points", 0))
+        total_problems = int(user_ranking_data.get("total_problems", 0))
+        accuracy = float(user_ranking_data.get("accuracy_rate", 0))
+        st.success(f"あなたの総合スコア: **{total_points} pt** ({total_problems}問, 正答率{accuracy:.1f}%) (リアルタイム更新)")
+    elif user_profile:
         uid = user_profile.get("uid")
         user_position = ranking_system.get_user_position(uid, "total")
         
@@ -228,8 +238,59 @@ def render_updated_mastery_ranking(user_profile: dict):
         st.info("習熟度ランキングデータがありません。")
         return
     
-    # ユーザー自身の順位を表示
-    if user_profile:
+    # ユーザー自身の順位を表示（セッション状態から取得）
+    user_ranking_data = st.session_state.get('user_ranking_data', {})
+    if user_ranking_data:
+        mastery_score = float(user_ranking_data.get("mastery_score", 0))
+        expert_cards = int(user_ranking_data.get("expert_cards", 0))
+        advanced_cards = int(user_ranking_data.get("advanced_cards", 0))
+        total_cards = int(user_ranking_data.get("total_cards", 0))
+        last_updated = user_ranking_data.get("last_updated", "")
+        
+        st.success(f"あなたの習熟度スコア: **{mastery_score:.1f}** (エキスパート: {expert_cards}, 上級: {advanced_cards}, 総カード: {total_cards}) (リアルタイム更新)")
+        
+        # デバッグ情報（展開可能）
+        with st.expander("🔍 詳細情報", expanded=False):
+            st.text(f"最終更新: {last_updated}")
+            st.text(f"学習済みカード数: {total_cards}")
+            st.text(f"エキスパートカード数: {expert_cards}")
+            st.text(f"上級カード数: {advanced_cards}")
+            
+            # 実際のカードデータ確認
+            cards = st.session_state.get("cards", {})
+            actual_cards_with_history = sum(1 for card in cards.values() if isinstance(card, dict) and card.get('history'))
+            actual_total_cards = len(cards)
+            st.text(f"実際の総カード数: {actual_total_cards}")
+            st.text(f"実際の学習済みカード数: {actual_cards_with_history}")
+            
+            # デバッグ情報表示
+            debug_info = user_ranking_data.get('debug_info', {})
+            if debug_info:
+                st.text("--- デバッグ情報 ---")
+                st.text(f"カード辞書のサイズ: {debug_info.get('cards_count', 0)}")
+                st.text(f"履歴ありカード数: {debug_info.get('cards_with_history', 0)}")
+                st.text(f"履歴なしカード数: {debug_info.get('cards_without_history', 0)}")
+                st.text(f"評価ログ数: {debug_info.get('evaluation_logs_count', 0)}")
+            
+            # 手動更新ボタン
+            if st.button("🔄 スコア再計算", key="manual_recalc"):
+                try:
+                    from modules.ranking_calculator import update_user_ranking_scores
+                    evaluation_logs = st.session_state.get('evaluation_logs', [])
+                    user_profile = st.session_state.get('user_profile', {})
+                    uid = user_profile.get('uid')
+                    nickname = user_profile.get('nickname', f"ユーザー{uid[:8]}")
+                    
+                    if uid:
+                        ranking_data = update_user_ranking_scores(uid, cards, evaluation_logs, nickname)
+                        st.success("ランキングスコアを再計算しました！")
+                        st.rerun()
+                    else:
+                        st.error("ユーザーIDが見つかりません")
+                except Exception as e:
+                    st.error(f"再計算エラー: {e}")
+            
+    elif user_profile:
         uid = user_profile.get("uid")
         user_position = ranking_system.get_user_position(uid, "mastery")
         
@@ -276,6 +337,20 @@ def render_updated_ranking_page():
     
     # ユーザープロフィール取得
     user_profile = st.session_state.get("user_profile", {})
+    
+    # 初回ランキングデータ計算（セッション状態にない場合）
+    if not st.session_state.get('user_ranking_data') and user_profile:
+        try:
+            from modules.ranking_calculator import update_user_ranking_scores
+            uid = user_profile.get("uid")
+            cards = st.session_state.get("cards", {})
+            evaluation_logs = st.session_state.get('evaluation_logs', [])
+            nickname = user_profile.get('nickname', f"ユーザー{uid[:8]}")
+            update_user_ranking_scores(uid, cards, evaluation_logs, nickname)
+        except ImportError:
+            pass
+        except Exception as e:
+            pass
     
     # タブで切り替え
     tab1, tab2, tab3 = st.tabs(["📈 週間ランキング", "🏅 総合ランキング", "🎓 習熟度ランキング"])

@@ -12,11 +12,20 @@
 
 import streamlit as st
 import datetime
+import pytz
 import time
+from typing import List
 import re
 import random
 from typing import Optional
 from collections import Counter
+
+# 日本時間用のタイムゾーン
+JST = pytz.timezone('Asia/Tokyo')
+
+def get_japan_now() -> datetime.datetime:
+    """日本時間の現在時刻を取得"""
+    return datetime.datetime.now(JST)
 
 # Streamlit設定 - サイドバーを自動展開
 st.set_page_config(
@@ -28,10 +37,9 @@ st.set_page_config(
 
 # モジュールのインポート
 from auth import AuthManager, CookieManager, call_cloud_function
-from firestore_db import get_firestore_manager, check_gakushi_permission, save_user_data
+from firestore_db import get_firestore_manager, check_gakushi_permission, save_user_data, get_user_profile_for_ranking, save_user_profile
 from utils import (
     ALL_QUESTIONS,
-    ALL_QUESTIONS_DICT, 
     log_to_ga, 
     AnalyticsUtils,
     get_natural_sort_key
@@ -50,19 +58,9 @@ except ImportError:
 from modules.practice_page import render_practice_page, render_practice_sidebar
 from modules.updated_ranking_page import render_updated_ranking_page
 
-# パフォーマンス最適化モジュールのインポート
-try:
-    from modules.search_page_optimizer import (
-        SearchPageOptimizer, 
-        LazyDataLoader, 
-        ResponsiveUI, 
-        SmartCache
-    )
-    OPTIMIZATION_ENABLED = True
-    print("[INFO] パフォーマンス最適化モジュールが正常にロードされました")
-except ImportError:
-    OPTIMIZATION_ENABLED = False
-    print("[WARNING] パフォーマンス最適化モジュールのインポートに失敗しました")
+# パフォーマンス最適化は無効化
+OPTIMIZATION_ENABLED = False
+print("[INFO] パフォーマンス最適化モジュールは無効化されています")
 
 # from enhanced_analytics import enhanced_ga, EnhancedGoogleAnalytics
 
@@ -70,12 +68,10 @@ except ImportError:
 # from enhanced_firestore_optimizer import get_cached_firestore_optimizer
 # from optimized_weekly_ranking import OptimizedWeeklyRankingSystem
 # from complete_migration_system import CompleteMigrationSystem
-from performance_optimizer import (
-    PerformanceOptimizer, 
-    CachedDataManager, 
-    UIOptimizer, 
-    apply_performance_optimizations
-)
+# パフォーマンス最適化は無効化
+def apply_performance_optimizations():
+    """パフォーマンス最適化の無効化版"""
+    pass
 
 # 科目マッピングのインポート
 from subject_mapping import get_standardized_subject, get_all_standardized_subjects, analyze_subject_mapping
@@ -87,6 +83,58 @@ def apply_sidebar_button_styles():
     """
     # デフォルトのスタイルを使用するため、何も適用しない
     pass
+
+
+def render_profile_settings_in_sidebar(uid: str):
+    """全ページ共通のサイドバー用プロフィール設定UIを描画"""
+    import time
+    
+    # 現在のプロフィールを取得
+    current_profile = get_user_profile_for_ranking(uid)
+    
+    # デフォルト値の設定
+    default_nickname = ""
+    default_show_on_leaderboard = True
+    
+    if current_profile:
+        default_nickname = current_profile.get("nickname", "")
+        default_show_on_leaderboard = current_profile.get("show_on_leaderboard", True)
+    
+    with st.form("sidebar_profile_form"):
+        st.write("**ランキング表示設定**")
+        
+        # ニックネーム入力
+        nickname = st.text_input(
+            "ニックネーム",
+            value=default_nickname,
+            help="ランキングに表示される名前です",
+            placeholder="例: 勇敢なパンダ123"
+        )
+        
+        # ランキング参加設定
+        show_on_leaderboard = st.checkbox(
+            "ランキングに参加する",
+            value=default_show_on_leaderboard,
+            help="チェックを外すとランキングに表示されません"
+        )
+        
+        # 保存ボタン
+        if st.form_submit_button("💾 保存", type="primary"):
+            if nickname.strip():
+                try:
+                    success = save_user_profile(uid, nickname.strip(), show_on_leaderboard)
+                    if success:
+                        st.success("プロフィールを更新しました！")
+                        # セッションの名前も更新
+                        st.session_state["name"] = nickname.strip()
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error("プロフィール更新に失敗しました")
+                except Exception as e:
+                    st.error(f"プロフィール更新エラー: {e}")
+            else:
+                st.error("ニックネームを入力してください")
 
 
 # アプリバージョン
@@ -123,7 +171,7 @@ class DentalApp:
             "page": "練習",  # デフォルトを演習ページに
             "cards": {},
             "analysis_target": "国試",
-            "level_filter": ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "習得済み"],  # レベル0-4に修正
+            "level_filter": ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "レベル5", "習得済み"],  # 統一7レベル分類
             "new_cards_per_day": 10,
             "result_log": {},
             "auto_login_attempted": False,  # 自動ログイン試行フラグを追加
@@ -168,10 +216,10 @@ class DentalApp:
         st.session_state['page_interactions'] += 1
     
     def track_user_login_success(self, user_info: dict):
-        """ログイン成功追跡"""
+        """ログイン成功追跡（日本時間ベース）"""
         user_properties = {
             'user_type': 'registered' if user_info.get('uid') else 'anonymous',
-            'login_timestamp': datetime.datetime.now().isoformat(),
+            'login_timestamp': get_japan_now().isoformat(),  # 日本時間で記録
             'has_gakushi_permission': user_info.get('has_gakushi_permission', False)
         }
         
@@ -184,10 +232,10 @@ class DentalApp:
         # self.analytics.user_id = user_info.get('uid', 'anonymous')
     
     def track_study_activity(self, activity_type: str, details: dict = None):
-        """学習活動追跡"""
+        """学習活動追跡（日本時間ベース）"""
         base_params = {
             'activity_type': activity_type,
-            'timestamp': datetime.datetime.now().isoformat(),
+            'timestamp': get_japan_now().isoformat(),  # 日本時間で記録
             'session_duration': time.time() - st.session_state.get('session_start_time', time.time())
         }
         
@@ -212,7 +260,7 @@ class DentalApp:
         """利用可能な科目を初期化（最適化版）"""
         uid = st.session_state.get("uid")
         has_gakushi_permission = check_gakushi_permission(uid) if uid else False
-        analysis_target = st.session_state.get("analysis_target", "国試問題")
+        analysis_target = st.session_state.get("analysis_target", "国試")
         
         # 既に同じ条件で初期化済みの場合はスキップ
         cache_key = f"{uid}_{has_gakushi_permission}_{analysis_target}"
@@ -222,11 +270,8 @@ class DentalApp:
         
         # キャッシュから科目を取得
         try:
-            available_subjects = PerformanceOptimizer.get_cached_subjects(
-                uid or "anonymous", 
-                has_gakushi_permission, 
-                analysis_target
-            )
+            # 分析対象に応じた科目リストを取得
+            available_subjects = self._get_subjects_for_target(analysis_target)
             st.session_state.available_subjects = available_subjects
             st.session_state.subjects_cache_key = cache_key
             
@@ -234,26 +279,60 @@ class DentalApp:
             if 'subject_filter' not in st.session_state:
                 st.session_state.subject_filter = available_subjects
                 
-        except Exception as e:
-            print(f"[DEBUG] 科目初期化エラー: {e}")
+        except Exception:
             # フォールバック処理
             st.session_state.available_subjects = ["一般"]
             st.session_state.subject_filter = ["一般"]
             st.session_state.subjects_cache_key = cache_key
     
+    def _initialize_subjects_for_target(self, analysis_target: str):
+        """特定の分析対象に対する科目リストを初期化"""
+        uid = st.session_state.get("uid")
+        has_gakushi_permission = check_gakushi_permission(uid) if uid else False
+        
+        try:
+            # 分析対象に応じた科目リストを直接取得
+            available_subjects = self._get_subjects_for_target(analysis_target)
+            st.session_state.available_subjects = available_subjects
+            st.session_state.subject_filter = available_subjects  # 全て選択状態でリセット
+            
+            # キャッシュキーを更新
+            cache_key = f"{uid}_{has_gakushi_permission}_{analysis_target}"
+            st.session_state.subjects_cache_key = cache_key
+            
+        except Exception:
+            # フォールバック
+            st.session_state.available_subjects = ["一般"]
+            st.session_state.subject_filter = ["一般"]
+    
+    def _get_subjects_for_target(self, analysis_target: str) -> List[str]:
+        """分析対象に応じた科目リストを取得"""
+        from utils import ALL_QUESTIONS
+        
+        subjects = set()
+        for question in ALL_QUESTIONS:
+            q_number = question.get('number', '')
+            
+            # 分析対象に応じてフィルタリング
+            if analysis_target == "学士試験":
+                if q_number.startswith('G'):
+                    subjects.add(question.get('subject', '未分類'))
+            else:  # 国試
+                if not q_number.startswith('G'):
+                    subjects.add(question.get('subject', '未分類'))
+        
+        # 科目をソートして返す
+        return sorted(list(subjects)) if subjects else ["一般"]
+    
     def _load_user_data(self):
         """ユーザーの演習データを読み込み（最適化されたスキーマ対応・Streamlit Cloud対応）"""
         uid = st.session_state.get("uid")
         if not uid:
-            print("[DEBUG] _load_user_data: UIDがありません")
             return
         
         # 既にデータが読み込まれている場合はスキップ（強化版）
         if st.session_state.get("cards") and len(st.session_state.get("cards", {})) > 0:
-            print(f"[DEBUG] _load_user_data: データ既に読み込み済み - カード数: {len(st.session_state.get('cards', {}))}")
             return
-        
-        print(f"[DEBUG] _load_user_data: {uid} のデータを読み込み開始...")
         
         try:
             # Firestore接続の確認（Streamlit Cloud対応）
@@ -273,8 +352,6 @@ class DentalApp:
             study_cards_ref = db.collection("study_cards")
             user_cards_query = study_cards_ref.where("uid", "==", uid)
             user_cards_docs = user_cards_query.get()
-            
-            print(f"[DEBUG] _load_user_data: {len(user_cards_docs)}件のカードドキュメントを取得")
             
             # カードデータを変換（既存の形式に合わせる）
             cards = {}
@@ -313,16 +390,7 @@ class DentalApp:
             # セッション状態に保存
             st.session_state["cards"] = cards
             
-            print(f"[DEBUG] ユーザーデータ読み込み完了: {len(cards)}枚のカード")
-            
-            # 学習統計も計算（デバッグ用）
-            if cards:
-                studied_cards = sum(1 for card in cards.values() if card.get("history"))
-                print(f"[DEBUG] 学習済みカード数: {studied_cards}")
-            
         except Exception as e:
-            print(f"[ERROR] ユーザーデータ読み込みエラー: {e}")
-            print(f"[ERROR] エラー詳細: {type(e).__name__}")
             st.session_state["cards"] = {}
     
     def run(self):
@@ -399,7 +467,7 @@ class DentalApp:
                 if not st.session_state.get("session_tracked"):
                     log_to_ga("session_start", uid, {
                         "session_type": "web_app",
-                        "timestamp": datetime.datetime.now().isoformat(),
+                        "timestamp": get_japan_now().isoformat(),  # 日本時間で記録
                         "user_agent": st.context.headers.get("User-Agent", "unknown") if hasattr(st.context, 'headers') else "unknown"
                     })
                     st.session_state["session_tracked"] = True
@@ -416,15 +484,13 @@ class DentalApp:
                     })
                     st.session_state["last_activity_logged"] = current_time
                     
-        except Exception as e:
-            print(f"[DEBUG] User activity tracking error: {e}")
+        except Exception:
+            pass
     
     def _render_sidebar(self):
         """サイドバーの描画（ログイン済みユーザー向け）"""
-        print("[DEBUG] _render_sidebar called")
         
         with st.sidebar:
-            print("[DEBUG] Inside st.sidebar context")
             self._render_user_menu()
     
     def _render_login_page(self):
@@ -581,7 +647,6 @@ class DentalApp:
         # ページが変更された場合はイベントを送信（簡素化版）
         if new_page and new_page != st.session_state.get("page"):
             old_page = st.session_state.get("page", "unknown")
-            print(f"[DEBUG] Page transition: {old_page} -> {new_page}")
             
             # ページ遷移を実行（デバウンス処理を回避）
             st.session_state["page"] = new_page
@@ -609,7 +674,6 @@ class DentalApp:
                 })
             
             # ページ変更時に強制リロード
-            print(f"[DEBUG] Triggering rerun for page change to: {new_page}")
             st.rerun()
         
         # 選択されたページに応じて異なるサイドバーコンテンツを表示
@@ -629,6 +693,13 @@ class DentalApp:
             else:
                 analysis_target = "国試"
 
+            # 分析対象が変更された場合、科目リストを更新
+            if analysis_target != st.session_state.get("previous_analysis_target"):
+                st.session_state["previous_analysis_target"] = analysis_target
+                # 科目データを再初期化
+                self._initialize_subjects_for_target(analysis_target)
+                st.rerun()
+
             # 学習レベルフィルター
             level_filter = st.multiselect(
                 "学習レベル",
@@ -637,12 +708,17 @@ class DentalApp:
                 key="level_filter"
             )
 
-            # 科目フィルター（動的に設定されるため、デフォルトは空）
+            # 科目フィルター（分析対象に応じて動的に変更）
             if "available_subjects" in st.session_state:
+                # subject_filterの初期化（Session State経由で管理）
+                if 'subject_filter' not in st.session_state:
+                    st.session_state.subject_filter = st.session_state.available_subjects
+                
+                # 分析対象に応じた科目フィルターのラベル
+                subject_label = f"表示する科目 ({analysis_target})"
                 subject_filter = st.multiselect(
-                    "表示する科目",
+                    subject_label,
                     st.session_state.available_subjects,
-                    default=st.session_state.available_subjects,
                     key="subject_filter"
                 )
             else:
@@ -650,7 +726,6 @@ class DentalApp:
             
         else:
             # 練習ページのサイドバー
-            print("[DEBUG] app.py: 練習ページのサイドバーを呼び出し中...")
             from modules.practice_page import render_practice_sidebar
             render_practice_sidebar()
         
@@ -662,24 +737,12 @@ class DentalApp:
         sidebar_refresh = st.session_state.get("sidebar_refresh_needed", False)
         if sidebar_refresh:
             st.session_state["sidebar_refresh_needed"] = False
-            print(f"[DEBUG] サイドバー強制更新実行")
-        
-        # 評価更新のタイムスタンプをチェック（強制更新のため）
-        last_update = st.session_state.get("last_evaluation_update", "")
-        if last_update:
-            print(f"[DEBUG] 最終評価更新: {last_update}")
         
         # cardsの存在確認を強化
         cards = st.session_state.get("cards", {})
         if cards and len(cards) > 0:
             quality_to_mark = {1: "×", 2: "△", 4: "◯", 5: "◎"}
             mark_to_label = {"◎": "簡単", "◯": "普通", "△": "難しい", "×": "もう一度"}
-            
-            # デバッグ情報（最初の数枚のカードの構造を確認）
-            print(f"[DEBUG] カード総数: {len(st.session_state.cards)}")
-            sample_cards = list(st.session_state.cards.items())[:3]
-            for i, (card_id, card_data) in enumerate(sample_cards):
-                print(f"[DEBUG] カード{i+1} ({card_id}): {card_data}")
             
             # カードデータから評価を取得（複数のパターンに対応）
             evaluated_marks = []
@@ -736,30 +799,27 @@ class DentalApp:
                     st.info("まだ評価された問題がありません。")
 
             with st.expander("最近の評価ログ", expanded=False):
-                # historyがあるカードを検索（より幅広く）
+                # 学習履歴があるカードを取得
                 cards_with_history = []
                 for q_num, card in st.session_state.cards.items():
                     history = card.get('history', [])
                     if history and len(history) > 0:
-                        # 有効なタイムスタンプを持つhistoryのみ
                         last_history = history[-1]
-                        if last_history.get('timestamp'):
+                        # qualityとtimestampがある履歴のみ有効
+                        if last_history.get('quality') and last_history.get('timestamp'):
                             cards_with_history.append((q_num, card))
                 
                 if cards_with_history:
-                    # タイムスタンプの型を統一してソート
+                    # タイムスタンプでソート（最新順）
                     def get_timestamp_for_sort(item):
                         try:
                             last_history = item[1]['history'][-1]
                             timestamp = last_history.get('timestamp')
                             
-                            # DatetimeWithNanosecondsオブジェクトの場合
                             if hasattr(timestamp, 'isoformat'):
                                 return timestamp.isoformat()
-                            # 文字列の場合
                             elif isinstance(timestamp, str):
                                 return timestamp
-                            # その他の場合はデフォルト値
                             else:
                                 return "1970-01-01T00:00:00"
                         except Exception:
@@ -769,38 +829,45 @@ class DentalApp:
                     
                     for q_num, card in sorted_cards[:10]:
                         last_history = card['history'][-1]
-                        last_eval_mark = quality_to_mark.get(last_history.get('quality'))
+                        quality = last_history.get('quality')
+                        eval_mark = quality_to_mark.get(quality, "?")
                         
-                        # タイムスタンプの表示も安全に処理
+                        # タイムスタンプ表示
                         timestamp = last_history.get('timestamp')
                         try:
                             if hasattr(timestamp, 'strftime'):
-                                # DatetimeWithNanosecondsオブジェクトの場合
                                 timestamp_str = timestamp.strftime('%Y-%m-%d %H:%M')
                             elif isinstance(timestamp, str):
-                                # 文字列の場合はISO形式から変換
                                 timestamp_str = datetime.datetime.fromisoformat(timestamp.replace('Z', '+00:00')).strftime('%Y-%m-%d %H:%M')
                             else:
                                 timestamp_str = "不明"
                         except Exception:
                             timestamp_str = "不明"
                         
-                        jump_btn = st.button(f"{q_num}", key=f"jump_{q_num}")
-                        if last_eval_mark:
-                            st.markdown(f"- `{q_num}` : **{last_eval_mark}** ({timestamp_str})", unsafe_allow_html=True)
-                        else:
-                            st.markdown(f"- `{q_num}` : **未評価** ({timestamp_str})", unsafe_allow_html=True)
+                        # ジャンプボタンと評価表示
+                        col1, col2 = st.columns([1, 4])
+                        with col1:
+                            jump_btn = st.button(f"{q_num}", key=f"jump_{q_num}")
+                        with col2:
+                            st.markdown(f"**{eval_mark}** ({timestamp_str})")
                         
                         if jump_btn:
                             st.session_state.current_q_group = [q_num]
+                            # 演習関連のセッション状態をクリア
                             for key in list(st.session_state.keys()):
-                                if key.startswith("checked_") or key.startswith("user_selection_") or key.startswith("shuffled_") or key.startswith("free_input_"):
+                                if key.startswith(("checked_", "user_selection_", "shuffled_", "free_input_")):
                                     del st.session_state[key]
                             st.rerun()
                 else:
-                    st.info("まだ履歴がある問題がありません。")
+                    st.info("まだ学習した問題がありません。")
         else:
-            st.info("まだ評価された問題がありません。")
+            st.info("まだ学習した問題がありません。")
+        
+        # プロフィール設定セクション
+        st.divider()
+        uid = st.session_state.get("uid")
+        if uid:
+            render_profile_settings_in_sidebar(uid)
         
         # ログアウトボタン
         st.divider()
@@ -809,102 +876,6 @@ class DentalApp:
             save_user_data(uid, session_state=st.session_state)
             self._handle_logout_real()
 
-    def _render_free_learning_mode(self, has_gakushi_permission: bool):
-        """🎯 3. 「自由演習」モードのUI"""
-        try:
-            st.markdown("### ⚙️ 演習条件設定")
-            
-            # 対象試験の選択
-            if has_gakushi_permission:
-                target_exam = st.radio(
-                    "対象試験",
-                    ["国試", "学士試験"],
-                    key="free_target_exam"
-                )
-            else:
-                target_exam = "国試"
-                st.info("📚 学士試験機能を利用するには権限が必要です")
-            
-            # 出題形式の選択
-            quiz_format = st.radio(
-                "出題形式",
-                ["回数別", "科目別", "必修問題のみ", "キーワード検索"],
-                key="free_quiz_format"
-            )
-            
-            # 詳細条件の選択（動的UI）
-            self._render_detailed_conditions(quiz_format, target_exam)
-            
-            # 出題順の選択
-            question_order = st.selectbox(
-                "出題順",
-                ["順番通り", "シャッフル"],
-                key="free_question_order"
-            )
-            
-            # 演習開始ボタン
-            if st.button("🎯 この条件で演習を開始", type="primary", use_container_width=True):
-                # デバッグ情報表示
-                st.info(f"選択条件: {quiz_format}, {target_exam}, {question_order}")
-                self._start_free_learning(quiz_format, target_exam, question_order)
-                
-        except Exception as e:
-            st.error(f"自由演習モードでエラー: {str(e)}")
-            st.exception(e)
-    
-    def _render_detailed_conditions(self, quiz_format: str, target_exam: str):
-        """詳細条件の動的UI表示"""
-        if quiz_format == "回数別":
-            if target_exam == "国試":
-                # 国試の回数選択（現実的な範囲）
-                kaisu_options = [f"{i}回" for i in range(95, 119)]  # 95回〜118回
-                selected_kaisu = st.selectbox("国試回数", kaisu_options, 
-                                            index=len(kaisu_options)-1, key="free_kaisu")
-                
-                # 領域選択
-                area_options = ["全領域", "A領域", "B領域", "C領域", "D領域"]
-                selected_area = st.selectbox("領域", area_options, key="free_area")
-            else:
-                # 学士試験の年度・回数選択
-                year_options = [f"{y}年度" for y in range(2022, 2026)]  # 2022-2025年度
-                selected_year = st.selectbox("年度", year_options, 
-                                           index=len(year_options)-1, key="free_gakushi_year")
-                
-                # 回数選択（実際のデータに基づく：1-1, 1-2, 1-3, 1再, 2, 2再）
-                kaisu_options = ["1-1", "1-2", "1-3", "1再", "2", "2再"]
-                selected_kaisu = st.selectbox("回数", kaisu_options, key="free_gakushi_kaisu")
-                
-                area_options = ["全領域", "A領域", "B領域"]
-                selected_area = st.selectbox("領域", area_options, key="free_gakushi_area")
-        
-        elif quiz_format == "科目別":
-            # 科目グループ選択
-            group_options = ["基礎系", "臨床系"]
-            selected_group = st.selectbox("科目グループ", group_options, key="free_subject_group")
-            
-            # 具体的な科目選択（実際のデータから取得）
-            if selected_group == "基礎系":
-                subject_options = [
-                    "解剖学", "生理学", "生化学", "病理学", "微生物学・免疫学", 
-                    "薬理学", "歯科理工学", "組織学", "発生学・加齢老年学"
-                ]
-            else:
-                subject_options = [
-                    "保存修復学", "歯内治療学", "歯周病学", "クラウンブリッジ学", 
-                    "部分床義歯学", "全部床義歯学", "口腔外科学", "矯正歯科学", 
-                    "小児歯科学", "歯科麻酔学", "歯科放射線学", "衛生学", "インプラント学"
-                ]
-            
-            selected_subject = st.selectbox("科目", subject_options, key="free_subject")
-        
-        elif quiz_format == "キーワード検索":
-            keyword = st.text_input(
-                "検索キーワード",
-                placeholder="例：根管治療、インプラント、咬合",
-                key="free_keyword",
-                help="問題文に含まれるキーワードで検索します"
-            )
-    
     def _render_session_status(self):
         """📋 4. 共通のUI要素 - セッション状態表示"""
         st.divider()
@@ -920,35 +891,6 @@ class DentalApp:
         with col2:
             st.metric("短期復習", f"{len(short_review_queue)}問")
         
-        # 最近の評価ログ
-        result_log = st.session_state.get("result_log", {})
-        if result_log:
-            st.markdown("### � 最近の評価")
-            recent_results = list(result_log.items())[-10:]  # 最新10件
-            
-            # 問題番号ボタンを3列で表示
-            cols = st.columns(3)
-            for i, (q_id, result) in enumerate(recent_results):
-                with cols[i % 3]:
-                    # 自己評価のqualityに応じたアイコン（1-5のスケール）
-                    quality = result.get("quality", 3)
-                    if quality == 5:  # ◎ 簡単
-                        icon = "🟢"
-                    elif quality == 4:  # ○ 普通
-                        icon = "🔵"
-                    elif quality == 2:  # △ 難しい
-                        icon = "🟡"
-                    elif quality == 1:  # × もう一度
-                        icon = "�"
-                    else:
-                        icon = "⚪"  # デフォルト
-                    
-                    # 正解/不正解のマーク
-                    correct_mark = "✓" if result.get("correct", False) else "✗"
-                    
-                    if st.button(f"{icon}{correct_mark} {q_id}", key=f"recent_{q_id}", use_container_width=True):
-                        # 問題に直接ジャンプ
-                        self._jump_to_question(q_id)
 
     def _start_auto_learning(self):
         """おまかせ学習の開始処理"""
@@ -968,9 +910,8 @@ class DentalApp:
                     # Cloud Functionから問題リストを取得
                     question_ids = result["questionIds"]
                     # 問題IDから問題データを取得
-                    from data import load_data
-                    all_data = load_data()
-                    questions = [q for q in all_data["questions"] if q["number"] in question_ids]
+                    from utils import ALL_QUESTIONS
+                    questions = [q for q in ALL_QUESTIONS if q.get("number") in question_ids]
                     
                     st.session_state["main_queue"] = questions
                     st.session_state["session_mode"] = "auto_learning"
@@ -1040,8 +981,7 @@ class DentalApp:
                         
                         if due_date_str <= today:
                             review_questions.append(q_id)
-                    except Exception as e:
-                        print(f"[DEBUG] 日付変換エラー: {due_date}, エラー: {e}")
+                    except Exception:
                         continue
                 # 未学習カードチェック
                 elif len(history) == 0:
@@ -1054,8 +994,7 @@ class DentalApp:
             # カードがない場合、全問題からランダムに選択
             st.info("ユーザーカードが見つからないため、ランダムに問題を選択します。")
             try:
-                # data.pyから問題データを取得
-                from data import ALL_QUESTIONS
+                # utils.pyから問題データを取得（既にインポート済み）
                 if ALL_QUESTIONS:
                     # 権限チェック
                     uid = st.session_state.get("uid")
@@ -1081,7 +1020,7 @@ class DentalApp:
         if not all_questions:
             st.warning("復習対象の問題が見つかりません。新規問題からランダムに選択します。")
             try:
-                from data import ALL_QUESTIONS
+                # utils.pyから問題データを取得（既にインポート済み）
                 uid = st.session_state.get("uid")
                 if uid and check_gakushi_permission(uid):
                     available_questions = [q.get("id") for q in ALL_QUESTIONS if q.get("id")]
@@ -1119,194 +1058,6 @@ class DentalApp:
         # )
         st.info("📚 ローカル問題選択アルゴリズムを使用しています。")
         st.success(f"📚 {len(all_questions)}問の学習セッションを開始します")
-    
-    def _start_free_learning(self, quiz_format: str, target_exam: str, question_order: str):
-        """自由演習の開始処理"""
-        with st.spinner("問題を準備中..."):
-            questions_to_load = self._generate_question_list(quiz_format, target_exam)
-            
-            if not questions_to_load:
-                st.error("条件に一致する問題が見つかりませんでした")
-                return
-            
-            # 出題順の決定（グループ化前にソート）
-            if question_order == "順番通り":
-                question_dict = {q.get("number", ""): q for q in ALL_QUESTIONS}
-                questions_to_load.sort(key=lambda x: get_natural_sort_key(question_dict.get(x, {})))
-            elif question_order == "シャッフル":
-                random.shuffle(questions_to_load)
-            
-            # グループ化処理（連問対応）
-            grouped_questions = self._group_case_questions(questions_to_load)
-            
-            # グループレベルでのシャッフル（必要に応じて）
-            if question_order == "シャッフル":
-                random.shuffle(grouped_questions)
-            
-            # キューに設定
-            st.session_state["main_queue"] = grouped_questions
-            total_questions = sum(len(group) for group in grouped_questions)
-            
-            # カスタム演習セッションの開始
-            st.session_state["session_choice_made"] = True
-            st.session_state["session_type"] = "カスタム演習"
-            st.session_state["custom_questions_selected"] = True
-            
-            # 最初の問題グループを設定
-            if grouped_questions:
-                st.session_state["current_q_group"] = grouped_questions[0]
-                st.session_state["current_question_index"] = 0
-                # main_queueから最初のグループを削除
-                st.session_state["main_queue"] = grouped_questions[1:]
-            
-            st.success(f"🎯 {len(grouped_questions)}グループ（計{total_questions}問）の演習を開始します")
-            
-            time.sleep(0.5)
-            st.rerun()
-    
-    def _generate_question_list(self, quiz_format: str, target_exam: str):
-        """条件に基づく問題リスト生成"""
-        questions_to_load = []
-        
-        if quiz_format == "回数別":
-            # 国試回数と領域の取得
-            if target_exam == "国試":
-                selected_kaisu = st.session_state.get("free_kaisu", "117回").replace("回", "")
-                selected_area = st.session_state.get("free_area", "全領域")
-                
-                for q in ALL_QUESTIONS:
-                    q_num = q.get("number", "")
-                    # 学士問題は除外
-                    if q_num.startswith("G"):
-                        continue
-                    
-                    # 回数フィルタ
-                    if not q_num.startswith(selected_kaisu):
-                        continue
-                    
-                    # 領域フィルタ
-                    if selected_area != "全領域":
-                        area_letter = selected_area.replace("領域", "")
-                        if not q_num.startswith(f"{selected_kaisu}{area_letter}"):
-                            continue
-                    
-                    questions_to_load.append(q_num)
-            
-            else:  # 学士試験
-                selected_year = st.session_state.get("free_gakushi_year", "2025年度").replace("年度", "")
-                selected_kaisu = st.session_state.get("free_gakushi_kaisu", "1-1")
-                selected_area = st.session_state.get("free_gakushi_area", "全領域")
-                
-                for q in ALL_QUESTIONS:
-                    q_num = q.get("number", "")
-                    # 学士問題のみ
-                    if not q_num.startswith("G"):
-                        continue
-                    
-                    # 年度と回数フィルタ（例：G24-1-1、G24-1-2、G24-1-3、G24-1再、G24-2、G24-2再）
-                    year_short = str(int(selected_year) - 2000)  # 2024 -> 24
-                    pattern = f"G{year_short}-{selected_kaisu}"
-                    
-                    if not q_num.startswith(pattern):
-                        continue
-                    
-                    # 領域フィルタ
-                    if selected_area != "全領域":
-                        area_letter = selected_area.replace("領域", "")
-                        if f"-{area_letter}-" not in q_num:
-                            continue
-                    
-                    questions_to_load.append(q_num)
-        
-        elif quiz_format == "科目別":
-            selected_subject = st.session_state.get("free_subject", "解剖学")
-            
-            for q in ALL_QUESTIONS:
-                q_num = q.get("number", "")
-                q_subject = q.get("subject", "")
-                
-                # 対象試験のフィルタ
-                if target_exam == "国試" and q_num.startswith("G"):
-                    continue
-                elif target_exam == "学士試験" and not q_num.startswith("G"):
-                    continue
-                
-                # 科目フィルタ
-                if q_subject == selected_subject:
-                    questions_to_load.append(q_num)
-        
-        elif quiz_format == "必修問題のみ":
-            if target_exam == "国試":
-                questions_to_load = list(HISSHU_Q_NUMBERS_SET)
-            else:  # 学士試験
-                questions_to_load = list(GAKUSHI_HISSHU_Q_NUMBERS_SET)
-        
-        elif quiz_format == "キーワード検索":
-            keyword = st.session_state.get("free_keyword", "").strip()
-            if keyword:
-                for q in ALL_QUESTIONS:
-                    q_num = q.get("number", "")
-                    q_text = q.get("question", "")
-                    
-                    # 対象試験のフィルタ
-                    if target_exam == "国試" and q_num.startswith("G"):
-                        continue
-                    elif target_exam == "学士試験" and not q_num.startswith("G"):
-                        continue
-                    
-                    # キーワード検索
-                    if keyword.lower() in q_text.lower():
-                        questions_to_load.append(q_num)
-        
-        print(f"[DEBUG] 生成された問題リスト: {len(questions_to_load)}問")
-        return questions_to_load
-    
-    def _group_case_questions(self, questions):
-        """連問をグループ化"""
-        processed_case_ids = set()
-        grouped_questions = []
-        
-        # ALL_QUESTIONSから問題詳細を取得
-        question_dict = {q.get("number", ""): q for q in ALL_QUESTIONS}
-        
-        for q_num in questions:
-            if q_num in question_dict:
-                question = question_dict[q_num]
-                case_id = question.get("case_id")
-                
-                if case_id and case_id not in processed_case_ids:
-                    # 同じcase_idを持つ全ての問題を取得
-                    case_questions = []
-                    for check_q_num in questions:
-                        if check_q_num in question_dict:
-                            check_question = question_dict[check_q_num]
-                            if check_question.get("case_id") == case_id:
-                                case_questions.append(check_q_num)
-                    
-                    # 連問を自然順でソート
-                    case_questions.sort(key=lambda x: get_natural_sort_key(question_dict.get(x, {})))
-                    grouped_questions.append(case_questions)
-                    processed_case_ids.add(case_id)
-                
-                elif not case_id:
-                    # 単独問題
-                    grouped_questions.append([q_num])
-        
-        print(f"[DEBUG] グループ化結果: {len(grouped_questions)}グループ")
-        return grouped_questions
-    
-    def _jump_to_question(self, q_id: str):
-        """指定問題への直接ジャンプ"""
-        # 問題を最前面に持ってくる
-        current_queue = st.session_state.get("main_queue", [])
-        if q_id in current_queue:
-            current_queue.remove(q_id)
-        
-        # 最前面に追加
-        st.session_state["main_queue"] = [q_id] + current_queue
-        st.success(f"問題 {q_id} にジャンプします")
-        time.sleep(0.5)
-        st.rerun()
     
     def _render_other_page_settings(self):
         """その他のページでの従来設定表示"""
@@ -1350,9 +1101,9 @@ class DentalApp:
             st.session_state["analysis_target"] = analysis_target
         
         # レベルフィルター
-        level_options = ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "習得済み"]
+        level_options = ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "レベル5", "習得済み"]
         # デフォルトは学習済みデータ重視（未学習除外）
-        default_levels = ["レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "習得済み"]
+        default_levels = ["レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "レベル5", "習得済み"]
         level_filter = st.multiselect(
             "表示レベル",
             level_options,
@@ -1379,23 +1130,15 @@ class DentalApp:
     def _render_main_content(self):
         """メインコンテンツの描画（ページ選択対応）"""
         current_page = st.session_state.get("page", "練習")
-        print(f"[DEBUG] _render_main_content called with page: {current_page}")
         
         if current_page == "ランキング":
-            print("[DEBUG] Rendering ranking page...")
             render_updated_ranking_page()
         elif current_page == "検索・進捗":
-            print("[DEBUG] Rendering optimized search page...")
-            
-            # パフォーマンス最適化: アクション時刻記録
-            if OPTIMIZATION_ENABLED:
-                SearchPageOptimizer.mark_action_time()
             
             # 遅延インポートで初回ロード高速化
             from modules.search_page import render_search_page
             render_search_page()
         else:
-            print("[DEBUG] Rendering practice page...")
             render_practice_page(self.auth_manager)
     
     def _handle_login(self, email: str, password: str, remember_me: bool):
