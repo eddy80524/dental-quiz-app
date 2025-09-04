@@ -100,41 +100,7 @@ def render_profile_settings_in_sidebar(uid: str):
         default_nickname = current_profile.get("nickname", "")
         default_show_on_leaderboard = current_profile.get("show_on_leaderboard", True)
     
-    with st.form("sidebar_profile_form"):
-        st.write("**ランキング表示設定**")
-        
-        # ニックネーム入力
-        nickname = st.text_input(
-            "ニックネーム",
-            value=default_nickname,
-            help="ランキングに表示される名前です",
-            placeholder="例: 勇敢なパンダ123"
-        )
-        
-        # ランキング参加設定
-        show_on_leaderboard = st.checkbox(
-            "ランキングに参加する",
-            value=default_show_on_leaderboard,
-            help="チェックを外すとランキングに表示されません"
-        )
-        
-        # 保存ボタン
-        if st.form_submit_button("💾 保存", type="primary"):
-            if nickname.strip():
-                try:
-                    success = save_user_profile(uid, nickname.strip(), show_on_leaderboard)
-                    if success:
-                        st.success("プロフィールを更新しました！")
-                        # セッションの名前も更新
-                        st.session_state["name"] = nickname.strip()
-                        time.sleep(1)
-                        st.rerun()
-                    else:
-                        st.error("プロフィール更新に失敗しました")
-                except Exception as e:
-                    st.error(f"プロフィール更新エラー: {e}")
-            else:
-                st.error("ニックネームを入力してください")
+    # ランキング表示設定は updated_ranking_page.py で統合管理
 
 
 # アプリバージョン
@@ -393,6 +359,37 @@ class DentalApp:
         except Exception as e:
             st.session_state["cards"] = {}
     
+    def _initialize_user_profile(self):
+        """ユーザープロフィールをセッション状態に初期化"""
+        try:
+            uid = st.session_state.get("uid")
+            if uid:
+                # データベースからプロフィールを取得
+                profile = get_user_profile_for_ranking(uid)
+                if profile:
+                    st.session_state["user_profile"] = {
+                        "uid": uid,
+                        "nickname": profile.get("nickname", f"ユーザー{uid[:8]}"),
+                        "show_on_leaderboard": profile.get("show_on_leaderboard", True),
+                        "email": st.session_state.get("email", "")
+                    }
+                else:
+                    # プロフィールが存在しない場合はデフォルト値で作成
+                    default_nickname = f"ユーザー{uid[:8]}"
+                    st.session_state["user_profile"] = {
+                        "uid": uid,
+                        "nickname": default_nickname,
+                        "show_on_leaderboard": True,
+                        "email": st.session_state.get("email", "")
+                    }
+                    # データベースにもデフォルト値を保存
+                    save_user_profile(uid, default_nickname, True)
+            else:
+                st.session_state["user_profile"] = {}
+        except Exception as e:
+            print(f"ユーザープロフィール初期化エラー: {e}")
+            st.session_state["user_profile"] = {}
+    
     def run(self):
         """アプリケーションのメイン実行（デフォルト設定版）"""
         # デフォルトのStreamlit設定を使用
@@ -421,6 +418,9 @@ class DentalApp:
                 # ユーザーデータを読み込み
                 self._load_user_data()
                 
+                # ユーザープロフィールをセッション状態に設定
+                self._initialize_user_profile()
+                
                 # ログイン成功追跡
                 user_info = {
                     'uid': st.session_state.get('uid'),
@@ -447,6 +447,10 @@ class DentalApp:
             # 科目が初期化されていない場合は初期化
             if not hasattr(st.session_state, 'available_subjects') or not st.session_state.available_subjects:
                 self._initialize_available_subjects()
+            
+            # ユーザープロフィールが設定されていない場合は初期化
+            if not st.session_state.get('user_profile'):
+                self._initialize_user_profile()
             
             # メインコンテンツを先に描画
             self._render_main_content()
@@ -1180,6 +1184,9 @@ class DentalApp:
                 
                 # ユーザーデータを読み込み
                 self._load_user_data()
+                
+                # ユーザープロフィールを初期化
+                self._initialize_user_profile()
                 
                 # スタイルを再初期化するためのフラグをリセット
                 st.session_state["styles_applied"] = False

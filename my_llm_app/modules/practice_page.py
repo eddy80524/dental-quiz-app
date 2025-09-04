@@ -14,6 +14,8 @@ import datetime
 import time
 import random
 import pytz
+import sys
+import os
 from typing import Dict, Any, List, Optional, Tuple
 
 # 日本時間用のタイムゾーン
@@ -66,10 +68,10 @@ except ImportError:
         AuthManager = None
 
 try:
-    from firestore_db import FirestoreManager, get_firestore_manager, save_user_data, check_gakushi_permission, get_user_profile_for_ranking, save_user_profile
+    from firestore_db import FirestoreManager, get_firestore_manager, save_user_data, check_gakushi_permission, get_user_profile_for_ranking, save_user_profile, save_llm_feedback
 except ImportError:
     try:
-        from ..firestore_db import FirestoreManager, get_firestore_manager, save_user_data, check_gakushi_permission, get_user_profile_for_ranking, save_user_profile
+        from ..firestore_db import FirestoreManager, get_firestore_manager, save_user_data, check_gakushi_permission, get_user_profile_for_ranking, save_user_profile, save_llm_feedback
     except ImportError:
         FirestoreManager = None
         get_firestore_manager = None
@@ -77,6 +79,42 @@ except ImportError:
         check_gakushi_permission = None
         get_user_profile_for_ranking = None
         save_user_profile = None
+        save_llm_feedback = None
+
+# LLM機能のインポート
+try:
+    from llm import generate_dental_explanation
+except ImportError:
+    try:
+        from ..llm import generate_dental_explanation
+    except ImportError:
+        generate_dental_explanation = None
+
+def handle_llm_explanation_request(question: dict, group_id: str):
+    """LLMへの解説生成リクエストを専門に扱う関数"""
+    qid = question.get('number', '')
+    explanation_key = f"llm_explanation_{qid}_{group_id}"
+
+    with st.spinner("🤔 AI解説を生成中..."):
+        # get_image_source関数を使って最終的な画像URLを取得
+        final_image_url = None
+        raw_image_source = QuestionComponent.get_image_source(question)
+        if raw_image_source:
+            try:
+                # utils.pyの関数で安全なURLに変換
+                from utils import get_secure_image_url
+                final_image_url = get_secure_image_url(raw_image_source) or raw_image_source
+            except Exception as e:
+                final_image_url = raw_image_source # 失敗した場合は元のURLをそのまま使用
+
+        # llm.pyのメイン関数を呼び出し
+        explanation = generate_dental_explanation(
+            question_text=question.get('question', ''),
+            choices=question.get('choices', []),
+            image_url=final_image_url
+        )
+        st.session_state[explanation_key] = explanation
+    st.rerun()
 
 try:
     from utils import (
@@ -359,6 +397,30 @@ class QuestionComponent:
         return text
     
     @staticmethod
+    def get_image_source(question_data: Dict) -> Optional[str]:
+        """
+        問題データから画像ソースを取得する
+        
+        Args:
+            question_data (Dict): 問題データの辞書
+            
+        Returns:
+            Optional[str]: 画像URL/パス、または None
+        """
+        # まず image_urls をチェック
+        image_urls = question_data.get('image_urls')
+        if image_urls and len(image_urls) > 0:
+            return image_urls[0]
+        
+        # 次に image_paths をチェック
+        image_paths = question_data.get('image_paths')
+        if image_paths and len(image_paths) > 0:
+            return image_paths[0]
+        
+        # 両方とも空またはNoneの場合はNoneを返す
+        return None
+    
+    @staticmethod
     def render_question_display(questions: List[Dict], case_data: Dict = None):
         """問題表示コンポーネント"""
         # CSSで余白を削除
@@ -433,7 +495,13 @@ class QuestionComponent:
                                         secure_url, 
                                         caption=f"問題 {question_number} の図 {img_index + 1}",
                                         width=800,  # 固定幅で高解像度表示
-                                        use_column_width=False  # カラム幅に合わせない
+                                        use_container_width=False  # コンテナ幅に合わせない
+                                    )
+                                    st.image(
+                                        secure_url, 
+                                        caption=f"問題 {question_number} の図 {img_index + 1}",
+                                        width=800,  # 固定幅で高解像度表示
+                                        use_container_width=False  # コンテナ幅に合わせない
                                     )
                             else:
                                 st.warning(f"画像URLの生成に失敗しました: {img_url}")
@@ -639,7 +707,7 @@ class AnswerModeComponent:
                                 if len(correct_answer) == 1:
                                     # 単一選択の場合
                                     if correct_answer and ord(correct_answer) - ord('A') < len(original_choices):
-                                        correct_choice_text = original_choices[ord(correct_answer) - ord('A')]
+                                        choice_text = original_choices[ord(correct_answer) - ord('A')]
                                         
                                         # ラベルマッピングを使用してシャッフル後の表示ラベルを取得
                                         if label_mapping:
@@ -647,29 +715,39 @@ class AnswerModeComponent:
                                                 if original_label == correct_answer:
                                                     correct_display_label = display_label
                                                     break
+                                        
+                                        # 正解テキストもシャッフル後のラベルを使用
+                                        correct_choice_text = f"{correct_display_label}. {choice_text}"
                                     else:
                                         correct_choice_text = "選択肢が見つかりません"
                                         
                                 else:
                                     # 複数選択の場合（ACD等）
                                     display_labels = []
+                                    choice_texts = []
                                     for char in correct_answer:
                                         if char and ord(char) - ord('A') < len(original_choices):
                                             choice_text = original_choices[ord(char) - ord('A')]
-                                            choice_texts.append(f"{char}. {choice_text}")
                                             
                                             # シャッフル後の表示ラベルを取得
-                                            display_label = char
+                                            display_label = char  # デフォルトは元のラベル
                                             if label_mapping:
                                                 for disp_label, orig_label in label_mapping.items():
                                                     if orig_label == char:
                                                         display_label = disp_label
                                                         break
+                                            
                                             display_labels.append(display_label)
+                                            choice_texts.append(f"{display_label}. {choice_text}")
                                     
-                                    # 複数選択の表示フォーマット
+                                    # 複数選択の表示フォーマット（シャッフル後のラベルを使用）
                                     correct_choice_text = "、".join(choice_texts)
-                                    correct_display_label = formatted_answer
+                                    # display_labelsをソートして見やすく表示
+                                    sorted_display_labels = sorted(display_labels)
+                                    if len(sorted_display_labels) > 1:
+                                        correct_display_label = "、".join(sorted_display_labels[:-1]) + " と " + sorted_display_labels[-1]
+                                    else:
+                                        correct_display_label = sorted_display_labels[0] if sorted_display_labels else correct_answer
                                     
                             except Exception as e:
                                 correct_choice_text = "表示エラー"
@@ -677,9 +755,19 @@ class AnswerModeComponent:
                             
                             # 正解/不正解のアラート表示（シャッフル後の実際の表示ラベルを使用）
                             if is_correct:
-                                st.success(f"✅ 正解！（正答：{correct_display_label}. {correct_choice_text}）")
+                                if len(correct_answer) == 1:
+                                    # 単一選択の場合：選択肢の詳細を表示
+                                    st.success(f"✅ 正解！（正答：{correct_choice_text}）")
+                                else:
+                                    # 複数選択の場合：ラベルのみ表示
+                                    st.success(f"✅ 正解！（正答：{correct_display_label}）")
                             else:
-                                st.error(f"❌ 不正解！（正答：{correct_display_label}. {correct_choice_text}）")
+                                if len(correct_answer) == 1:
+                                    # 単一選択の場合：選択肢の詳細を表示
+                                    st.error(f"❌ 不正解！（正答：{correct_choice_text}）")
+                                else:
+                                    # 複数選択の場合：ラベルのみ表示
+                                    st.error(f"❌ 不正解！（正答：{correct_display_label}）")
                     
                     # 問題間の区切り
                     if q_index < len(questions) - 1:
@@ -729,12 +817,12 @@ class AnswerModeComponent:
                                 secure_url = get_secure_image_url(img_url)
                                 if secure_url:
                                     # 画像を高品質で表示（固定幅800px、クリックで拡大表示可能）
-                                    with st.expander(f"📸 問題 {question_number} の図 {img_index + 1}", expanded=True):
+                                    with st.expander(f"問題 {question_number} の図 {img_index + 1}", expanded=True):
                                         st.image(
                                             secure_url, 
                                             caption=f"問題 {question_number} の図 {img_index + 1}",
                                             width=800,  # 固定幅で高解像度表示
-                                            use_column_width=False  # カラム幅に合わせない
+                                            use_container_width=False  # コンテナ幅に合わせない
                                         )
                                 else:
                                     st.warning(f"画像URLの生成に失敗しました: {img_url}")
@@ -768,11 +856,76 @@ class ResultModeComponent:
             with st.expander("💡 症例情報", expanded=False):
                 st.info(case_data['scenario_text'])
         
-        # 自己評価エリア
-        return ResultModeComponent._render_self_evaluation(group_id)
+        # LLM解説エリアを自己評価の前に追加 (一時的に無効化)
+        # ResultModeComponent._render_llm_explanation(questions, group_id)
+        
+        # 自己評価エリア（結果データも渡す）
+        return ResultModeComponent._render_self_evaluation(group_id, result_data)
     
     @staticmethod
-    def _render_self_evaluation(group_id: str) -> Dict[str, Any]:
+    def _render_llm_explanation(questions: List[Dict], group_id: str):
+        """LLM解説セクションの描画（修正版）"""
+        if generate_dental_explanation is None:
+            st.info("🚧 AI解説機能は現在メンテナンス中です。基本的な解説機能をご利用ください。")
+            return
+        
+        st.markdown("---")
+        st.markdown("#### 🤖 AI解説")
+        
+        for question in questions:
+            qid = question.get('number', '')
+            explanation_key = f"llm_explanation_{qid}_{group_id}"
+            
+            if explanation_key not in st.session_state:
+                st.session_state[explanation_key] = None
+            
+            # ボタンが押されたら、そのボタンに対応する'question'データを直接ヘルパー関数に渡す
+            if st.button(f"📝 問題 {qid} の解説を生成", key=f"explain_btn_{qid}_{group_id}"):
+                handle_llm_explanation_request(question, group_id)
+            
+            if st.session_state[explanation_key]:
+                with st.expander(f"📖 問題 {qid} の解説", expanded=True):
+                    st.markdown(st.session_state[explanation_key])
+                    
+                    # フィードバックボタン
+                    col1, col2, col3 = st.columns([1, 1, 4])
+                    
+                    with col1:
+                        if st.button("👍", key=f"like_{qid}_{group_id}", help="この解説は役に立った"):
+                            ResultModeComponent._save_feedback(qid, st.session_state[explanation_key], 1, "helpful")
+                            st.success("フィードバックありがとうございます！")
+                    
+                    with col2:
+                        if st.button("👎", key=f"dislike_{qid}_{group_id}", help="この解説は役に立たなかった"):
+                            ResultModeComponent._save_feedback(qid, st.session_state[explanation_key], -1, "not_helpful")
+                            st.success("フィードバックありがとうございます！")
+                            st.warning("フィードバックありがとうございます。改善に努めます。")
+    
+    @staticmethod
+    def _save_feedback(question_id: str, generated_text: str, rating: int, feedback_type: str):
+        """LLMフィードバックをFirestoreに保存"""
+        if save_llm_feedback is None:
+            return
+        
+        uid = st.session_state.get("uid")
+        if not uid:
+            return
+        
+        metadata = {
+            "feedback_type": feedback_type,
+            "timestamp": get_japan_now().isoformat(),
+            "session_type": st.session_state.get("session_type", "unknown")
+        }
+        
+        try:
+            success = save_llm_feedback(uid, question_id, generated_text, rating, metadata)
+            if not success:
+                print(f"[WARNING] LLMフィードバックの保存に失敗: {question_id}")
+        except Exception as e:
+            print(f"[ERROR] LLMフィードバック保存エラー: {e}")
+    
+    @staticmethod
+    def _render_self_evaluation(group_id: str, result_data: Dict = None) -> Dict[str, Any]:
         """自己評価フォームの描画"""
         
         with st.form(key=f"evaluation_form_{group_id}"):
@@ -786,8 +939,20 @@ class ResultModeComponent:
                 "◎ 簡単"
             ]
             
-            # デフォルト値の決定（結果に基づく）
+            # デフォルト値の決定（問題の正解・不正解に基づく）
             default_index = 2  # ○ 普通をデフォルト
+            
+            # 結果データがある場合、問題の正解・不正解に基づいてデフォルト値を設定
+            if result_data:
+                correct_count = sum(1 for result in result_data.values() if result.get('is_correct', False))
+                total_count = len(result_data)
+                
+                if total_count > 0:
+                    # 全問正解の場合は「○ 普通」、不正解がある場合は「△ 難しい」
+                    if correct_count == total_count:
+                        default_index = 2  # ○ 普通
+                    else:
+                        default_index = 1  # △ 難しい
             
             quality = st.radio(
                 "学習評価",
@@ -1009,7 +1174,7 @@ def render_practice_page(auth_manager=None):
         if st.session_state.get("current_question_index") is not None:
             st.info(f"問題 {st.session_state.get('current_question_index', 0) + 1} から継続します")
     
-    # セッション状態をデバッグ
+    # セッション状態を確認
     session_choice_made = st.session_state.get("session_choice_made")
     main_queue = st.session_state.get("main_queue")
     
@@ -1037,7 +1202,7 @@ def _render_active_session(practice_session: PracticeSession, uid: str):
         if not session_type and st.session_state.get("practice_mode") == "auto":
             session_type = "おまかせ演習"
     
-    # セッションタイプに応じた処理（新規追加: デバッグログ）
+    # セッションタイプに応じた処理
     session_type = st.session_state.get("session_type", "")
     
     # バランス学習、弱点強化、復習重視、新規重視は全ておまかせ演習として処理
@@ -1359,19 +1524,38 @@ def _process_self_evaluation_improved(q_objects: List[Dict], quality_text: str,
         from modules.ranking_calculator import update_user_ranking_scores
         evaluation_logs = st.session_state.get('evaluation_logs', [])
         user_profile = st.session_state.get('user_profile', {})
+        
+        # ユーザープロフィールが設定されていない場合は初期化
+        if not user_profile or not user_profile.get('uid'):
+            from firestore_db import get_user_profile_for_ranking, save_user_profile
+            profile = get_user_profile_for_ranking(uid)
+            if profile:
+                user_profile = {
+                    "uid": uid,
+                    "nickname": profile.get("nickname", f"ユーザー{uid[:8]}"),
+                    "show_on_leaderboard": profile.get("show_on_leaderboard", True),
+                    "email": st.session_state.get("email", "")
+                }
+            else:
+                # プロフィールが存在しない場合はデフォルト値で作成
+                default_nickname = f"ユーザー{uid[:8]}"
+                user_profile = {
+                    "uid": uid,
+                    "nickname": default_nickname,
+                    "show_on_leaderboard": True,
+                    "email": st.session_state.get("email", "")
+                }
+                save_user_profile(uid, default_nickname, True)
+            
+            st.session_state['user_profile'] = user_profile
+        
         nickname = user_profile.get('nickname', f"ユーザー{uid[:8]}")
         # 更新されたカードデータを使用
         ranking_data = update_user_ranking_scores(uid, cards, evaluation_logs, nickname)
         
-        # デバッグログ出力
-        if ranking_data:
-            debug_info = ranking_data.get('debug_info', {})
-            print(f"[DEBUG] ランキング更新完了: カード総数={debug_info.get('cards_count', 0)}, 履歴あり={debug_info.get('cards_with_history', 0)}")
-            
     except ImportError:
         pass
     except Exception as e:
-        print(f"[ERROR] ランキングスコア更新エラー: {e}")
         pass
     
     # サイドバーの評価分布を強制更新するためのキーを更新

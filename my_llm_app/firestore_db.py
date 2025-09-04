@@ -19,6 +19,7 @@ from typing import Dict, Any, Optional, List
 import firebase_admin
 from firebase_admin import credentials, firestore, storage
 from google.cloud.firestore_v1 import FieldFilter
+from google.cloud import firestore as gcp_firestore
 
 
 class FirestoreManager:
@@ -32,32 +33,44 @@ class FirestoreManager:
     def _initialize_firebase(self):
         """Firebase初期化"""
         if not hasattr(st.session_state, 'firebase_initialized'):
-            firebase_creds = self._to_dict(st.secrets["firebase_credentials"])
-            
-            # 一時ファイルは後で必ず削除
+            # st.secrets がない/取得できない環境（ADC）でも動くようフォールバックを実装
             temp_path = None
             try:
-                with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
-                    json.dump(firebase_creds, f)
-                    temp_path = f.name
-                creds = credentials.Certificate(temp_path)
-
-                storage_bucket = self._resolve_storage_bucket(firebase_creds)
-
+                firebase_creds = None
                 try:
-                    app = firebase_admin.get_app()
-                except ValueError:
-                    app = firebase_admin.initialize_app(
-                        creds,
-                        {"storageBucket": storage_bucket}
-                    )
-                
+                    # secrets に資格情報がある場合はそれを優先
+                    firebase_creds = self._to_dict(st.secrets["firebase_credentials"])  # may raise KeyError
+                except Exception:
+                    firebase_creds = None
+
+                if firebase_creds:
+                    # サービスアカウントJSONを一時ファイルに保存して初期化
+                    with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+                        json.dump(firebase_creds, f)
+                        temp_path = f.name
+                    creds = credentials.Certificate(temp_path)
+                    storage_bucket = self._resolve_storage_bucket(firebase_creds)
+                    try:
+                        app = firebase_admin.get_app()
+                    except ValueError:
+                        app = firebase_admin.initialize_app(
+                            creds,
+                            {"storageBucket": storage_bucket}
+                        )
+                else:
+                    # ADC フォールバック（Cloud Run/Functions/GCE 等）
+                    try:
+                        app = firebase_admin.get_app()
+                    except ValueError:
+                        app = firebase_admin.initialize_app()  # Use Default Credentials
+
                 self.db = firestore.client(app=app)
-                self.bucket = storage.bucket(app=app)
+                try:
+                    self.bucket = storage.bucket(app=app)
+                except Exception:
+                    self.bucket = None
                 st.session_state.firebase_initialized = True
-                
             finally:
-                # サービスアカウントの一時ファイルを確実に削除
                 if temp_path:
                     try:
                         os.unlink(temp_path)
@@ -66,7 +79,10 @@ class FirestoreManager:
         else:
             # 既に初期化済みの場合は既存のクライアントを取得
             self.db = firestore.client()
-            self.bucket = storage.bucket()
+            try:
+                self.bucket = storage.bucket()
+            except Exception:
+                self.bucket = None
     
     def _to_dict(self, obj):
         """オブジェクトを辞書に変換"""
@@ -213,7 +229,16 @@ class FirestoreManager:
                 if doc.exists:
                     card_data = self._to_dict(doc.to_dict())
                     question_id = card_data.get("question_id")
-                    
+                    if not question_id:
+                        # フォールバック: ドキュメントIDから推定（uid_questionId形式想定）
+                        try:
+                            doc_id = str(doc.id)
+                            if "_" in doc_id:
+                                question_id = doc_id.split("_", 1)[1]
+                            else:
+                                question_id = doc_id
+                        except Exception:
+                            question_id = None
                     if question_id:
                         # 最適化後のデータ構造を旧形式に変換
                         converted_card = self._convert_optimized_card_to_legacy(card_data)
@@ -904,4 +929,43 @@ def save_user_ranking_data(week_id: str, uid: str, ranking_data: Dict[str, Any])
         
     except Exception as e:
         print(f"[ERROR] ユーザーランキング保存エラー: {e}")
+        return False
+
+
+def save_llm_feedback(uid: str, question_id: str, generated_text: str, user_rating: int, metadata: Dict[str, Any]) -> bool:
+    """
+    LLMフィードバックデータをFirestoreに保存
+    
+    Args:
+        uid (str): ユーザーID
+        question_id (str): 問題ID
+        generated_text (str): LLMが生成したフィードバックテキスト
+        user_rating (int): ユーザーの評価（例: 1 または -1）
+        metadata (Dict[str, Any]): 追加のメタデータ
+    
+    Returns:
+        bool: 保存が成功した場合True、失敗した場合False
+    """
+    try:
+        manager = get_firestore_manager()
+        
+        # 新しいドキュメントのデータを準備
+        feedback_data = {
+            "uid": uid,
+            "question_id": question_id,
+            "generated_text": generated_text,
+            "user_rating": user_rating,
+            "metadata": metadata,
+            "created_at": gcp_firestore.SERVER_TIMESTAMP,
+            "updated_at": gcp_firestore.SERVER_TIMESTAMP
+        }
+        
+        # llm_feedbackコレクションに新しいドキュメントを追加
+        feedback_ref = manager.db.collection("llm_feedback").document()
+        feedback_ref.set(feedback_data)
+        
+        return True
+        
+    except Exception as e:
+        print(f"[ERROR] LLMフィードバック保存エラー: {e}")
         return False

@@ -16,23 +16,41 @@ def get_japan_today() -> datetime.date:
     return datetime.datetime.now(JST).date()
 
 def get_japan_datetime_from_timestamp(timestamp) -> datetime.datetime:
-    """タイムスタンプから日本時間のdatetimeオブジェクトを取得"""
+    """タイムスタンプから日本時間のdatetimeを安全に取得。
+    - str(ISO) / datetime / Firestore Timestamp(seconds/nanoseconds or .timestamp()) に対応
+    """
     try:
+        if timestamp is None:
+            return datetime.datetime.now(JST)
+        # 文字列（ISOなど）
         if isinstance(timestamp, str):
             try:
                 dt = datetime.datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
                 return dt.astimezone(JST)
-            except ValueError:
+            except Exception:
+                pass
+            try:
+                dt = datetime.datetime.strptime(timestamp[:19], '%Y-%m-%dT%H:%M:%S')
+                return JST.localize(dt)
+            except Exception:
                 try:
                     dt = datetime.datetime.strptime(timestamp[:10], '%Y-%m-%d')
                     return JST.localize(dt)
-                except (ValueError, IndexError):
+                except Exception:
                     return datetime.datetime.now(JST)
-        elif hasattr(timestamp, 'replace'):
-            if hasattr(timestamp, 'tzinfo') and timestamp.tzinfo is None:
+        # Firestore Timestamp (has .timestamp() or .seconds)
+        if hasattr(timestamp, 'timestamp'):
+            try:
+                ts = float(timestamp.timestamp())
+            except Exception:
+                ts = float(getattr(timestamp, 'seconds', 0))
+            dt_utc = datetime.datetime.fromtimestamp(ts, tz=pytz.UTC)
+            return dt_utc.astimezone(JST)
+        # Python datetime
+        if isinstance(timestamp, datetime.datetime) or hasattr(timestamp, 'replace'):
+            if getattr(timestamp, 'tzinfo', None) is None:
                 return pytz.UTC.localize(timestamp).astimezone(JST)
-            else:
-                return timestamp.astimezone(JST)
+            return timestamp.astimezone(JST)
         return datetime.datetime.now(JST)
     except Exception:
         return datetime.datetime.now(JST)
@@ -51,44 +69,76 @@ def calculate_weekly_points(cards: Dict, evaluation_logs: List[Dict] = None) -> 
     weekly_studies = 0
     weekly_correct = 0
     
+    print(f"[DEBUG] 週間ポイント計算開始 - 今日: {today}, 週開始: {week_start}")
+    print(f"[DEBUG] カード数: {len(cards)}, 評価ログ数: {len(evaluation_logs) if evaluation_logs else 0}")
+    
     # カードデータから今週の学習を計算
+    cards_with_history = 0
     for q_id, card in cards.items():
         if not isinstance(card, dict):
             continue
             
         history = card.get('history', [])
-        for study in history:
-            if not isinstance(study, dict):
-                continue
-                
-            timestamp = study.get('timestamp')
-            if not timestamp:
-                continue
-                
-            try:
-                study_datetime_jst = get_japan_datetime_from_timestamp(timestamp)
-                study_date = study_datetime_jst.date()
-                
-                if study_date >= week_start:
-                    weekly_studies += 1
-                    quality = study.get('quality', 0)
-                    
-                    # 基本ポイント（学習1回につき10ポイント）
-                    weekly_points += 10
-                    
-                    # 正解ボーナス（quality >= 3で正解とみなす）
-                    if quality >= 3:
-                        weekly_correct += 1
-                        weekly_points += 5  # 正解ボーナス
-                        
-                        # 高品質ボーナス
-                        if quality >= 4:
-                            weekly_points += 3
-                        if quality >= 5:
-                            weekly_points += 2
-                            
-            except Exception:
-                continue
+        if history and isinstance(history, list):
+            cards_with_history += 1
+            for study in history:
+                if not isinstance(study, dict):
+                    continue
+                timestamp = study.get('timestamp')
+                if not timestamp:
+                    continue
+                try:
+                    study_datetime_jst = get_japan_datetime_from_timestamp(timestamp)
+                    study_date = study_datetime_jst.date()
+                    if study_date >= week_start:
+                        weekly_studies += 1
+                        quality = study.get('quality', 0)
+                        # 基本ポイント（学習1回につき10ポイント）
+                        weekly_points += 10
+                        # 正解ボーナス（quality >= 3で正解とみなす）
+                        if quality >= 3:
+                            weekly_correct += 1
+                            weekly_points += 5  # 正解ボーナス
+                            if quality >= 4:
+                                weekly_points += 3
+                            if quality >= 5:
+                                weekly_points += 2
+                except Exception as e:
+                    # デバッグ用
+                    print(f"週間ポイント計算エラー (q_id: {q_id}): {e}")
+                    continue
+        else:
+            # フォールバック: 履歴がない最適化カードの場合、performance/updated_at から推定
+            performance = card.get('performance', {}) or {}
+            total_attempts = int(performance.get('total_attempts', 0) or 0)
+            last_quality = int(performance.get('last_quality', 0) or 0)
+            updated_at = card.get('updated_at') or card.get('metadata', {}).get('updated_at')
+            if total_attempts > 0 and updated_at:
+                try:
+                    upd_date = get_japan_datetime_from_timestamp(updated_at).date()
+                except Exception:
+                    upd_date = None
+                if upd_date and upd_date >= week_start:
+                    # 今週更新されたカードだけ反映
+                    weekly_studies += total_attempts
+                    # 品質に応じた1回あたり得点の推定
+                    if last_quality >= 5:
+                        per = 20
+                        corr_ratio = 0.9
+                    elif last_quality >= 4:
+                        per = 18
+                        corr_ratio = 0.8
+                    elif last_quality >= 3:
+                        per = 15
+                        corr_ratio = 0.65
+                    elif last_quality >= 2:
+                        per = 10
+                        corr_ratio = 0.3
+                    else:
+                        per = 10
+                        corr_ratio = 0.15
+                    weekly_points += per * total_attempts
+                    weekly_correct += int(total_attempts * corr_ratio)
     
     # セッション状態の評価ログも考慮
     if evaluation_logs:
@@ -139,9 +189,12 @@ def calculate_weekly_points(cards: Dict, evaluation_logs: List[Dict] = None) -> 
         elif accuracy_rate >= 0.6:
             weekly_points += int(weekly_studies * 0.1)  # 10%ボーナス
     
+    print(f"[DEBUG] 履歴ありカード数: {cards_with_history}")
+    print(f"[DEBUG] 週間学習数: {weekly_studies}, 週間正解数: {weekly_correct}, 週間ポイント: {weekly_points}")
+    
     return weekly_points
 
-def calculate_total_points(cards: Dict, evaluation_logs: List[Dict] = None) -> tuple:
+def calculate_total_points(cards: Dict, evaluation_logs: List[Dict] = None) -> tuple[int, int, float]:
     """
     総合ポイントと問題数を計算
     """
@@ -149,30 +202,59 @@ def calculate_total_points(cards: Dict, evaluation_logs: List[Dict] = None) -> t
     total_problems = 0
     total_correct = 0
     
+    print(f"[DEBUG] 総合ポイント計算開始 - カード数: {len(cards)}")
+    
+    cards_with_history = 0
+    total_studies = 0
+    
     # カードデータから計算
     for q_id, card in cards.items():
         if not isinstance(card, dict):
             continue
             
         history = card.get('history', [])
-        for study in history:
-            if not isinstance(study, dict):
-                continue
-                
-            total_problems += 1
-            quality = study.get('quality', 0)
-            
-            # 基本ポイント
-            total_points += 10
-            
-            # 正解ポイント
-            if quality >= 3:
-                total_correct += 1
-                total_points += 5
-                if quality >= 4:
-                    total_points += 3
-                if quality >= 5:
-                    total_points += 2
+        if history and isinstance(history, list):
+            cards_with_history += 1
+            for study in history:
+                if not isinstance(study, dict):
+                    continue
+                total_problems += 1
+                total_studies += 1
+                quality = study.get('quality', 0)
+                # 基本ポイント
+                total_points += 10
+                # 正解ポイント
+                if quality >= 3:
+                    total_correct += 1
+                    total_points += 5
+                    if quality >= 4:
+                        total_points += 3
+                    if quality >= 5:
+                        total_points += 2
+        else:
+            # フォールバック: performance から推定
+            performance = card.get('performance', {}) or {}
+            total_attempts = int(performance.get('total_attempts', 0) or 0)
+            last_quality = int(performance.get('last_quality', 0) or 0)
+            if total_attempts > 0:
+                total_problems += total_attempts
+                if last_quality >= 5:
+                    per = 20
+                    corr_ratio = 0.9
+                elif last_quality >= 4:
+                    per = 18
+                    corr_ratio = 0.8
+                elif last_quality >= 3:
+                    per = 15
+                    corr_ratio = 0.65
+                elif last_quality >= 2:
+                    per = 10
+                    corr_ratio = 0.3
+                else:
+                    per = 10
+                    corr_ratio = 0.15
+                total_points += per * total_attempts
+                total_correct += int(total_attempts * corr_ratio)
     
     # セッション状態の評価ログも考慮
     if evaluation_logs:
@@ -197,6 +279,10 @@ def calculate_total_points(cards: Dict, evaluation_logs: List[Dict] = None) -> t
     
     accuracy_rate = (total_correct / total_problems * 100) if total_problems > 0 else 0
     
+    print(f"[DEBUG] 履歴ありカード数: {cards_with_history}")
+    print(f"[DEBUG] 総学習数: {total_studies}, 総問題数: {total_problems}, 総正解数: {total_correct}")
+    print(f"[DEBUG] 総ポイント: {total_points}, 正答率: {accuracy_rate:.1f}%")
+    
     return total_points, total_problems, accuracy_rate
 
 def calculate_mastery_score(cards: Dict) -> tuple:
@@ -219,22 +305,13 @@ def calculate_mastery_score(cards: Dict) -> tuple:
         if not isinstance(card, dict):
             continue
             
-        # カードが存在すること自体がある程度の学習を意味する
-        # 学習履歴の有無に関わらずカウント
-        total_cards += 1
-        
         history = card.get('history', [])
-        if not history:
-            # 学習履歴がない場合は初期値を使用
-            ef = 2.5  # 初期EF値
-            interval = 0  # 初期間隔
-            quality = 0  # 初期品質
-            
-            total_ef += ef
-            card_score = (ef * 30) + (min(interval, 365) * 0.1) + (quality * 10)
-            mastery_score += card_score
-            # 初期状態はエキスパート・上級にはカウントしない
+        if not history or not isinstance(history, list) or len(history) == 0:
+            # 学習履歴がない場合はスキップ（演習済みカードのみカウント）
             continue
+        
+        # 学習済みカードとしてカウント
+        total_cards += 1
         
         # 最新の学習データを取得
         latest = history[-1] if isinstance(history, list) else {}
@@ -308,6 +385,7 @@ def update_user_ranking_scores(uid: str, cards: Dict, evaluation_logs: List[Dict
         'expert_cards': expert_cards,
         'advanced_cards': advanced_cards,
         'total_cards': total_cards,
+        'studied_cards': debug_info['cards_with_history'],  # 実際に演習したカード数
         'avg_ef': avg_ef,
         'last_updated': datetime.datetime.now(JST).isoformat(),
         'debug_info': debug_info  # デバッグ情報を追加
