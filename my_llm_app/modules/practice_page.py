@@ -219,15 +219,17 @@ def inject_image_quality_css():
     """画像表示品質向上のためのCSSを追加"""
     st.markdown("""
     <style>
-    /* 画像の高画質表示設定 */
+    /* 画像のレスポンシブ表示設定 */
     .stImage > img {
         image-rendering: -webkit-optimize-contrast;
         image-rendering: crisp-edges;
-        max-width: 100%;
+        max-width: 100% !important;
+        width: auto !important;
         height: auto;
         border-radius: 8px;
         box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         transition: transform 0.2s ease;
+        object-fit: contain;
     }
     
     /* 画像のホバー効果 */
@@ -239,6 +241,14 @@ def inject_image_quality_css():
     /* エクスパンダー内の画像調整 */
     .streamlit-expanderContent .stImage {
         margin: 10px 0;
+        width: 100%;
+    }
+    
+    /* 画像コンテナのレスポンシブ対応 */
+    .stImage {
+        width: 100%;
+        max-width: 100%;
+        overflow: hidden;
     }
     
     /* 画像キャプションのスタイル改善 */
@@ -489,19 +499,12 @@ class QuestionComponent:
                             from utils import get_secure_image_url
                             secure_url = get_secure_image_url(img_url)
                             if secure_url:
-                                # 画像を高品質で表示（固定幅800px、クリックで拡大表示可能）
+                                # 画像を高品質で表示（レスポンシブ対応）
                                 with st.expander(f"📸 問題 {question_number} の図 {img_index + 1}", expanded=True):
                                     st.image(
                                         secure_url, 
                                         caption=f"問題 {question_number} の図 {img_index + 1}",
-                                        width=800,  # 固定幅で高解像度表示
-                                        use_container_width=False  # コンテナ幅に合わせない
-                                    )
-                                    st.image(
-                                        secure_url, 
-                                        caption=f"問題 {question_number} の図 {img_index + 1}",
-                                        width=800,  # 固定幅で高解像度表示
-                                        use_container_width=False  # コンテナ幅に合わせない
+                                        use_container_width=True  # コンテナ幅に合わせてレスポンシブ表示
                                     )
                             else:
                                 st.warning(f"画像URLの生成に失敗しました: {img_url}")
@@ -624,7 +627,7 @@ class AnswerModeComponent:
                             placeholder="解答を入力..."
                         )
                     
-                    elif AnswerModeComponent._is_ordering_question(question.get('question', '')):
+                    elif AnswerModeComponent._is_ordering_question(question.get('question', ''), question.get('choices', [])):
                         # 並び替え問題
                         shuffle_key = f"shuffled_choices_{qid}_{group_id}"
                         mapping_key = f"label_mapping_{qid}_{group_id}"
@@ -816,13 +819,12 @@ class AnswerModeComponent:
                                 from utils import get_secure_image_url
                                 secure_url = get_secure_image_url(img_url)
                                 if secure_url:
-                                    # 画像を高品質で表示（固定幅800px、クリックで拡大表示可能）
+                                    # 画像を高品質で表示（レスポンシブ対応）
                                     with st.expander(f"問題 {question_number} の図 {img_index + 1}", expanded=True):
                                         st.image(
                                             secure_url, 
                                             caption=f"問題 {question_number} の図 {img_index + 1}",
-                                            width=800,  # 固定幅で高解像度表示
-                                            use_container_width=False  # コンテナ幅に合わせない
+                                            use_container_width=True  # コンテナ幅に合わせてレスポンシブ表示
                                         )
                                 else:
                                     st.warning(f"画像URLの生成に失敗しました: {img_url}")
@@ -838,10 +840,29 @@ class AnswerModeComponent:
         }
     
     @staticmethod
-    def _is_ordering_question(question_text: str) -> bool:
+    def _is_ordering_question(question_text: str, choices: List[str] = None) -> bool:
         """並び替え問題の判定"""
-        ordering_keywords = ['順番', '順序', '配列', '並び替え', '手順']
-        return any(keyword in question_text for keyword in ordering_keywords)
+        # 明確な並び替えキーワードがある場合のみ並び替え問題と判定
+        strict_ordering_keywords = ['順番', '順序', '配列', '並び替え']
+        
+        # 明確な並び替えキーワードがある場合
+        if any(keyword in question_text for keyword in strict_ordering_keywords):
+            return True
+        
+        # 「手順」キーワードがある場合は選択肢もチェック
+        if '手順' in question_text and choices:
+            # 選択肢が単語の組み合わせ（例：「ア→イ→ウ」）の場合のみ並び替え問題
+            # 通常の文章選択肢の場合は並び替え問題ではない
+            choice_pattern_count = 0
+            for choice in choices:
+                # 矢印やカンマで区切られた短い記号パターンを検出
+                if ('→' in choice or ',' in choice) and len(choice) < 20:
+                    choice_pattern_count += 1
+            
+            # 選択肢の大部分が順序パターンの場合のみ並び替え問題
+            return choice_pattern_count >= len(choices) * 0.8
+        
+        return False
 
 
 class ResultModeComponent:
@@ -1633,13 +1654,24 @@ def _process_self_evaluation_improved(q_objects: List[Dict], quality_text: str,
 
 def _get_case_data(case_id: str) -> Dict[str, Any]:
     """症例データを取得"""
-    # 症例データの取得ロジック（実装に応じて調整）
+    # CASES辞書から直接症例データを取得
+    if case_id in CASES:
+        case_info = CASES[case_id]
+        return {
+            'scenario_text': case_info.get('scenario_text', ''),
+            'image_urls': case_info.get('image_urls', []),
+            'case_id': case_id
+        }
+    
+    # フォールバック: ALL_QUESTIONSから検索（旧ロジック）
     for question in ALL_QUESTIONS:
         if question.get('case_id') == case_id and question.get('scenario_text'):
             return {
                 'scenario_text': question.get('scenario_text', ''),
+                'image_urls': question.get('image_urls', []),
                 'case_id': case_id
             }
+    
     return None
 
 
