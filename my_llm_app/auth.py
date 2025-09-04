@@ -249,7 +249,7 @@ class AuthManager:
             if not id_token:
                 return False
             
-            # トークンの有効期限をチェック（1時間）
+            # トークンの有効期限をチェック（より長期間に延長）
             token_timestamp = st.session_state.get("token_timestamp")
             if token_timestamp:
                 try:
@@ -257,8 +257,8 @@ class AuthManager:
                     current_time = datetime.datetime.now(datetime.timezone.utc)
                     time_diff = (current_time - token_time).total_seconds()
                     
-                    # 50分経過していたらリフレッシュを試行
-                    if time_diff > 3000:  # 50分
+                    # 6時間経過していたらリフレッシュを試行（従来の50分から大幅延長）
+                    if time_diff > 21600:  # 6時間 = 6 * 60 * 60 秒
                         refresh_token = st.session_state.get("refresh_token")
                         if refresh_token:
                             result = self.refresh_token(refresh_token)
@@ -266,6 +266,17 @@ class AuthManager:
                                 return False
                         else:
                             return False
+                    # 3時間経過したら積極的にリフレッシュ（バックグラウンド更新）
+                    elif time_diff > 10800:  # 3時間
+                        refresh_token = st.session_state.get("refresh_token")
+                        if refresh_token:
+                            # バックグラウンドでトークンを更新（失敗しても継続）
+                            try:
+                                result = self.refresh_token(refresh_token)
+                                if result and "id_token" in result:
+                                    print("Token refreshed successfully in background")
+                            except Exception:
+                                pass  # バックグラウンド更新の失敗は無視
                 except Exception as e:
                     print(f"Token validation error: {e}")
                     return False
@@ -278,7 +289,7 @@ class AuthManager:
 
 
 class CookieManager:
-    """Cookie管理クラス"""
+    """Cookie管理クラス（パスワード保存機能強化版）"""
     
     def __init__(self):
         self.cookies = None
@@ -298,8 +309,8 @@ class CookieManager:
                 print(f"Cookie manager initialization failed: {e}")
                 self.cookies = None
     
-    def save_login_cookies(self, data: Dict[str, str]):
-        """ログイン情報をクッキーに保存"""
+    def save_login_cookies(self, data: Dict[str, str], save_password: bool = False):
+        """ログイン情報をクッキーに保存（パスワード保存オプション付き）"""
         if not self.cookies:
             return
         
@@ -307,12 +318,66 @@ class CookieManager:
             self.cookies["uid"] = data.get("uid", "")
             self.cookies["email"] = data.get("email", "")
             self.cookies["refresh_token"] = data.get("refresh_token", "")
+            
+            # パスワード保存が有効な場合
+            if save_password and data.get("password"):
+                # セキュリティ上の理由で、パスワードではなく長期間有効なトークンを保存
+                self.cookies["password_saved"] = "true"
+                self.cookies["long_term_token"] = data.get("refresh_token", "")
+                # 保存期限を設定（30日間）
+                expiry_date = (datetime.datetime.now() + datetime.timedelta(days=30)).isoformat()
+                self.cookies["login_expiry"] = expiry_date
+            else:
+                self.cookies["password_saved"] = "false"
+                self.cookies["long_term_token"] = ""
+                # 保存期限を短縮（7日間）
+                expiry_date = (datetime.datetime.now() + datetime.timedelta(days=7)).isoformat()
+                self.cookies["login_expiry"] = expiry_date
+            
             self.cookies.save()
         except Exception as e:
             print(f"Failed to save cookies: {e}")
     
+    def get_saved_email(self) -> str:
+        """保存されたメールアドレスを取得"""
+        if not self.cookies:
+            return ""
+        
+        try:
+            return self.cookies.get("email", "")
+        except Exception:
+            return ""
+    
+    def has_saved_password(self) -> bool:
+        """パスワードが保存されているかチェック"""
+        if not self.cookies:
+            return False
+        
+        try:
+            password_saved = self.cookies.get("password_saved", "false")
+            expiry_str = self.cookies.get("login_expiry", "")
+            
+            if password_saved != "true" or not expiry_str:
+                return False
+            
+            # 有効期限をチェック
+            try:
+                expiry_date = datetime.datetime.fromisoformat(expiry_str)
+                current_date = datetime.datetime.now()
+                
+                if current_date > expiry_date:
+                    # 期限切れの場合はクッキーをクリア
+                    self.clear_saved_password()
+                    return False
+                
+                return True
+            except Exception:
+                return False
+        except Exception:
+            return False
+    
     def try_auto_login(self) -> bool:
-        """クッキーから自動ログインを試行"""
+        """クッキーから自動ログインを試行（強化版）"""
         if not self.cookies:
             return False
         
@@ -320,6 +385,11 @@ class CookieManager:
             uid = self.cookies.get("uid")
             email = self.cookies.get("email")
             refresh_token = self.cookies.get("refresh_token")
+            long_term_token = self.cookies.get("long_term_token", "")
+            
+            # パスワード保存されている場合は長期間トークンを使用
+            if self.has_saved_password() and long_term_token:
+                refresh_token = long_term_token
             
             if uid and email and refresh_token:
                 auth_manager = AuthManager()
@@ -333,13 +403,27 @@ class CookieManager:
                         "name": email.split("@")[0],
                         "id_token": result["id_token"],
                         "refresh_token": result["refresh_token"],
-                        "token_timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                        "token_timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                        "auto_login_successful": True
                     })
                     return True
         except Exception as e:
             print(f"Auto-login failed: {e}")
         
         return False
+    
+    def clear_saved_password(self):
+        """保存されたパスワード情報をクリア"""
+        if not self.cookies:
+            return
+        
+        try:
+            self.cookies["password_saved"] = "false"
+            self.cookies["long_term_token"] = ""
+            self.cookies["login_expiry"] = ""
+            self.cookies.save()
+        except Exception as e:
+            print(f"Failed to clear saved password: {e}")
     
     def clear_cookies(self):
         """クッキーをクリア"""
@@ -350,6 +434,9 @@ class CookieManager:
             self.cookies["uid"] = ""
             self.cookies["email"] = ""
             self.cookies["refresh_token"] = ""
+            self.cookies["password_saved"] = "false"
+            self.cookies["long_term_token"] = ""
+            self.cookies["login_expiry"] = ""
             self.cookies.save()
         except Exception as e:
             print(f"Failed to clear cookies: {e}")
