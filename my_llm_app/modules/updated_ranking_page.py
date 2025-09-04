@@ -337,56 +337,6 @@ def render_updated_ranking_page():
     # ユーザープロフィール取得
     user_profile = st.session_state.get("user_profile", {})
     
-    # サイドバーでランキング表示設定
-    with st.sidebar:
-        st.subheader("🎭 ランキング表示設定")
-        
-        if user_profile:
-            current_nickname = user_profile.get("nickname", f"ユーザー{user_profile.get('uid', '')[:8]}")
-            
-            # ニックネーム変更
-            new_nickname = st.text_input(
-                "ランキング表示名",
-                value=current_nickname,
-                help="ランキングで表示される名前を変更できます",
-                key="ranking_nickname_input"
-            )
-            
-            # ニックネーム更新ボタン
-            if st.button("💾 表示名を更新", type="secondary"):
-                if new_nickname and new_nickname != current_nickname:
-                    try:
-                        # Firestoreのユーザープロフィールを更新
-                        uid = user_profile.get("uid")
-                        db = get_firestore_manager().db
-                        db.collection("users").document(uid).update({
-                            "nickname": new_nickname
-                        })
-                        
-                        # セッション状態も更新
-                        st.session_state["user_profile"]["nickname"] = new_nickname
-                        
-                        # ランキングキャッシュをクリア（即座にUI反映のため）
-                        if hasattr(st.session_state, '_cache'):
-                            st.session_state._cache.clear()
-                        
-                        st.success(f"✅ 表示名を「{new_nickname}」に更新しました！")
-                        st.info("📌 全体ランキングへの反映は毎朝3時の定期更新で行われます。")
-                        
-                        # ページをリロードして即座に反映
-                        st.rerun()
-                        
-                    except Exception as e:
-                        st.error(f"❌ 表示名の更新に失敗しました: {e}")
-                elif new_nickname == current_nickname:
-                    st.info("表示名に変更はありません。")
-                else:
-                    st.warning("表示名を入力してください。")
-        else:
-            st.info("ログインすると表示名を設定できます。")
-        
-        st.markdown("---")
-    
     # 初回ランキングデータ計算（セッション状態にない場合）
     if not st.session_state.get('user_ranking_data') and user_profile:
         try:
