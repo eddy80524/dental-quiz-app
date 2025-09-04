@@ -566,14 +566,17 @@ class DentalApp:
                         st.rerun()
             
             # ログインボタン
-            col1, col2 = st.columns([1, 1])
-            with col1:
-                login_submitted = st.form_submit_button("ログイン", type="primary", use_container_width=True)
-            with col2:
-                if has_saved_password and email:
+            if has_saved_password and email:
+                # 簡単ログインがある場合は2列レイアウト
+                col1, col2 = st.columns([1, 1])
+                with col1:
+                    login_submitted = st.form_submit_button("ログイン", type="primary", use_container_width=True)
+                with col2:
                     quick_login = st.form_submit_button("🚀 簡単ログイン", use_container_width=True, help="保存されたパスワードで自動ログイン")
-                else:
-                    quick_login = False
+            else:
+                # 簡単ログインがない場合は1列レイアウト（フル幅）
+                login_submitted = st.form_submit_button("ログイン", type="primary", use_container_width=True)
+                quick_login = False
             
             # ログイン処理
             if login_submitted or quick_login:
