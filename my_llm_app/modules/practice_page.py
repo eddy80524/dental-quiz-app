@@ -1320,6 +1320,40 @@ def _render_free_learning_session(practice_session: PracticeSession, uid: str):
 
 
 
+def _is_review_mode(current_group: List[str]) -> bool:
+    """
+    現在の問題グループが復習モードかどうかを判定
+    復習モードの場合、問題を再度解けるようにチェック状態をリセットする
+    """
+    if not current_group:
+        return False
+        
+    # セッション状態から復習関連のフラグを確認
+    # 1. 復習セッションフラグが設定されているかチェック
+    if st.session_state.get("is_review_session", False):
+        return True
+    
+    # 2. 今日の復習セッションかどうかをチェック
+    practice_session = st.session_state.get("practice_session")
+    if practice_session and hasattr(practice_session, 'is_review_session'):
+        return getattr(practice_session, 'is_review_session', False)
+    
+    # 3. 短期復習キューから来た問題かどうかをチェック
+    short_term_queue = st.session_state.get("short_term_review_queue", [])
+    if any(qid in current_group for qid in short_term_queue):
+        return True
+    
+    # 4. result_logに既に記録されている問題かどうかをチェック（復習の可能性）
+    result_log = st.session_state.get("result_log", {})
+    if any(qid in result_log for qid in current_group):
+        # ただし、今回の学習セッションで新たに出題された問題は除外
+        current_session_new_questions = st.session_state.get("current_session_new_questions", set())
+        if not any(qid in current_session_new_questions for qid in current_group):
+            return True
+    
+    return False
+
+
 def _display_current_question(practice_session: PracticeSession, uid: str):
     """現在の問題を表示（コンポーネントベースの実装）"""
     
@@ -1372,7 +1406,22 @@ def _display_current_question(practice_session: PracticeSession, uid: str):
     # グループIDの生成（問題の一意識別用）
     group_id = "_".join(current_group)
     st.session_state["current_group_id"] = group_id  # 結果表示で使用するため保存
-    is_checked = st.session_state.get(f"checked_{group_id}", False)
+    
+    # 復習モードかどうかを判定
+    is_review_mode = _is_review_mode(current_group)
+    
+    # 復習モードの場合は、チェック状態をリセットして問題を再度解けるようにする
+    if is_review_mode:
+        # 復習モードでは常に解答モードから開始
+        is_checked = False
+        # 既存のチェック状態をクリア（復習時は毎回新鮮な状態で解く）
+        if f"checked_{group_id}" in st.session_state:
+            del st.session_state[f"checked_{group_id}"]
+        # 以前の結果データもクリア（復習時は新しい評価として扱う）
+        if f"result_{group_id}" in st.session_state:
+            del st.session_state[f"result_{group_id}"]
+    else:
+        is_checked = st.session_state.get(f"checked_{group_id}", False)
     
     # 2. 状態による表示分岐：解答モード vs 結果表示モード
     if not is_checked:
@@ -1706,7 +1755,8 @@ def _reset_session():
     keys_to_reset = [
         "session_choice_made", "session_type", "current_q_group", 
         "main_queue", "short_term_review_queue",
-        "session_completed_logged", "session_start_time"
+        "session_completed_logged", "session_start_time",
+        "is_review_session"  # 復習セッションフラグもリセット
     ]
     
     for key in keys_to_reset:
@@ -1974,6 +2024,8 @@ def render_practice_sidebar():
                 if st.button("🚀 今日の学習を開始する", type="primary", key="start_today_study"):
                     # 学習開始中フラグを設定
                     st.session_state["initializing_study"] = True
+                    # 復習セッションフラグを設定（復習問題の状態をリセットするため）
+                    st.session_state["is_review_session"] = True
 
                     with st.spinner("学習セッションを準備中..."):
                         # SM-2アルゴリズムベースの復習カード選択
@@ -2195,6 +2247,8 @@ def render_practice_sidebar():
                         # セッション開始フラグを設定
                         st.session_state["session_choice_made"] = True
                         st.session_state["session_type"] = "自由演習"
+                        # 自由演習は復習セッションではないのでフラグをクリア
+                        st.session_state.pop("is_review_session", None)
                         
                         # 最初の問題グループを設定
                         if grouped_queue:
@@ -2882,6 +2936,9 @@ def _start_ai_enhanced_learning(session_type: str, problem_count: int, detailed_
                 st.session_state["practice_mode"] = "auto"
                 st.session_state["current_session_type"] = session_type
                 st.session_state["session_type"] = session_type  # バリデーション用にも設定
+                # 新規学習セッションの場合は復習フラグをクリア
+                if session_type not in ["復習重視"]:  # 復習重視以外は復習セッションではない
+                    st.session_state.pop("is_review_session", None)
                 
                 # Analytics記録
                 log_to_ga("practice_session_start", uid, {
