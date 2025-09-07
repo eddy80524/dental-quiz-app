@@ -241,7 +241,7 @@ class QuestionUtils:
         
         Args:
             user_choice: ユーザーの選択 (例: "A", "AD", "ABC", "AC")
-            correct_answer: 正解 (例: "A", "A/D", "AD/AC/CD", "ABC/ABD/ACD/BCD", "AC")
+            correct_answer: 正解 (例: "A", "A/D", "AD/AC/CD", "ABC/ABD/ACD/BCD", "AC", "B／E")
         
         Returns:
             bool: 正解かどうか
@@ -252,21 +252,38 @@ class QuestionUtils:
         user_choice = user_choice.strip()
         correct_answer = correct_answer.strip()
         
+        # デバッグ出力（開発時のみ）
+        import streamlit as st
+        if st.session_state.get("debug_mode", False):
+            st.write(f"判定デバッグ - ユーザー: '{user_choice}', 正解: '{correct_answer}'")
+        
+        # 全角スラッシュを半角に統一
+        normalized_correct = correct_answer.replace('／', '/')
+        
         # 複数正解の場合（/区切り）
-        if '/' in correct_answer:
-            valid_answers = [ans.strip() for ans in correct_answer.split('/')]
-            return user_choice in valid_answers
+        if '/' in normalized_correct:
+            valid_answers = [ans.strip() for ans in normalized_correct.split('/')]
+            is_match = user_choice in valid_answers
+            if st.session_state.get("debug_mode", False):
+                st.write(f"複数正解判定 - 選択肢: {valid_answers}, 結果: {is_match}")
+            return is_match
         
         # 複数選択問題の場合（正答が「AC」「BD」など複数文字）
         # ユーザーの回答と正答を文字レベルで比較
-        if len(correct_answer) > 1 and len(user_choice) > 1:
+        if len(normalized_correct) > 1 and len(user_choice) > 1:
             # 文字を昇順にソートして比較（順序に依存しない）
             user_sorted = ''.join(sorted(user_choice.upper()))
-            correct_sorted = ''.join(sorted(correct_answer.upper()))
-            return user_sorted == correct_sorted
+            correct_sorted = ''.join(sorted(normalized_correct.upper()))
+            is_match = user_sorted == correct_sorted
+            if st.session_state.get("debug_mode", False):
+                st.write(f"複数選択判定 - ユーザーソート: '{user_sorted}', 正解ソート: '{correct_sorted}', 結果: {is_match}")
+            return is_match
         
         # 単一正解の場合
-        return user_choice.upper() == correct_answer.upper()
+        is_match = user_choice.upper() == normalized_correct.upper()
+        if st.session_state.get("debug_mode", False):
+            st.write(f"単一正解判定 - 結果: {is_match}")
+        return is_match
     
     @staticmethod
     def format_answer_display(correct_answer: str) -> str:
@@ -274,7 +291,7 @@ class QuestionUtils:
         正解を表示用にフォーマット（複数選択問題対応）
         
         Args:
-            correct_answer: 正解 (例: "A", "A/D", "AD/AC/CD", "ABC/ABD/ACD/BCD", "AC")
+            correct_answer: 正解 (例: "A", "A/D", "AD/AC/CD", "ABC/ABD/ACD/BCD", "AC", "B／E")
         
         Returns:
             str: 表示用文字列
@@ -284,9 +301,12 @@ class QuestionUtils:
         
         correct_answer = correct_answer.strip()
         
+        # 全角スラッシュを半角に統一
+        normalized_answer = correct_answer.replace('／', '/')
+        
         # 複数正解の場合（/区切り）
-        if '/' in correct_answer:
-            answers = [ans.strip() for ans in correct_answer.split('/')]
+        if '/' in normalized_answer:
+            answers = [ans.strip() for ans in normalized_answer.split('/')]
             if len(answers) == 2:
                 return f"{answers[0]} または {answers[1]}"
             else:
@@ -854,13 +874,25 @@ def get_secure_image_url(path: str) -> Optional[str]:
     Firebase Storageのパスから15分有効な署名付きURLを生成。
     http(s)で始まるURLはそのまま返します。
     """
+    import streamlit as st
+    
     if not path or not isinstance(path, str):
+        if st.session_state.get("debug_mode", False):
+            st.write(f"🔍 画像パス無効: '{path}'")
         return None
 
     if path.startswith('http://') or path.startswith('https://'):
+        if st.session_state.get("debug_mode", False):
+            st.write(f"🔍 HTTPURLをそのまま返す: {path}")
         return path
     
     try:
+        # Firebase初期化確認
+        if not ensure_firebase_initialized():
+            if st.session_state.get("debug_mode", False):
+                st.write("🔍 Firebase初期化失敗")
+            return None
+        
         # firebase_adminをインポート（この関数はFirebase Admin SDKが初期化されていることを前提とします）
         from firebase_admin import storage
         import datetime
@@ -868,14 +900,25 @@ def get_secure_image_url(path: str) -> Optional[str]:
         bucket = storage.bucket()
         blob = bucket.blob(path)
 
+        if st.session_state.get("debug_mode", False):
+            st.write(f"🔍 Firebase Storageブロブ作成: {path}")
+
         # 存在確認をせずに、まずURL生成を試みる（高速化のため）
-        return blob.generate_signed_url(
+        url = blob.generate_signed_url(
             expiration=datetime.timedelta(minutes=15),
             method="GET",
             version="v4"
         )
+        
+        if st.session_state.get("debug_mode", False):
+            st.write(f"🔍 署名付きURL生成成功: {url[:100]}...")
+        
+        return url
     except Exception as e:
-        print(f"[ERROR] 署名付きURLの生成に失敗しました: Path='{path}', Error='{e}'")
+        error_msg = f"[ERROR] 署名付きURLの生成に失敗しました: Path='{path}', Error='{e}'"
+        print(error_msg)
+        if st.session_state.get("debug_mode", False):
+            st.write(f"🔍 {error_msg}")
         # ここで代替パスを試すなどのフォールバック処理も追加可能です
         return None
 
