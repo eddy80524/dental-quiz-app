@@ -49,41 +49,67 @@ def get_japan_datetime_from_timestamp(timestamp) -> datetime.datetime:
             # ISO文字列をパース
             dt = datetime.datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
             return dt.astimezone(JST)
-        except Exception:
-            # パースに失敗した場合は現在時刻を返す
-            return get_japan_now()
-    else:
-        # その他の場合は現在時刻を返す
-        return get_japan_now()
+        @staticmethod
+        def _render_self_evaluation(group_id: str, result_data: Dict = None) -> Dict[str, Any]:
+            """自己評価フォームの描画（result_dataが空でも必ず表示）"""
+            if st.session_state.get("debug_mode", False):
+                st.write(f"🔍 自己評価フォーム描画開始 - group_id: {group_id}")
+                st.write(f"🔍 result_data: {result_data}")
+            with st.form(key=f"evaluation_form_{group_id}"):
+                st.markdown("#### 自己評価")
+                quality_options = [
+                    "× もう一度",
+                    "△ 難しい", 
+                    "○ 普通",
+                    "◎ 簡単"
+                ]
+                default_index = 2  # ○ 普通をデフォルト
+                # result_dataがあれば正解数でデフォルトを調整
+                if result_data and len(result_data) > 0:
+                    correct_count = sum(1 for result in result_data.values() if result.get('is_correct', False))
+                    total_count = len(result_data)
+                    if st.session_state.get("debug_mode", False):
+                        st.write(f"🔍 正解数: {correct_count}/{total_count}")
+                    if total_count > 0:
+                        if correct_count == total_count:
+                            default_index = 2  # ○ 普通
+                        else:
+                            default_index = 1  # △ 難しい
+                quality = st.radio(
+                    "学習評価",
+                    options=quality_options,
+                    index=default_index,
+                    key=f"quality_{group_id}",
+                    horizontal=True,
+                    label_visibility="collapsed"
+                )
+                next_submitted = st.form_submit_button(
+                    "次の問題へ", 
+                    type="primary"
+                )
+            return {
+                'quality': quality,
+                'next_submitted': next_submitted
+            }
+        # get_image_source関数を使って最終的な画像URLを取得
+        final_image_url = None
+        raw_image_source = QuestionComponent.get_image_source(question)
+        if raw_image_source:
+            try:
+                # utils.pyの関数で安全なURLに変換
+                from utils import get_secure_image_url
+                final_image_url = get_secure_image_url(raw_image_source) or raw_image_source
+            except Exception as e:
+                final_image_url = raw_image_source # 失敗した場合は元のURLをそのまま使用
 
-
-# 必要な関数とクラスのインポート（エラーハンドリング付き）
-try:
-    from llm import generate_dental_explanation
-except ImportError:
-    generate_dental_explanation = None
-
-try:
-    from llm_fixed import handle_llm_explanation_request, save_llm_feedback
-except ImportError:
-    handle_llm_explanation_request = None
-    save_llm_feedback = None
-
-try:
-    from firestore_db import get_firestore_manager, save_user_data
-    print("✅ Firestore関数のインポートに成功しました")
-except ImportError as e:
-    print(f"❌ Firestore関数のインポートに失敗しました: {e}")
-    get_firestore_manager = None
-    save_user_data = None
-
-try:
-    from auth import AuthManager, check_gakushi_permission, get_user_permission
-except ImportError:
-    AuthManager = None
-    check_gakushi_permission = None
-    get_user_permission = None
-
+        # llm.pyのメイン関数を呼び出し
+        explanation = generate_dental_explanation(
+            question_text=question.get('question', ''),
+            choices=question.get('choices', []),
+            image_url=final_image_url
+        )
+        st.session_state[explanation_key] = explanation
+    st.rerun()
 
 try:
     from utils import (
@@ -532,122 +558,324 @@ class QuestionComponent:
 
 
 class AnswerModeComponent:
-    """解答、結果表示、自己評価のUIをすべて管理する統合コンポーネント"""
-
+    """解答モードコンポーネント"""
+    
     @staticmethod
     def render(questions: List[Dict], group_id: str, case_data: Dict = None) -> Dict[str, Any]:
+        """解答モード画面の描画（問題表示も含む）"""
         user_selections = {}
-        action_result = {}
         
-        is_checked = st.session_state.get(f"checked_{group_id}", False)
+        # CSSで余白を削除
+        st.markdown("""
+        <style>
+        .st-emotion-cache-r44huj {
+            margin-bottom: 0 !important;
+            padding-bottom: 0 !important;
+        }
+        div[style*="background-color: rgb(250, 250, 250)"] {
+            margin-top: 0 !important;
+            padding-top: 12px !important;
+        }
+        [data-testid="stElementContainer"] {
+            margin-top: 0 !important;
+            margin-bottom: 0.25rem !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
         
+        # 症例情報エリア（連問の場合）
         if case_data and case_data.get('scenario_text'):
-            st.info(f"📋 **症例:** {case_data['scenario_text']}")
-        
-        with st.form(key=f"answer_form_{group_id}"):
-            for q_index, question in enumerate(questions):
-                qid = question.get('number', '')
-                st.markdown(f"#### {qid}")
-                st.markdown(question.get('question', ''))
-                
-                # 選択肢のシャッフルとマッピング情報の保存
-                shuffled_choices, label_mapping = st.session_state.setdefault(
-                    f"shuffled_mapping_{qid}_{group_id}", 
-                    QuestionComponent.shuffle_choices_with_mapping(question.get('choices', []))
+            with st.container():
+                st.markdown(
+                    f"""
+                    <div style="
+                        background-color: #e3f2fd; 
+                        padding: 12px 16px; 
+                        border-radius: 8px; 
+                        border-left: 4px solid #2196f3; 
+                        margin-bottom: 16px;
+                    ">
+                        📋 <strong>症例:</strong> {case_data['scenario_text']}
+                    </div>
+                    """, 
+                    unsafe_allow_html=True
                 )
-                st.session_state[f"label_mapping_{qid}_{group_id}"] = label_mapping
-
-                # 選択肢の描画とユーザー選択の取得
-                selected_labels = []
-                for choice_index, choice_text in enumerate(shuffled_choices):
-                    label = QuestionComponent.get_choice_label(choice_index)
-                    is_selected = st.checkbox(
-                        f"{label}. {choice_text}",
-                        key=f"choice_{qid}_{choice_index}_{group_id}",
-                        disabled=is_checked
-                    )
-                    if is_selected:
-                        selected_labels.append(label)
-                user_selections[qid] = selected_labels
-                
-                if q_index < len(questions) - 1:
-                    st.markdown("---")
-
-            # --- ▼▼▼【重要】ここからが修正箇所▼▼▼ ---
+            st.markdown("---")
+        
+        # スタイル付きコンテナ
+        with st.container():
+            st.markdown(
+                """
+                <div style="
+                    background-color: #fafafa; 
+                    padding: 24px; 
+                    border-radius: 12px; 
+                    margin-top: 8px;
+                ">
+                """, 
+                unsafe_allow_html=True
+            )
             
-            # フォームの内側で状態に応じて表示を切り替える
-            if not is_checked:
-                # 【解答中のUI】
-                st.markdown("---")
-                col1, col2 = st.columns(2)
-                with col1:
-                    action_result['check_submitted'] = st.form_submit_button("回答をチェック", type="primary", use_container_width=True)
-                with col2:
-                    action_result['skip_submitted'] = st.form_submit_button("スキップ", use_container_width=True)
-            else:
-                # 【結果表示中のUI】
-                result_data = st.session_state.get(f"result_{group_id}", {})
+            # フォーム開始
+            with st.form(key=f"answer_form_{group_id}"):
                 
-                # 1. 正誤判定のアラートバーをここに表示
-                correct_count = sum(1 for r in result_data.values() if r.get('is_correct'))
-                total_count = len(result_data)
-                
-                if correct_count == total_count:
-                    st.success("✅ 正解！")
-                else:
-                    incorrect_details = []
-                    for qid, q_result in result_data.items():
-                        if not q_result.get('is_correct'):
-                            user_ans = ''.join(q_result.get('user_answer', [])) or '無回答'
+                for q_index, question in enumerate(questions):
+                    qid = question.get('number', f'q_{q_index}')
+                    choices = question.get('choices', [])
+                    
+                    # 問題ID
+                    question_number = question.get('number', '')
+                    if question_number:
+                        st.markdown(f"#### {question_number}")
+                    
+                    # 問題文（化学式対応）
+                    question_text = QuestionComponent.format_chemical_formula(
+                        question.get('question', '')
+                    )
+                    st.markdown(question_text)
+                    
+                    if not choices:
+                        # 自由入力問題
+                        st.markdown(f"##### 解答を入力してください:")
+                        user_selections[qid] = st.text_input(
+                            "解答:",
+                            key=f"input_{qid}_{group_id}",
+                            placeholder="解答を入力..."
+                        )
+                    
+                    elif AnswerModeComponent._is_ordering_question(question.get('question', ''), question.get('choices', [])):
+                        # 並び替え問題
+                        shuffle_key = f"shuffled_choices_{qid}_{group_id}"
+                        mapping_key = f"label_mapping_{qid}_{group_id}"
+                        
+                        if shuffle_key not in st.session_state:
+                            shuffled_choices, label_mapping = QuestionComponent.shuffle_choices_with_mapping(choices)
+                            st.session_state[shuffle_key] = shuffled_choices
+                            st.session_state[mapping_key] = label_mapping
+                        else:
+                            shuffled_choices = st.session_state[shuffle_key]
+                        
+                        user_selections[qid] = st.text_input(
+                            "解答（記号のみ）:",
+                            key=f"ordering_{qid}_{group_id}",
+                            placeholder="例: ABCD",
+                            help="選択肢を確認して、正しい順番で記号を入力してください"
+                        )
+                    
+                    else:
+                        # 選択式問題 - 選択肢を問題文の直後に表示
+                        # セッション状態に選択肢の順序とマッピングを保存
+                        shuffle_key = f"shuffled_choices_{qid}_{group_id}"
+                        mapping_key = f"label_mapping_{qid}_{group_id}"
+                        answer_checked_key = f"answer_checked_{qid}_{group_id}"
+                        
+                        if shuffle_key not in st.session_state:
+                            shuffled_choices, label_mapping = QuestionComponent.shuffle_choices_with_mapping(choices)
+                            st.session_state[shuffle_key] = shuffled_choices
+                            st.session_state[mapping_key] = label_mapping
+                        else:
+                            shuffled_choices = st.session_state[shuffle_key]
+                        
+                        selected_choices = []
+                        
+                        # 回答チェック済みかどうかを確認
+                        is_answer_checked = st.session_state.get(answer_checked_key, False)
+                        
+                        # 選択肢表示
+                        for choice_index, choice in enumerate(shuffled_choices):
+                            label = QuestionComponent.get_choice_label(choice_index)
                             
-                            # シャッフル後の正解ラベルと選択肢テキストを取得
-                            shuffled_labels = q_result.get('shuffled_correct_answer_labels', [])
-                            shuffled_texts = q_result.get('shuffled_correct_answer_texts', [])
+                            # チェックボックスのスタイル改善（回答チェック後は無効化）
+                            is_selected = st.checkbox(
+                                f"{label}. {choice}",
+                                key=f"choice_{qid}_{choice_index}_{group_id}",
+                                disabled=is_answer_checked  # 回答チェック後は無効化
+                            )
                             
-                            if shuffled_labels and shuffled_texts:
-                                # シャッフル後のラベルと選択肢テキストで表示
-                                correct_display_parts = []
-                                for label, text in zip(shuffled_labels, shuffled_texts):
-                                    correct_display_parts.append(f"{label}. {text}")
-                                correct_display = ", ".join(correct_display_parts)
+                            if is_selected:
+                                selected_choices.append(label)  # ラベルを保存（例：A, B, C）
+                        
+                        user_selections[qid] = selected_choices
+                        
+                        # 回答チェック後に正解/不正解のアラートを表示
+                        if is_answer_checked:
+                            # セッション状態から結果データを取得
+                            result_data = st.session_state.get(f"result_{group_id}", {})
+                            question_result = result_data.get(qid, {})
+                            
+                            correct_answer = question_result.get('correct_answer', question.get('answer', ''))
+                            is_correct = question_result.get('is_correct', False)
+                            
+                            # ラベルマッピングを使用して正解選択肢を取得
+                            mapping_key = f"label_mapping_{qid}_{group_id}"
+                            label_mapping = st.session_state.get(mapping_key, {})
+                            
+                            # 正解選択肢のテキストと表示ラベルを取得（複数選択・シャッフル対応）
+                            correct_choice_text = ""
+                            correct_display_label = correct_answer  # デフォルトは元のラベル
+                            
+                            try:
+                                # utils.pyのformat_answer_displayを使用して複数選択対応の表示を取得
+                                from utils import QuestionUtils
+                                formatted_answer = QuestionUtils.format_answer_display(correct_answer)
+                                
+                                # 元の選択肢順序から正解テキストを取得（複数選択対応）
+                                original_choices = question.get('choices', [])
+                                choice_texts = []
+                                
+                                if len(correct_answer) == 1:
+                                    # 単一選択の場合
+                                    if correct_answer and ord(correct_answer) - ord('A') < len(original_choices):
+                                        choice_text = original_choices[ord(correct_answer) - ord('A')]
+                                        
+                                        # ラベルマッピングを使用してシャッフル後の表示ラベルを取得
+                                        if label_mapping:
+                                            for display_label, original_label in label_mapping.items():
+                                                if original_label == correct_answer:
+                                                    correct_display_label = display_label
+                                                    break
+                                        
+                                        # 正解テキストもシャッフル後のラベルを使用
+                                        correct_choice_text = f"{correct_display_label}. {choice_text}"
+                                    else:
+                                        correct_choice_text = "選択肢が見つかりません"
+                                        
+                                else:
+                                    # 複数選択の場合（ACD等）
+                                    display_labels = []
+                                    choice_texts = []
+                                    for char in correct_answer:
+                                        if char and ord(char) - ord('A') < len(original_choices):
+                                            choice_text = original_choices[ord(char) - ord('A')]
+                                            
+                                            # シャッフル後の表示ラベルを取得
+                                            display_label = char  # デフォルトは元のラベル
+                                            if label_mapping:
+                                                for disp_label, orig_label in label_mapping.items():
+                                                    if orig_label == char:
+                                                        display_label = disp_label
+                                                        break
+                                            
+                                            display_labels.append(display_label)
+                                            choice_texts.append(f"{display_label}. {choice_text}")
+                                    
+                                    # 複数選択の表示フォーマット（シャッフル後のラベルを使用）
+                                    correct_choice_text = "、".join(choice_texts)
+                                    # display_labelsをソートして見やすく表示
+                                    sorted_display_labels = sorted(display_labels)
+                                    if len(sorted_display_labels) > 1:
+                                        correct_display_label = "、".join(sorted_display_labels[:-1]) + " と " + sorted_display_labels[-1]
+                                    else:
+                                        correct_display_label = sorted_display_labels[0] if sorted_display_labels else correct_answer
+                                    
+                            except Exception as e:
+                                correct_choice_text = "表示エラー"
+                                correct_display_label = correct_answer
+                            
+                            # 正解/不正解のアラート表示（シャッフル後の実際の表示ラベルを使用）
+                            if is_correct:
+                                if len(correct_answer) == 1:
+                                    # 単一選択の場合：選択肢の詳細を表示
+                                    st.success(f"✅ 正解！（正答：{correct_choice_text}）")
+                                else:
+                                    # 複数選択の場合：ラベルのみ表示
+                                    st.success(f"✅ 正解！（正答：{correct_display_label}）")
                             else:
-                                # フォールバック: 元の正解ラベルを表示
-                                correct_ans = q_result.get('correct_answer', '')
-                                correct_display = correct_ans
-                            
-                            incorrect_details.append(f"**{qid}**: あなたの解答: `{user_ans}` | 正解: {correct_display}")
-                    st.error("❌ 不正解の問題がありました。\n\n" + "\n\n".join(incorrect_details))
-
-                # 2. その下に自己評価フォームを表示
-                st.markdown("---")
-                st.markdown("#### 自己評価")
-                quality_options = ["× もう一度", "△ 難しい", "○ 普通", "◎ 簡単"]
-                default_index = 2 if correct_count == total_count else 1
+                                if len(correct_answer) == 1:
+                                    # 単一選択の場合：選択肢の詳細を表示
+                                    st.error(f"❌ 不正解！（正答：{correct_choice_text}）")
+                                else:
+                                    # 複数選択の場合：ラベルのみ表示
+                                    st.error(f"❌ 不正解！（正答：{correct_display_label}）")
+                    
+                    # 問題間の区切り
+                    if q_index < len(questions) - 1:
+                        st.markdown("---")
                 
-                quality = st.radio(
-                    "学習評価", options=quality_options, index=default_index,
-                    key=f"quality_{group_id}", horizontal=True, label_visibility="collapsed"
+                # アクションボタンエリア（選択肢の後、画像の前）
+                col1, col2, col3 = st.columns([2, 2, 3])
+                
+                # 選択された答えがあるかチェック
+                has_selections = any(selections for selections in user_selections.values())
+                
+                # 回答チェック済みかどうかを確認（全問題で一つでもチェック済みなら無効化）
+                any_answer_checked = any(
+                    st.session_state.get(f"answer_checked_{q.get('number', f'q_{i}')}__{group_id}", False)
+                    for i, q in enumerate(questions)
                 )
-                action_result['quality'] = quality
-                action_result['next_submitted'] = st.form_submit_button("次の問題へ", type="primary", use_container_width=True)
+                
+                with col1:
+                    check_submitted = st.form_submit_button(
+                        "回答をチェック", 
+                        type="primary",
+                        disabled=any_answer_checked  # 回答チェック後は無効化
+                    )
+                
+                with col2:
+                    skip_submitted = st.form_submit_button(
+                        "スキップ",
+                        disabled=has_selections  # 選択肢が選ばれていたら無効化
+                    )
+                
+                # 画像表示（ボタンの後）
+                for q_index, question in enumerate(questions):
+                    question_number = question.get('number', '')
+                    image_urls = question.get('image_urls', []) or []
+                    image_paths = question.get('image_paths', []) or []
+                    all_images = image_urls + image_paths  # 両方のキーから画像を取得
+                    
+                    if all_images:
+                        # 高画質表示用CSSを適用
+                        inject_image_quality_css()
+                        
+                        # デバッグ情報
+                        if st.session_state.get("debug_mode", False):
+                            st.write(f"🔍 結果表示モード - 画像パス検出: {all_images}")
+                        
+                        st.markdown("---")  # 区切り線
+                        for img_index, img_url in enumerate(all_images):
+                            try:
+                                # デバッグ情報
+                                if st.session_state.get("debug_mode", False):
+                                    st.write(f"🔍 結果表示モード - 画像 {img_index + 1} 処理中: '{img_url}'")
+                                
+                                # Firebase Storageのパスを署名付きURLに変換
+                                from utils import get_secure_image_url
+                                secure_url = get_secure_image_url(img_url)
+                                
+                                # デバッグ情報
+                                if st.session_state.get("debug_mode", False):
+                                    if secure_url:
+                                        st.write(f"✅ 結果表示モード - 署名付きURL生成成功: {secure_url[:100]}...")
+                                    else:
+                                        st.write(f"❌ 結果表示モード - 署名付きURL生成失敗: {img_url}")
+                                
+                                if secure_url:
+                                    # 画像を高品質で表示（レスポンシブ対応）
+                                    with st.expander(f"問題 {question_number} の図 {img_index + 1}", expanded=True):
+                                        st.image(
+                                            secure_url, 
+                                            caption=f"問題 {question_number} の図 {img_index + 1}",
+                                            use_container_width=True  # コンテナ幅に合わせてレスポンシブ表示
+                                        )
+                                else:
+                                    st.warning(f"画像URLの生成に失敗しました: {img_url}")
+                                    if st.session_state.get("debug_mode", False):
+                                        st.error(f"🚨 詳細: パス '{img_url}' から署名付きURLを生成できませんでした")
+                            except Exception as e:
+                                st.warning(f"画像を読み込めませんでした: {img_url}")
+                                if st.session_state.get("debug_mode", False):
+                                    st.error(f"🚨 例外発生: {str(e)}")
+                                    st.exception(e)
+            
+            st.markdown("</div>", unsafe_allow_html=True)
         
-        # --- ▲▲▲ここまで▲▲▲ ---
-
-        action_result['user_selections'] = user_selections
-        
-        # 画像はフォームの外（常に最後）に表示
-        for question in questions:
-            all_images = (question.get('image_urls', []) or []) + (question.get('image_paths', []) or [])
-            if all_images:
-                with st.expander(f"📸 {question.get('number', '')}の図を見る", expanded=is_checked):
-                    for img_url in all_images:
-                        from utils import get_secure_image_url
-                        secure_url = get_secure_image_url(img_url)
-                        if secure_url:
-                            st.image(secure_url, use_container_width=True)
-                            
-        return action_result
-
+        return {
+            'user_selections': user_selections,
+            'check_submitted': check_submitted,
+            'skip_submitted': skip_submitted
+        }
+    
     @staticmethod
     def _is_ordering_question(question_text: str, choices: List[str] = None) -> bool:
         """並び替え問題の判定"""
@@ -674,14 +902,159 @@ class AnswerModeComponent:
         return False
 
 
+class ResultModeComponent:
+    """結果表示モードコンポーネント"""
+    
+    @staticmethod
+    def render(questions: List[Dict], group_id: str, result_data: Dict, case_data: Dict = None) -> Dict[str, Any]:
+        """軽量化された結果表示モード画面の描画"""
+        
+        # デバッグ情報
+        if st.session_state.get("debug_mode", False):
+            st.write(f"🔍 ResultModeComponent.render called - group_id: {group_id}")
+            st.write(f"🔍 result_data keys: {list(result_data.keys()) if result_data else 'None'}")
+        
+        # 症例情報エリア（必要時のみ）
+        if case_data and case_data.get('scenario_text'):
+            with st.expander("💡 症例情報", expanded=False):
+                st.info(case_data['scenario_text'])
+        
+        # 区切り線を追加
+        st.markdown("---")
+        
+        # LLM解説エリアを自己評価の前に追加 (一時的に無効化)
+        # ResultModeComponent._render_llm_explanation(questions, group_id)
+        
+        # 自己評価エリア（結果データも渡す）
+        return ResultModeComponent._render_self_evaluation(group_id, result_data)
+    
+    @staticmethod
+    def _render_llm_explanation(questions: List[Dict], group_id: str):
+        """LLM解説セクションの描画（修正版）"""
+        if generate_dental_explanation is None:
+            st.info("🚧 AI解説機能は現在メンテナンス中です。基本的な解説機能をご利用ください。")
+            return
+        
+        st.markdown("---")
+        st.markdown("#### 🤖 AI解説")
+        
+        for question in questions:
+            qid = question.get('number', '')
+            explanation_key = f"llm_explanation_{qid}_{group_id}"
+            
+            if explanation_key not in st.session_state:
+                st.session_state[explanation_key] = None
+            
+            # ボタンが押されたら、そのボタンに対応する'question'データを直接ヘルパー関数に渡す
+            if st.button(f"📝 問題 {qid} の解説を生成", key=f"explain_btn_{qid}_{group_id}"):
+                handle_llm_explanation_request(question, group_id)
+            
+            if st.session_state[explanation_key]:
+                with st.expander(f"📖 問題 {qid} の解説", expanded=True):
+                    st.markdown(st.session_state[explanation_key])
+                    
+                    # フィードバックボタン
+                    col1, col2, col3 = st.columns([1, 1, 4])
+                    
+                    with col1:
+                        if st.button("👍", key=f"like_{qid}_{group_id}", help="この解説は役に立った"):
+                            ResultModeComponent._save_feedback(qid, st.session_state[explanation_key], 1, "helpful")
+                            st.success("フィードバックありがとうございます！")
+                    
+                    with col2:
+                        if st.button("👎", key=f"dislike_{qid}_{group_id}", help="この解説は役に立たなかった"):
+                            ResultModeComponent._save_feedback(qid, st.session_state[explanation_key], -1, "not_helpful")
+                            st.success("フィードバックありがとうございます！")
+                            st.warning("フィードバックありがとうございます。改善に努めます。")
+    
+    @staticmethod
+    def _save_feedback(question_id: str, generated_text: str, rating: int, feedback_type: str):
+        """LLMフィードバックをFirestoreに保存"""
+        if save_llm_feedback is None:
+            return
+        
+        uid = st.session_state.get("uid")
+        if not uid:
+            return
+        
+        metadata = {
+            "feedback_type": feedback_type,
+            "timestamp": get_japan_now().isoformat(),
+            "session_type": st.session_state.get("session_type", "unknown")
+        }
+        
+        try:
+            success = save_llm_feedback(uid, question_id, generated_text, rating, metadata)
+            if not success:
+                print(f"[WARNING] LLMフィードバックの保存に失敗: {question_id}")
+        except Exception as e:
+            print(f"[ERROR] LLMフィードバック保存エラー: {e}")
+    
+    @staticmethod
+    def _render_self_evaluation(group_id: str, result_data: Dict = None) -> Dict[str, Any]:
+        """自己評価フォームの描画"""
+        
+        # デバッグ情報
+        if st.session_state.get("debug_mode", False):
+            st.write(f"🔍 自己評価フォーム描画開始 - group_id: {group_id}")
+            st.write(f"🔍 result_data: {result_data}")
+        
+        with st.form(key=f"evaluation_form_{group_id}"):
+            st.markdown("#### 自己評価")
+            
+            # 自己評価の選択肢（4段階評価に統一）
+            quality_options = [
+                "× もう一度",
+                "△ 難しい", 
+                "○ 普通",
+                "◎ 簡単"
+            ]
+            
+            # デフォルト値の決定（問題の正解・不正解に基づく）
+            default_index = 2  # ○ 普通をデフォルト
+            
+            # 結果データがある場合、問題の正解・不正解に基づいてデフォルト値を設定
+            if result_data:
+                correct_count = sum(1 for result in result_data.values() if result.get('is_correct', False))
+                total_count = len(result_data)
+                
+                if st.session_state.get("debug_mode", False):
+                    st.write(f"🔍 正解数: {correct_count}/{total_count}")
+                
+                if total_count > 0:
+                    # 全問正解の場合は「○ 普通」、不正解がある場合は「△ 難しい」
+                    if correct_count == total_count:
+                        default_index = 2  # ○ 普通
+                    else:
+                        default_index = 1  # △ 難しい
+            
+            quality = st.radio(
+                "学習評価",
+                options=quality_options,
+                index=default_index,
+                key=f"quality_{group_id}",
+                horizontal=True,  # 横並び表示
+                label_visibility="collapsed"  # ラベルを非表示
+            )
+            
+            # 次の問題へボタン
+            next_submitted = st.form_submit_button(
+                "次の問題へ", 
+                type="primary"
+            )
+            
+        
+        return {
+            'quality': quality,
+            'next_submitted': next_submitted
+        }
+
+
 class PracticeSession:
     """練習セッションを管理するクラス"""
     
     def __init__(self):
-        if get_firestore_manager:
-            self.firestore_manager = get_firestore_manager()
-        else:
-            self.firestore_manager = None
+        self.firestore_manager = get_firestore_manager()
     
     def get_next_q_group(self) -> List[str]:
         """次の問題グループを取得（日本時間ベース）"""
@@ -856,11 +1229,7 @@ def render_practice_page(auth_manager=None):
     
     # ユーザー認証チェック
     if auth_manager is None:
-        if AuthManager:
-            auth_manager = AuthManager()
-        else:
-            st.error("認証システムが利用できません")
-            return
+        auth_manager = AuthManager()
     if not auth_manager.ensure_valid_session():
         st.error("セッションが無効です。再ログインしてください。")
         return
@@ -1091,25 +1460,71 @@ def _display_current_question(practice_session: PracticeSession, uid: str):
     group_id = "_".join(current_group)
     st.session_state["current_group_id"] = group_id  # 結果表示で使用するため保存
     
-    # ▼▼▼ 常にAnswerModeComponentを呼び出すように変更 ▼▼▼
+    # 復習モードかどうかを判定
+    is_review_mode = _is_review_mode(current_group)
     
-    # is_checkedフラグによる分岐をなくし、ResultModeComponentの呼び出しを完全に削除
-    action_result = AnswerModeComponent.render(q_objects, group_id, case_data)
+    # 復習モードの場合は、チェック状態をリセットして問題を再度解けるようにする
+    if is_review_mode:
+        # 復習モードでは常に解答モードから開始
+        is_checked = False
+        # 既存のチェック状態をクリア（復習時は毎回新鮮な状態で解く）
+        if f"checked_{group_id}" in st.session_state:
+            del st.session_state[f"checked_{group_id}"]
+        # 以前の結果データもクリア（復習時は新しい評価として扱う）
+        if f"result_{group_id}" in st.session_state:
+            del st.session_state[f"result_{group_id}"]
+    else:
+        is_checked = st.session_state.get(f"checked_{group_id}", False)
     
-    if action_result.get('check_submitted'):
-        _process_group_answer_improved(
-            q_objects, action_result['user_selections'], group_id
-        )
-    elif action_result.get('skip_submitted'):
-        _skip_current_group(practice_session)
-    elif action_result.get('next_submitted'):
-        _process_self_evaluation_improved(
-            q_objects, action_result['quality'], group_id, practice_session, uid
-        )
+    # 2. 状態による表示分岐：解答モード vs 結果表示モード
+    result_data = st.session_state.get(f"result_{group_id}", {})
+    has_result_data = bool(result_data)
+    
+    if not is_checked and not has_result_data:
+        # 解答モード（問題表示も含む）
+        answer_result = AnswerModeComponent.render(q_objects, group_id, case_data)
+        
+        # ボタンアクションの処理
+        if answer_result['check_submitted']:
+            _process_group_answer_improved(
+                q_objects, 
+                answer_result['user_selections'], 
+                group_id, 
+                practice_session, 
+                uid
+            )
+        elif answer_result['skip_submitted']:
+            _skip_current_group(practice_session)
+    
+    else:
+        # 結果表示モード - 問題文と選択肢も表示（チェック済みまたは結果データがある場合）
+        
+        # デバッグ情報
+        if st.session_state.get("debug_mode", False):
+            st.write(f"🔍 結果表示モード - group_id: {group_id}")
+            st.write(f"🔍 is_checked: {is_checked}")
+            st.write(f"🔍 has_result_data: {has_result_data}")
+            st.write(f"🔍 結果データ: {result_data}")
+        
+        # 問題文と選択肢を表示（解答モードと同じ表示）
+        answer_result = AnswerModeComponent.render(q_objects, group_id, case_data)
+        
+        # 自己評価UIを確実に表示（結果データがあるかどうかに関わらず）
+        evaluation_result = ResultModeComponent.render(q_objects, group_id, result_data, case_data)
+        
+        
+        if evaluation_result['next_submitted']:
+            _process_self_evaluation_improved(
+                q_objects,
+                evaluation_result['quality'],
+                group_id,
+                practice_session,
+                uid
+            )
 
 
 def _process_group_answer_improved(q_objects: List[Dict], user_selections: Dict, 
-                                 group_id: str):
+                                 group_id: str, practice_session: PracticeSession, uid: str):
     """改善された解答処理（自己評価時のみ記録）"""
     result_data = {}
     
@@ -1122,59 +1537,76 @@ def _process_group_answer_improved(q_objects: List[Dict], user_selections: Dict,
         mapping_key = f"label_mapping_{qid}_{group_id}"
         label_mapping = st.session_state.get(mapping_key, {})
         
-        # ▼▼▼ user_answer_str生成ロジックを置換 ▼▼▼
-        user_answer_str = ""
+        # 解答形式の調整（堅牢な文字列化）
         if isinstance(user_answer, list):
-            # user_answerは['A', 'C']のようなラベルのリスト
-            original_labels = [label_mapping.get(label, label) for label in user_answer]
-            user_answer_str = "".join(sorted(original_labels))
-        elif isinstance(user_answer, str):
-            # テキスト入力の場合（並び替え問題など）
-            mapped_chars = [label_mapping.get(char, char) for char in user_answer.upper()]
-            user_answer_str = "".join(mapped_chars)
-        # 正誤判定（集合比較による堅牢な判定）
-        # 文字列比較ではなく、含まれる文字の集合が一致するかで判定
-        # これにより順序や空白・特殊文字の問題を回避
-        correct_answer_set = set(correct_answer.strip().upper())
-        user_answer_set = set(user_answer_str.strip().upper())
-        is_correct = (correct_answer_set == user_answer_set)
+            # チェックボックスの場合、選択されたラベルを元のラベルにマッピング
+            alphabets = []
+            for choice in user_answer:
+                # デバッグ情報追加
+                if st.session_state.get("debug_mode", False):
+                    st.write(f"  選択肢解析: '{choice}'")
+                
+                # 選択肢から A, B, C などの文字を抽出
+                if '.' in choice:
+                    # "A. 選択肢内容" の形式の場合
+                    letter = choice.split('.')[0].strip()
+                    if st.session_state.get("debug_mode", False):
+                        st.write(f"    ドット区切り抽出: '{letter}'")
+                else:
+                    # 単純な文字の場合（先頭のアルファベットを抽出）
+                    import re
+                    alpha_chars = re.findall(r'[A-Za-z]', choice)
+                    if alpha_chars:
+                        letter = alpha_chars[0].upper()
+                        if st.session_state.get("debug_mode", False):
+                            st.write(f"    正規表現抽出: '{letter}' from '{choice}'")
+                    elif choice.strip():
+                        # fallback: 先頭文字をそのまま使用
+                        letter = choice.strip()[0].upper()
+                        if st.session_state.get("debug_mode", False):
+                            st.write(f"    フォールバック抽出: '{letter}' from '{choice}'")
+                    else:
+                        continue
+                
+                # シャッフル時のマッピングを適用
+                if label_mapping and letter in label_mapping:
+                    original_label = label_mapping[letter]
+                    alphabets.append(original_label)
+                    if st.session_state.get("debug_mode", False):
+                        st.write(f"    マッピング適用: '{letter}' → '{original_label}'")
+                else:
+                    alphabets.append(letter)
+                    if st.session_state.get("debug_mode", False):
+                        st.write(f"    マッピングなし: '{letter}' をそのまま使用")
+            
+            user_answer_str = ''.join(sorted(set(alphabets)))
+            if st.session_state.get("debug_mode", False):
+                st.write(f"  抽出されたアルファベット: {alphabets}")
+                st.write(f"  最終的なユーザー回答: '{user_answer_str}'")
+        else:
+            user_answer_str = str(user_answer).strip()
+            # 並び替え問題などでもマッピングを適用
+            if label_mapping and user_answer_str:
+                mapped_answer = ''
+                for char in user_answer_str:
+                    mapped_char = label_mapping.get(char, char)
+                    mapped_answer += mapped_char
+                user_answer_str = mapped_answer
         
-        # デバッグ情報（集合比較）
+        # デバッグ情報の記録（開発時のみ）
         if st.session_state.get("debug_mode", False):
-            st.write(f"  正解文字集合: {correct_answer_set}")
-            st.write(f"  ユーザー文字集合: {user_answer_set}")
-            st.write(f"  判定結果: {is_correct}")
+            st.write(f"デバッグ - 問題ID: {qid}")
+            st.write(f"  ユーザー選択: {user_answer}")
+            st.write(f"  変換後: {user_answer_str}")
+            st.write(f"  正解データ: {correct_answer}")
         
-        # シャッフル後の正解ラベルを計算
-        shuffled_correct_answer_labels = []
-        shuffled_correct_answer_texts = []
-        
-        if label_mapping:
-            # label_mapping の逆引きマップを作成: {original_label: new_label}
-            reverse_mapping = {original_label: new_label for new_label, original_label in label_mapping.items()}
-            
-            # 正解ラベル（例: 'B', 'BC'など）の各文字について、シャッフル後のラベルを取得
-            for correct_char in correct_answer.strip().upper():
-                shuffled_label = reverse_mapping.get(correct_char, correct_char)
-                shuffled_correct_answer_labels.append(shuffled_label)
-            
-            # 選択肢テキストも取得
-            shuffled_choices_key = f"shuffled_mapping_{qid}_{group_id}"
-            shuffled_choices_data = st.session_state.get(shuffled_choices_key, ([], {}))
-            shuffled_choices = shuffled_choices_data[0] if isinstance(shuffled_choices_data, tuple) else shuffled_choices_data
-            
-            for shuffled_label in shuffled_correct_answer_labels:
-                # ラベル（A, B, C...）をインデックスに変換
-                choice_index = ord(shuffled_label) - ord('A')
-                if 0 <= choice_index < len(shuffled_choices):
-                    shuffled_correct_answer_texts.append(shuffled_choices[choice_index])
+        # 正誤判定（改善されたロジック）
+        is_correct = QuestionUtils.check_answer(user_answer_str, correct_answer)
         
         result_data[qid] = {
             'user_answer': user_answer,
             'user_answer_str': user_answer_str,
             'correct_answer': correct_answer,
-            'shuffled_correct_answer_labels': shuffled_correct_answer_labels,
-            'shuffled_correct_answer_texts': shuffled_correct_answer_texts,
             'is_correct': is_correct
         }
     
@@ -1248,15 +1680,9 @@ def _process_self_evaluation_improved(q_objects: List[Dict], quality_text: str,
         
         # Firestoreに保存（非同期・エラー無視で軽量化）
         try:
-            if save_user_data:
-                print(f"💾 演習結果を保存中: {qid} (UID: {uid[:8]}...)")
-                save_user_data(uid, qid, updated_card)
-                print(f"✅ 保存完了: {qid}")
-            else:
-                print(f"❌ save_user_data関数が利用できません")
+            save_user_data(uid, qid, updated_card)
         except Exception as e:
             # 保存エラーは無視（後でリトライ）
-            print(f"❌ 保存エラー: {qid} - {e}")
             pass
     
     # セッション状態を強制的に更新
@@ -1528,6 +1954,8 @@ def render_practice_sidebar():
                 if review_count > 0 and overdue_cards:
                     st.warning(f"⚠️ 期限切れの復習問題が {len(overdue_cards)}問 あります。優先的に学習することをお勧めします。")
 
+                # デバッグ情報表示（今日にフォーカス）
+
                 # 本日の学習完了数を計算（重複カウント防止強化版）
                 today_reviews_done = 0
                 today_new_done = 0
@@ -1713,10 +2141,8 @@ def render_practice_sidebar():
                         # 新規カードの追加
                         recent_ids = list(st.session_state.get("result_log", {}).keys())[-15:]
                         uid = st.session_state.get("uid")
-                        
-                        # Firestoreに直接問い合わせるのではなく、セッション状態から権限情報を取得する
-                        has_gakushi_permission = st.session_state.get('has_gakushi_permission', False)
-                        
+                        has_gakushi_permission = check_gakushi_permission(uid)
+
                         if has_gakushi_permission:
                             available_questions = ALL_QUESTIONS.copy()
                         else:
@@ -1762,12 +2188,7 @@ def render_practice_sidebar():
                                 if k.startswith(("checked_", "user_selection_", "shuffled_", "free_input_", "order_input_")):
                                     del st.session_state[k]
 
-                            if save_user_data:
-                                print(f"💾 学習セッション状態を保存中...")
-                                save_user_data(st.session_state.get("uid"), st.session_state)
-                                print(f"✅ セッション状態保存完了")
-                            else:
-                                print(f"❌ save_user_data関数が利用できません（セッション保存）")
+                            save_user_data(st.session_state.get("uid"), st.session_state)
                             st.session_state["initializing_study"] = False
                             st.success(f"今日の学習を開始します！（{len(grouped_queue)}問）")
                             st.rerun()
@@ -1781,7 +2202,7 @@ def render_practice_sidebar():
 
             # 以前の選択UIを復活
             uid = st.session_state.get("uid")
-            has_gakushi_permission = st.session_state.get('has_gakushi_permission', False)
+            has_gakushi_permission = check_gakushi_permission(uid)
             mode_choices = ["回数別", "科目別", "必修問題のみ", "キーワード検索"]
             mode = st.radio("出題形式を選択", mode_choices, key="free_mode_radio")
 
@@ -1949,12 +2370,7 @@ def render_practice_sidebar():
                             if key.startswith(("checked_", "user_selection_", "shuffled_", "free_input_", "order_input_")):
                                 del st.session_state[key]
 
-                        if save_user_data:
-                            print(f"💾 自由演習セッション状態を保存中...")
-                            save_user_data(st.session_state.get("uid"), st.session_state)
-                            print(f"✅ 自由演習セッション状態保存完了")
-                        else:
-                            print(f"❌ save_user_data関数が利用できません（自由演習）")
+                        save_user_data(st.session_state.get("uid"), st.session_state)
                         st.success(f"演習を開始します！（{len(grouped_queue)}グループ）")
                         st.rerun()
 
@@ -2007,6 +2423,17 @@ def render_practice_sidebar():
                     del st.session_state[k]
             st.info("セッションを初期化しました")
             st.rerun()
+        
+        # デバッグモード設定
+        st.divider()
+        st.markdown("#### 🔧 デバッグ")
+        debug_mode = st.checkbox(
+            "デバッグモードを有効にする",
+            value=st.session_state.get("debug_mode", False),
+            key="debug_mode_checkbox",
+            help="問題の正誤判定プロセスを詳細表示します"
+        )
+        st.session_state["debug_mode"] = debug_mode
             
     except Exception as e:
         st.error(f"学習ハブでエラーが発生しました: {str(e)}")
@@ -2028,10 +2455,7 @@ def _render_auto_learning_mode():
             return
         
         # Firestoreから個人の学習データを取得（最初に実行）
-        if get_firestore_manager:
-            firestore_manager = get_firestore_manager()
-        else:
-            firestore_manager = None
+        firestore_manager = get_firestore_manager()
         cards = {}
         
         try:
@@ -2329,7 +2753,7 @@ def _render_detailed_conditions(quiz_format: str, target_exam: str):
     elif quiz_format == "科目別":
         # 科目選択（実際のJSONデータから科目を取得）
         uid = st.session_state.get("uid")
-        has_gakushi_permission = st.session_state.get('has_gakushi_permission', False)
+        has_gakushi_permission = check_gakushi_permission(uid) if uid else False
         analysis_target = st.session_state.get("analysis_target", "国試問題")
         
         # 実際のJSONデータから科目を取得
@@ -2494,14 +2918,71 @@ def _render_session_status():
                         
                         # タイムスタンプを安全に取得・フォーマット（日本時間対応）
                         timestamp_str = "未記録"
-                        ts_value = last_history.get('timestamp') or last_history.get('date')
-                        if ts_value:
+                        if 'timestamp' in last_history:
                             try:
-                                # タイムゾーン変換関数を呼び出す
-                                dt_jst = get_japan_datetime_from_timestamp(ts_value)
-                                timestamp_str = dt_jst.strftime('%Y-%m-%d %H:%M')
-                            except Exception:
-                                timestamp_str = "時刻取得エラー"
+                                ts = last_history['timestamp']
+                                if hasattr(ts, 'strftime'):
+                                    # DatetimeWithNanosecondsオブジェクトの場合
+                                    # UTCから日本時間（JST: UTC+9）に変換
+                                    import pytz
+                                    if hasattr(ts, 'replace') and ts.tzinfo is None:
+                                        # タイムゾーン情報がない場合はUTCとして扱う
+                                        ts = ts.replace(tzinfo=pytz.UTC)
+                                    elif hasattr(ts, 'astimezone'):
+                                        # 既にタイムゾーン情報がある場合
+                                        pass
+                                    jst = pytz.timezone('Asia/Tokyo')
+                                    ts_jst = ts.astimezone(jst)
+                                    timestamp_str = ts_jst.strftime('%Y-%m-%d %H:%M')
+                                elif hasattr(ts, 'isoformat'):
+                                    # datetimeオブジェクトの場合
+                                    import pytz
+                                    if ts.tzinfo is None:
+                                        ts = ts.replace(tzinfo=pytz.UTC)
+                                    jst = pytz.timezone('Asia/Tokyo')
+                                    ts_jst = ts.astimezone(jst)
+                                    timestamp_str = ts_jst.strftime('%Y-%m-%d %H:%M')
+                                elif isinstance(ts, str):
+                                    # 文字列の場合、ISO形式からパース
+                                    try:
+                                        import pytz
+                                        dt = datetime.datetime.fromisoformat(ts.replace('Z', '+00:00'))
+                                        if dt.tzinfo is None:
+                                            dt = dt.replace(tzinfo=pytz.UTC)
+                                        jst = pytz.timezone('Asia/Tokyo')
+                                        dt_jst = dt.astimezone(jst)
+                                        timestamp_str = dt_jst.strftime('%Y-%m-%d %H:%M')
+                                    except:
+                                        timestamp_str = str(ts)[:16]
+                                else:
+                                    timestamp_str = str(ts)[:16]
+                            except Exception as e:
+                                timestamp_str = "フォーマットエラー"
+                        elif 'date' in last_history:
+                            try:
+                                ts = last_history['date']
+                                if hasattr(ts, 'strftime'):
+                                    import pytz
+                                    if hasattr(ts, 'replace') and ts.tzinfo is None:
+                                        ts = ts.replace(tzinfo=pytz.UTC)
+                                    jst = pytz.timezone('Asia/Tokyo')
+                                    ts_jst = ts.astimezone(jst)
+                                    timestamp_str = ts_jst.strftime('%Y-%m-%d %H:%M')
+                                elif isinstance(ts, str):
+                                    try:
+                                        import pytz
+                                        dt = datetime.datetime.fromisoformat(ts.replace('Z', '+00:00'))
+                                        if dt.tzinfo is None:
+                                            dt = dt.replace(tzinfo=pytz.UTC)
+                                        jst = pytz.timezone('Asia/Tokyo')
+                                        dt_jst = dt.astimezone(jst)
+                                        timestamp_str = dt_jst.strftime('%Y-%m-%d %H:%M')
+                                    except:
+                                        timestamp_str = str(ts)[:16]
+                                else:
+                                    timestamp_str = str(ts)[:16]
+                            except Exception as e:
+                                timestamp_str = "フォーマットエラー"
                         
                         # 元のシンプルなUI形式に戻す
                         jump_btn = st.button(f"{q_num}", key=f"jump_{q_num}")
@@ -2521,6 +3002,17 @@ def _render_session_status():
                 st.info("履歴のある問題がありません。")
     else:
         st.info("まだ評価された問題がありません。")
+    
+    # デバッグモード設定
+    st.divider()
+    st.markdown("#### 🔧 デバッグ")
+    debug_mode = st.checkbox(
+        "デバッグモードを有効にする",
+        value=st.session_state.get("debug_mode", False),
+        key="debug_mode_checkbox",
+        help="問題の正誤判定プロセスを詳細表示します"
+    )
+    st.session_state["debug_mode"] = debug_mode
 
 
 def _start_ai_enhanced_learning(session_type: str, problem_count: int, detailed_stats: Optional[Dict] = None):
@@ -2589,11 +3081,8 @@ def _start_ai_enhanced_learning(session_type: str, problem_count: int, detailed_
 def _select_questions_simple_fallback(uid: str, session_type: str, count: int) -> List[str]:
     """詳細統計がない場合のシンプルな問題選択"""
     try:
-        if get_firestore_manager:
-            firestore_manager = get_firestore_manager()
-            user_cards = firestore_manager.get_user_cards(uid)
-        else:
-            user_cards = {}
+        firestore_manager = get_firestore_manager()
+        user_cards = firestore_manager.get_user_cards(uid)
         
         today = datetime.datetime.now().strftime("%Y-%m-%d")
         review_questions = []
@@ -2654,11 +3143,8 @@ def _select_questions_simple_fallback(uid: str, session_type: str, count: int) -
 def _select_questions_by_ai_analysis(uid: str, session_type: str, count: int, stats: Dict) -> List[str]:
     """AI分析に基づく問題選択ロジック"""
     try:
-        if get_firestore_manager:
-            firestore_manager = get_firestore_manager()
-            user_cards = firestore_manager.get_user_cards(uid)
-        else:
-            user_cards = {}
+        firestore_manager = get_firestore_manager()
+        user_cards = firestore_manager.get_user_cards(uid)
         
         # セッションタイプ別の選択ロジック
         if session_type == "弱点強化":
@@ -2739,7 +3225,7 @@ def _select_new_questions(user_cards: Dict, count: int) -> List[str]:
     
     # 権限チェックを追加
     uid = st.session_state.get("uid")
-    has_gakushi_permission = st.session_state.get('has_gakushi_permission', False)
+    has_gakushi_permission = check_gakushi_permission(uid)
     
     # 権限に応じて利用可能な問題を制限
     if has_gakushi_permission:
@@ -2926,7 +3412,7 @@ def _fallback_auto_learning():
             st.error(f"データ読み込みエラー: {e}")
             return
     else:
-        if uid and st.session_state.get('has_gakushi_permission', False):
+        if uid and check_gakushi_permission(uid):
             available_questions = ALL_QUESTIONS
         else:
             # 学士以外の問題のみ
@@ -3009,14 +3495,22 @@ def _start_free_learning(quiz_format: str, target_exam: str, question_order: str
         try:
             # ユーザー権限の確認
             available_questions = ALL_QUESTIONS
+            st.info(f"デバッグ: 全問題数: {len(available_questions)}")
+            
+            # 問題番号のサンプルを表示
+            sample_numbers = [q.get("number") for q in available_questions[:10]]
+            st.info(f"デバッグ: 問題番号例: {sample_numbers}")
             
             # 権限に応じた問題の絞り込み
-            if uid and not st.session_state.get('has_gakushi_permission', False):
+            if uid and not check_gakushi_permission(uid):
                 # 権限のないユーザーは国試問題のみ（番号が'G'で始まらない問題）
                 available_questions = [q for q in ALL_QUESTIONS if not q.get("number", "").startswith("G")]
+                st.info(f"デバッグ: 利用可能問題数: {len(available_questions)}")
             else:
-                # 権限のあるユーザーは学士問題にもアクセス可能
-                pass
+                # 権限のあるユーザーは問題数の詳細を表示
+                gakushi_count = sum(1 for q in available_questions if q.get("number", "").startswith("G"))
+                kokushi_count = sum(1 for q in available_questions if not q.get("number", "").startswith("G"))
+                st.info(f"デバッグ: 学士問題: {gakushi_count}問, 国試問題: {kokushi_count}問")
             
             # 対象試験での絞り込み
             if target_exam == "国試":
@@ -3028,6 +3522,7 @@ def _start_free_learning(quiz_format: str, target_exam: str, question_order: str
             elif target_exam == "CBT":
                 # CBT問題：現在は実装されていないため空リスト
                 available_questions = []
+            st.info(f"デバッグ: 試験種別({target_exam})絞り込み後: {len(available_questions)}")
             
             # 絞り込み後の問題のexam_typeを確認
             if len(available_questions) == 0 and target_exam == "CBT":
@@ -3053,6 +3548,7 @@ def _start_free_learning(quiz_format: str, target_exam: str, question_order: str
                             available_questions = [q for q in available_questions 
                                                  if area_letter in q.get("number", "")]
                         
+                        st.info(f"デバッグ: {selected_kaisu}{selected_area}絞り込み後: {len(available_questions)}")
                         
                     elif target_exam == "学士試験":
                         selected_year = st.session_state.get("free_gakushi_year", "2025年度")
@@ -3072,12 +3568,15 @@ def _start_free_learning(quiz_format: str, target_exam: str, question_order: str
                             available_questions = [q for q in available_questions 
                                                  if f"-{area_letter}-" in q.get("number", "")]
                         
+                        st.info(f"デバッグ: 学士{selected_year}{selected_kaisu}{selected_area}絞り込み後: {len(available_questions)}")
+                        
             elif quiz_format == "科目別":
                 # 科目別の詳細条件を取得（標準化された科目名で比較）
                 selected_subject = st.session_state.get("free_subject", "")
                 if selected_subject:
                     available_questions = [q for q in available_questions 
                                          if get_standardized_subject(q.get("subject", "")) == selected_subject]
+                    st.info(f"デバッグ: 科目({selected_subject})絞り込み後: {len(available_questions)}")
                 pass
             elif quiz_format == "必修問題のみ":
                 # 必修問題のみ
@@ -3087,10 +3586,13 @@ def _start_free_learning(quiz_format: str, target_exam: str, question_order: str
                 elif target_exam == "学士試験":
                     hisshu_numbers = GAKUSHI_HISSHU_Q_NUMBERS_SET
                     available_questions = [q for q in available_questions if q.get("number") in hisshu_numbers]
+                st.info(f"デバッグ: 必修問題絞り込み後: {len(available_questions)}")
             elif quiz_format == "キーワード検索":
                 # キーワード検索の詳細条件は後で追加実装
                 # 現在は何もしない（全ての問題を対象とする）
                 pass
+            
+            st.info(f"デバッグ: 最終的な利用可能問題数: {len(available_questions)}")
             
             if not available_questions:
                 st.error("選択した条件に合う問題がありません。条件を変更してください。")

@@ -214,62 +214,79 @@ def prepare_data_for_display(uid: str, cards: dict, analysis_target: str, force_
 
 def calculate_card_level(card: Dict[str, Any]) -> str:
     """
-    【最終改善版】
-    自己評価(quality)を重視し、「不安定な正解」でレベルが上がるのを防ぐレベル計算関数
-    """
-    if not card or not isinstance(card, dict) or not card.get('history'):
-        return "未学習"
-
-    history = card.get('history', [])
-    latest = history[-1]
-    quality = latest.get('quality', 0)
+    SM-2アルゴリズムベースのカードレベル計算関数
     
-    # 1. 不正解(quality < 3)なら即レベル0
-    if quality < 3:
+    統一分類: 未学習、レベル0、レベル1、レベル2、レベル3、レベル4、レベル5、習得済み
+    
+    レベル分類基準（SM-2アルゴリズム準拠）:
+    - 未学習: 学習履歴なし
+    - レベル0: 初回学習、または低品質回答（quality < 3）
+    - レベル1: 基本習得（quality 3, 間隔短期）
+    - レベル2: 中程度習得（quality 3-4, 間隔中期）
+    - レベル3: 良好習得（quality 4-5, 間隔長期）
+    - レベル4: 高度習得（quality 5, 長期間隔）
+    - レベル5: 安定習得（quality 5, 超長期間隔）
+    - 習得済み: EF高値かつ超長期間隔
+    """
+    if not card or not isinstance(card, dict):
+        return "未学習"
+    
+    history = card.get('history', [])
+    
+    # 学習履歴がない場合
+    if not history or len(history) == 0:
+        return "未学習"
+    
+    # 最新の学習データを取得
+    latest = history[-1] if isinstance(history, list) else {}
+    quality = latest.get('quality', 0)
+    interval = latest.get('interval', 0)
+    ef = latest.get('EF', 2.5)
+    
+    # 学習回数を計算
+    learning_count = len(history)
+    
+    # SM-2アルゴリズムに基づく段階的レベル判定
+    
+    # 初回学習または低品質
+    if learning_count == 1 or quality < 3:
         return "レベル0"
-
-    # 2.【重要】ギリギリ正解(quality == 3)ならレベルを「現状維持」
-    #   最新の学習記録を除いた状態でレベルを再計算し、そのレベルを維持する
-    if quality == 3:
-        if len(history) <= 1:
-            # 初回の学習でギリギリ正解なら、まだ不安定なのでレベル0
-            return "レベル0"
-        else:
-            # 直前のレベルを維持するため、再帰的に自身を呼び出す
-            previous_level = calculate_card_level({'history': history[:-1]})
-            return previous_level
-
-    # 3. 自信のある正解(quality >= 4)の場合のみレベルアップを検討
-    #   quality >= 4 の連続回数をカウントする
-    confident_successful_reviews = 0
-    for review in reversed(history):
-        if review.get('quality', 0) >= 4:
-            confident_successful_reviews += 1
-        else:
-            # 途中で quality < 4 の評価があればストップ
-            break
-
-    # 4. 自信のある連続正解回数に基づいてレベルを決定
-    if confident_successful_reviews == 1:
+    
+    # 基本習得段階（短期間隔）
+    if quality == 3 and interval <= 1:
         return "レベル1"
-    elif confident_successful_reviews == 2:
+    
+    # 中程度習得（中期間隔）
+    if quality == 3 and 1 < interval <= 6:
         return "レベル2"
-    elif confident_successful_reviews in [3, 4]:
+    elif quality == 4 and interval <= 3:
+        return "レベル2"
+    
+    # 良好習得（長期間隔）
+    if quality == 4 and 3 < interval <= 15:
         return "レベル3"
-    elif confident_successful_reviews in [5, 6]:
+    elif quality == 5 and interval <= 7:
+        return "レベル3"
+    
+    # 高度習得（超長期間隔）
+    if quality == 5 and 7 < interval <= 30:
         return "レベル4"
-    elif confident_successful_reviews >= 7:
-        interval = latest.get('interval', 0)
-        ef = latest.get('EF', 2.5)
-        if interval > 180 and ef >= 2.8:
-            return "習得済み"
-        elif interval > 30:
-            return "レベル5"
-        else:
-            return "レベル4"
-
-    # フォールバック (例: historyはあるが全て quality=3 だった場合など)
-    return "レベル0"
+    
+    # 安定習得（超長期間隔）
+    if quality == 5 and 30 < interval <= 180:
+        return "レベル5"
+    
+    # 完全習得（EF高値かつ超長期間隔）
+    if quality == 5 and interval > 180 and ef >= 2.8:
+        return "習得済み"
+    
+    # フォールバック: 高品質だが間隔が短い場合
+    if quality >= 4:
+        return "レベル3"
+    elif quality >= 3:
+        return "レベル1"
+    else:
+        return "レベル0"
 
 def calculate_sm2_review_schedule(cards: dict, days_ahead: int = 7) -> Dict[str, List[str]]:
     """
@@ -402,22 +419,17 @@ def get_review_priority_cards(cards: dict, target_date: datetime.date = None) ->
     return priority_cards
 
 def check_gakushi_permission(uid: str) -> bool:
-    """学士試験へのアクセス権限をチェック（キャッシュ対応）"""
+    """学士試験へのアクセス権限をチェック"""
     try:
-        # Streamlitのキャッシュを使用して権限データを保存（表示なし）
-        @st.cache_data(ttl=300, show_spinner=False)  # 5分間キャッシュ、スピナー非表示
-        def _cached_gakushi_check(uid: str) -> bool:
-            db = get_firestore_manager()
-            user_ref = db.collection('users').document(uid)
-            user_doc = user_ref.get()
-            
-            if user_doc.exists:
-                user_data = user_doc.to_dict()
-                return user_data.get('has_gakushi_permission', False)
-            
-            return True
+        db = get_firestore_manager()
+        user_ref = db.collection('users').document(uid)
+        user_doc = user_ref.get()
         
-        return _cached_gakushi_check(uid)
+        if user_doc.exists:
+            user_data = user_doc.to_dict()
+            return user_data.get('has_gakushi_permission', False)
+        
+        return True
     except Exception:
         return True
 
@@ -648,7 +660,7 @@ def render_search_page():
     subject_filter = st.session_state.get("subject_filter", [])
     
     # 権限チェック
-    has_gakushi_permission = st.session_state.get('has_gakushi_permission', False)
+    has_gakushi_permission = check_gakushi_permission(uid)
     
     # 最適化されたデータ準備
     base_df = prepare_data_for_display(uid, cards, analysis_target)

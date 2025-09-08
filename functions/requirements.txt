@@ -1,0 +1,28 @@
+# Cloud Functions for Firebase - 歯科国試アプリ用ランキング更新システム
+# requirements.txt
+
+# Firebase Admin SDK
+firebase-admin>=6.2.0
+
+# Google Cloud libraries
+google-cloud-firestore>=2.11.0
+google-cloud-logging>=3.5.0
+
+# Cloud Functions Framework
+functions-framework>=3.4.0
+
+# Flask (Cloud Functions Frameworkの依存関係)
+flask>=2.3.0
+
+# 日時処理
+pytz>=2023.3
+
+# 既存のアプリケーション依存関係
+# (my_llm_app/requirements.txt からランキング計算に必要なもの)
+
+# データ処理
+pandas>=1.5.0
+numpy>=1.24.0
+
+# その他のユーティリティ
+requests>=2.31.0

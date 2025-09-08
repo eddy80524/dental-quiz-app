@@ -245,3 +245,11 @@ mecab-ipadic-neologd/build/
 
 # Test files (legacy - moved to tests/ directory)
 *_test.py
+
+# Secrets and sensitive files
+secrets.toml
+.streamlit/secrets.toml
+*.key
+*.pem
+.env
+

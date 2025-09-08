@@ -71,18 +71,15 @@ except ImportError:
 
 try:
     from firestore_db import get_firestore_manager, save_user_data
-    print("✅ Firestore関数のインポートに成功しました")
-except ImportError as e:
-    print(f"❌ Firestore関数のインポートに失敗しました: {e}")
+except ImportError:
     get_firestore_manager = None
     save_user_data = None
 
 try:
-    from auth import AuthManager, check_gakushi_permission, get_user_permission
+    from auth import AuthManager, check_gakushi_permission
 except ImportError:
     AuthManager = None
     check_gakushi_permission = None
-    get_user_permission = None
 
 
 try:
@@ -599,23 +596,8 @@ class AnswerModeComponent:
                     for qid, q_result in result_data.items():
                         if not q_result.get('is_correct'):
                             user_ans = ''.join(q_result.get('user_answer', [])) or '無回答'
-                            
-                            # シャッフル後の正解ラベルと選択肢テキストを取得
-                            shuffled_labels = q_result.get('shuffled_correct_answer_labels', [])
-                            shuffled_texts = q_result.get('shuffled_correct_answer_texts', [])
-                            
-                            if shuffled_labels and shuffled_texts:
-                                # シャッフル後のラベルと選択肢テキストで表示
-                                correct_display_parts = []
-                                for label, text in zip(shuffled_labels, shuffled_texts):
-                                    correct_display_parts.append(f"{label}. {text}")
-                                correct_display = ", ".join(correct_display_parts)
-                            else:
-                                # フォールバック: 元の正解ラベルを表示
-                                correct_ans = q_result.get('correct_answer', '')
-                                correct_display = correct_ans
-                            
-                            incorrect_details.append(f"**{qid}**: あなたの解答: `{user_ans}` | 正解: {correct_display}")
+                            correct_ans = q_result.get('correct_answer', '')
+                            incorrect_details.append(f"**{qid}**: あなたの解答: `{user_ans}` | 正解: `{correct_ans}`")
                     st.error("❌ 不正解の問題がありました。\n\n" + "\n\n".join(incorrect_details))
 
                 # 2. その下に自己評価フォームを表示
@@ -1145,36 +1127,10 @@ def _process_group_answer_improved(q_objects: List[Dict], user_selections: Dict,
             st.write(f"  ユーザー文字集合: {user_answer_set}")
             st.write(f"  判定結果: {is_correct}")
         
-        # シャッフル後の正解ラベルを計算
-        shuffled_correct_answer_labels = []
-        shuffled_correct_answer_texts = []
-        
-        if label_mapping:
-            # label_mapping の逆引きマップを作成: {original_label: new_label}
-            reverse_mapping = {original_label: new_label for new_label, original_label in label_mapping.items()}
-            
-            # 正解ラベル（例: 'B', 'BC'など）の各文字について、シャッフル後のラベルを取得
-            for correct_char in correct_answer.strip().upper():
-                shuffled_label = reverse_mapping.get(correct_char, correct_char)
-                shuffled_correct_answer_labels.append(shuffled_label)
-            
-            # 選択肢テキストも取得
-            shuffled_choices_key = f"shuffled_mapping_{qid}_{group_id}"
-            shuffled_choices_data = st.session_state.get(shuffled_choices_key, ([], {}))
-            shuffled_choices = shuffled_choices_data[0] if isinstance(shuffled_choices_data, tuple) else shuffled_choices_data
-            
-            for shuffled_label in shuffled_correct_answer_labels:
-                # ラベル（A, B, C...）をインデックスに変換
-                choice_index = ord(shuffled_label) - ord('A')
-                if 0 <= choice_index < len(shuffled_choices):
-                    shuffled_correct_answer_texts.append(shuffled_choices[choice_index])
-        
         result_data[qid] = {
             'user_answer': user_answer,
             'user_answer_str': user_answer_str,
             'correct_answer': correct_answer,
-            'shuffled_correct_answer_labels': shuffled_correct_answer_labels,
-            'shuffled_correct_answer_texts': shuffled_correct_answer_texts,
             'is_correct': is_correct
         }
     
@@ -1249,14 +1205,9 @@ def _process_self_evaluation_improved(q_objects: List[Dict], quality_text: str,
         # Firestoreに保存（非同期・エラー無視で軽量化）
         try:
             if save_user_data:
-                print(f"💾 演習結果を保存中: {qid} (UID: {uid[:8]}...)")
                 save_user_data(uid, qid, updated_card)
-                print(f"✅ 保存完了: {qid}")
-            else:
-                print(f"❌ save_user_data関数が利用できません")
         except Exception as e:
             # 保存エラーは無視（後でリトライ）
-            print(f"❌ 保存エラー: {qid} - {e}")
             pass
     
     # セッション状態を強制的に更新
@@ -1528,6 +1479,8 @@ def render_practice_sidebar():
                 if review_count > 0 and overdue_cards:
                     st.warning(f"⚠️ 期限切れの復習問題が {len(overdue_cards)}問 あります。優先的に学習することをお勧めします。")
 
+                # デバッグ情報表示（今日にフォーカス）
+
                 # 本日の学習完了数を計算（重複カウント防止強化版）
                 today_reviews_done = 0
                 today_new_done = 0
@@ -1713,10 +1666,8 @@ def render_practice_sidebar():
                         # 新規カードの追加
                         recent_ids = list(st.session_state.get("result_log", {}).keys())[-15:]
                         uid = st.session_state.get("uid")
-                        
-                        # Firestoreに直接問い合わせるのではなく、セッション状態から権限情報を取得する
-                        has_gakushi_permission = st.session_state.get('has_gakushi_permission', False)
-                        
+                        has_gakushi_permission = check_gakushi_permission(uid) if check_gakushi_permission else False
+
                         if has_gakushi_permission:
                             available_questions = ALL_QUESTIONS.copy()
                         else:
@@ -1763,11 +1714,7 @@ def render_practice_sidebar():
                                     del st.session_state[k]
 
                             if save_user_data:
-                                print(f"💾 学習セッション状態を保存中...")
                                 save_user_data(st.session_state.get("uid"), st.session_state)
-                                print(f"✅ セッション状態保存完了")
-                            else:
-                                print(f"❌ save_user_data関数が利用できません（セッション保存）")
                             st.session_state["initializing_study"] = False
                             st.success(f"今日の学習を開始します！（{len(grouped_queue)}問）")
                             st.rerun()
@@ -1781,7 +1728,7 @@ def render_practice_sidebar():
 
             # 以前の選択UIを復活
             uid = st.session_state.get("uid")
-            has_gakushi_permission = st.session_state.get('has_gakushi_permission', False)
+            has_gakushi_permission = check_gakushi_permission(uid) if check_gakushi_permission else False
             mode_choices = ["回数別", "科目別", "必修問題のみ", "キーワード検索"]
             mode = st.radio("出題形式を選択", mode_choices, key="free_mode_radio")
 
@@ -1950,11 +1897,7 @@ def render_practice_sidebar():
                                 del st.session_state[key]
 
                         if save_user_data:
-                            print(f"💾 自由演習セッション状態を保存中...")
                             save_user_data(st.session_state.get("uid"), st.session_state)
-                            print(f"✅ 自由演習セッション状態保存完了")
-                        else:
-                            print(f"❌ save_user_data関数が利用できません（自由演習）")
                         st.success(f"演習を開始します！（{len(grouped_queue)}グループ）")
                         st.rerun()
 
@@ -2329,7 +2272,7 @@ def _render_detailed_conditions(quiz_format: str, target_exam: str):
     elif quiz_format == "科目別":
         # 科目選択（実際のJSONデータから科目を取得）
         uid = st.session_state.get("uid")
-        has_gakushi_permission = st.session_state.get('has_gakushi_permission', False)
+        has_gakushi_permission = check_gakushi_permission(uid) if check_gakushi_permission and uid else False
         analysis_target = st.session_state.get("analysis_target", "国試問題")
         
         # 実際のJSONデータから科目を取得
@@ -2739,7 +2682,7 @@ def _select_new_questions(user_cards: Dict, count: int) -> List[str]:
     
     # 権限チェックを追加
     uid = st.session_state.get("uid")
-    has_gakushi_permission = st.session_state.get('has_gakushi_permission', False)
+    has_gakushi_permission = check_gakushi_permission(uid) if check_gakushi_permission else False
     
     # 権限に応じて利用可能な問題を制限
     if has_gakushi_permission:
@@ -2926,7 +2869,7 @@ def _fallback_auto_learning():
             st.error(f"データ読み込みエラー: {e}")
             return
     else:
-        if uid and st.session_state.get('has_gakushi_permission', False):
+        if uid and check_gakushi_permission and check_gakushi_permission(uid):
             available_questions = ALL_QUESTIONS
         else:
             # 学士以外の問題のみ
@@ -3011,7 +2954,7 @@ def _start_free_learning(quiz_format: str, target_exam: str, question_order: str
             available_questions = ALL_QUESTIONS
             
             # 権限に応じた問題の絞り込み
-            if uid and not st.session_state.get('has_gakushi_permission', False):
+            if uid and check_gakushi_permission and not check_gakushi_permission(uid):
                 # 権限のないユーザーは国試問題のみ（番号が'G'で始まらない問題）
                 available_questions = [q for q in ALL_QUESTIONS if not q.get("number", "").startswith("G")]
             else:
