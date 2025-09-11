@@ -57,130 +57,22 @@ def get_japan_datetime_from_timestamp(timestamp) -> datetime.datetime:
         return get_japan_now()
 
 
-# 必要な関数とクラスのインポート（エラーハンドリング付き）
-try:
-    from llm import generate_dental_explanation
-except ImportError:
-    generate_dental_explanation = None
+# 必要な関数とクラスのインポート
+from llm import generate_dental_explanation
+from llm_fixed import handle_llm_explanation_request, save_llm_feedback
+from firestore_db import get_firestore_manager, save_user_data
+from auth import AuthManager, check_gakushi_permission, get_user_permission
+from utils import (
+    log_to_ga, QuestionUtils, ALL_QUESTIONS, ALL_QUESTIONS_DICT, 
+    CardSelectionUtils, SM2Algorithm, AnalyticsUtils,
+    ALL_EXAM_NUMBERS, ALL_EXAM_SESSIONS, ALL_SUBJECTS, CASES,
+    HISSHU_Q_NUMBERS_SET, GAKUSHI_HISSHU_Q_NUMBERS_SET,
+    get_natural_sort_key
+)
+from subject_mapping import get_standardized_subject
 
-try:
-    from llm_fixed import handle_llm_explanation_request, save_llm_feedback
-except ImportError:
-    handle_llm_explanation_request = None
-    save_llm_feedback = None
-
-try:
-    from firestore_db import get_firestore_manager, save_user_data
-    print("✅ Firestore関数のインポートに成功しました")
-except ImportError as e:
-    print(f"❌ Firestore関数のインポートに失敗しました: {e}")
-    get_firestore_manager = None
-    save_user_data = None
-
-try:
-    from auth import AuthManager, check_gakushi_permission, get_user_permission
-except ImportError:
-    AuthManager = None
-    check_gakushi_permission = None
-    get_user_permission = None
-
-
-try:
-    from utils import (
-        log_to_ga, QuestionUtils, ALL_QUESTIONS, ALL_QUESTIONS_DICT, 
-        CardSelectionUtils, SM2Algorithm, AnalyticsUtils,
-        ALL_EXAM_NUMBERS, ALL_EXAM_SESSIONS, ALL_SUBJECTS, CASES
-    )
-except ImportError:
-    try:
-        from ..utils import (
-            log_to_ga, QuestionUtils, ALL_QUESTIONS, ALL_QUESTIONS_DICT, 
-            CardSelectionUtils, SM2Algorithm, AnalyticsUtils,
-            ALL_EXAM_NUMBERS, ALL_EXAM_SESSIONS, ALL_SUBJECTS, CASES
-        )
-    except ImportError:
-        log_to_ga = None
-        QuestionUtils = None
-        ALL_QUESTIONS = []
-        ALL_QUESTIONS_DICT = {}
-        CardSelectionUtils = None
-        SM2Algorithm = None
-        AnalyticsUtils = None
-        ALL_EXAM_NUMBERS = []
-        ALL_EXAM_SESSIONS = []
-        ALL_SUBJECTS = []
-        CASES = []
-
-# 必修問題セットは後でインポート（循環import回避）
-try:
-    from utils import HISSHU_Q_NUMBERS_SET, GAKUSHI_HISSHU_Q_NUMBERS_SET
-except ImportError:
-    try:
-        from ..utils import HISSHU_Q_NUMBERS_SET, GAKUSHI_HISSHU_Q_NUMBERS_SET
-    except ImportError:
-        # フォールバック: 空のセットを定義
-        HISSHU_Q_NUMBERS_SET = set()
-        GAKUSHI_HISSHU_Q_NUMBERS_SET = set()
-        print("[WARNING] HISSHU_Q_NUMBERS_SET と GAKUSHI_HISSHU_Q_NUMBERS_SET のインポートに失敗しました")
-
-# appから必要な関数をインポート
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-try:
-    from utils import get_natural_sort_key
-except ImportError:
-    try:
-        from ..utils import get_natural_sort_key
-    except ImportError:
-        get_natural_sort_key = lambda x: x
-
-try:
-    from subject_mapping import get_standardized_subject
-except ImportError:
-    try:
-        from ..subject_mapping import get_standardized_subject
-    except ImportError:
-        get_standardized_subject = lambda x: x
-
-# パフォーマンス最適化は無効化
-CachedDataManager = None
-PerformanceOptimizer = None
-
-# UserDataExtractor インポート（エラーハンドリング付き・Streamlit Cloud対応）
-try:
-    import sys
-    import os
-    
-    # 複数のパスを試行（Streamlit Cloud対応）
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    
-    # パターン1: modules/から親ディレクトリ、さらに親ディレクトリへ
-    parent_dir = os.path.dirname(os.path.dirname(current_dir))
-    if parent_dir not in sys.path:
-        sys.path.insert(0, parent_dir)
-    
-    # パターン2: my_llm_appの親ディレクトリ
-    app_parent_dir = os.path.dirname(os.path.dirname(current_dir))
-    if app_parent_dir not in sys.path:
-        sys.path.insert(0, app_parent_dir)
-    
-    # パターン3: 現在のワーキングディレクトリ
-    working_dir = os.getcwd()
-    if working_dir not in sys.path:
-        sys.path.insert(0, working_dir)
-    
-    # パターン4: my_llm_appディレクトリから直接インポート
-    my_llm_app_dir = os.path.dirname(current_dir)
-    if my_llm_app_dir not in sys.path:
-        sys.path.insert(0, my_llm_app_dir)
-    
-    from user_data_extractor import UserDataExtractor
-    USER_DATA_EXTRACTOR_AVAILABLE = True
-except ImportError as e:
-    print(f"[WARNING] UserDataExtractor import error: {e}")
-    USER_DATA_EXTRACTOR_AVAILABLE = False
+# UserDataExtractor インポート
+from user_data_extractor import UserDataExtractor
 
 
 # 高画質画像表示用のCSS
@@ -1004,96 +896,9 @@ class PracticeSession:
             st.success(f"おまかせ学習キューを生成しました\n{queue_info}")
             return True
         else:
-            # Cloud Function失敗時はローカルでフォールバック
-            st.warning("Cloud Functionでの生成に失敗しました。ローカル生成にフォールバック中...")
-            return self._fallback_local_quiz_generation()
-    
-    def _fallback_local_quiz_generation(self) -> bool:
-        """ローカルでのクイズ生成（フォールバック）"""
-        try:
-            uid = st.session_state.get("uid")
-            if not uid:
-                return False
-            
-            cards = st.session_state.get("cards", {})
-            if not cards:
-                # カードデータを読み込み
-                cards = self.firestore_manager.load_user_cards(uid)
-                st.session_state["cards"] = cards
-            
-            # 新規カード選択
-            new_cards_per_day = st.session_state.get("new_cards_per_day", 10)
-            recent_qids = list(st.session_state.get("result_log", {}).keys())[-10:]
-            
-            selected_new = CardSelectionUtils.pick_new_cards_for_today(
-                ALL_QUESTIONS, cards, new_cards_per_day, recent_qids
-            )
-            
-            # 復習カード選択（期限切れのもの）
-            now = datetime.datetime.now(datetime.timezone.utc)
-            due_cards = []
-            for qid, card in cards.items():
-                # SM2データから復習期限を取得
-                sm2_data = card.get("sm2", {})
-                due_date = sm2_data.get("due_date")
-                if due_date:
-                    try:
-                        if isinstance(due_date, str):
-                            next_dt = datetime.datetime.fromisoformat(due_date)
-                        else:
-                            next_dt = due_date
-                        if next_dt <= now:
-                            due_cards.append(qid)
-                    except (ValueError, TypeError):
-                        continue
-            
-            # グループ化（5問ずつ+連問グループ化）
-            all_cards = selected_new + due_cards
-            random.shuffle(all_cards)
-            
-            # 連問を考慮したグループ化
-            individual_groups = CardSelectionUtils.group_consecutive_questions(all_cards, ALL_QUESTIONS_DICT)
-            
-            # 5問ずつのグループに再編成（連問グループは分割しない）
-            main_queue = []
-            current_group = []
-            current_size = 0
-            
-            for group in individual_groups:
-                group_size = len(group)
-                
-                # 現在のグループにこのグループを追加できるかチェック
-                if current_size + group_size <= 5:
-                    current_group.extend(group)
-                    current_size += group_size
-                else:
-                    # 現在のグループを完成させ、新しいグループを開始
-                    if current_group:
-                        main_queue.append(current_group)
-                    current_group = group
-                    current_size = group_size
-                
-                # グループが満杯または5を超える場合はそのまま追加
-                if current_size >= 5:
-                    main_queue.append(current_group)
-                    current_group = []
-                    current_size = 0
-            
-            # 残りのグループがあれば追加
-            if current_group:
-                main_queue.append(current_group)
-            
-            st.session_state["main_queue"] = main_queue
-            st.session_state["current_q_group"] = []
-            st.session_state["short_term_review_queue"] = []
-            
-            st.success(f"📚 ローカル学習キューを生成しました（{len(main_queue)}グループ）")
-            return True
-            
-        except Exception as e:
-            st.error(f"ローカルクイズ生成エラー: {e}")
+            # Cloud Function失敗時はエラーメッセージを表示
+            st.error("学習キューの生成に失敗しました。しばらく待ってから再度お試しください。")
             return False
-
 
 def render_practice_page(auth_manager=None):
     """練習ページのメイン描画関数（uid統一版）"""
@@ -2364,7 +2169,7 @@ def _render_auto_learning_mode():
         
         should_skip_stats = skip_recently or is_initial_load
         
-        if USER_DATA_EXTRACTOR_AVAILABLE and cards and len(cards) > 0 and not should_skip_stats:
+        if cards and len(cards) > 0 and not should_skip_stats:
             try:
                 
                 # Streamlit Cloud対応：データが存在する場合のみUserDataExtractorを使用
@@ -2395,8 +2200,6 @@ def _render_auto_learning_mode():
                 print(f"[ERROR] UserDataExtractor全体エラー: {e}")
                 detailed_stats = None
         else:
-            if not USER_DATA_EXTRACTOR_AVAILABLE:
-                pass
             if not cards or len(cards) == 0:
                 pass
             if skip_recently:
@@ -2419,44 +2222,39 @@ def _render_auto_learning_mode():
             new_count = 0
             completed_count = 0
         else:
-            # UserDataExtractorが利用可能で正常に動作する場合は優先使用
+            # UserDataExtractorから統計を計算
             detailed_stats = None
-            if USER_DATA_EXTRACTOR_AVAILABLE:
-                try:
-                    extractor = UserDataExtractor()
-                    user_stats = extractor.get_user_comprehensive_stats(uid)
-                    if user_stats and isinstance(user_stats, dict) and user_stats.get('level_distribution'):
-                        detailed_stats = user_stats
-                        
-                        # UserDataExtractorから統計を計算
-                        level_distribution = detailed_stats.get("level_distribution", {})
-                        
-                        # 復習期限カード数の計算（レベル0-5）
-                        review_count = 0
-                        for level, count in level_distribution.items():
-                            if level in ['レベル0', 'レベル1', 'レベル2', 'レベル3', 'レベル4', 'レベル5']:
-                                review_count += count
-                        
-                        # 新規カード数の計算（未学習カード、上限制限）
-                        new_count = min(level_distribution.get("未学習", 0), new_cards_per_day)
-                        
-                        # 今日の学習数
-                        completed_count = detailed_stats.get("今日の学習数", 0)
-                        
-                        print(f"  - 復習期限: {review_count}問 (レベル0-5の合計)")
-                        print(f"  - 新規カード: {new_count}問 (未学習カード)")
-                        print(f"  - 今日完了: {completed_count}問")
-                        
-                    else:
-                        detailed_stats = None
-                        review_count, new_count, completed_count = _calculate_legacy_stats_full(cards, today, new_cards_per_day)
-                        
-                except Exception as e:
-                    print(f"[ERROR] UserDataExtractor全体エラー: {e}")
+            try:
+                extractor = UserDataExtractor()
+                user_stats = extractor.get_user_comprehensive_stats(uid)
+                if user_stats and isinstance(user_stats, dict) and user_stats.get('level_distribution'):
+                    detailed_stats = user_stats
+                    
+                    # UserDataExtractorから統計を計算
+                    level_distribution = detailed_stats.get("level_distribution", {})
+                    
+                    # 復習期限カード数の計算（レベル0-5）
+                    review_count = 0
+                    for level, count in level_distribution.items():
+                        if level in ['レベル0', 'レベル1', 'レベル2', 'レベル3', 'レベル4', 'レベル5']:
+                            review_count += count
+                    
+                    # 新規カード数の計算（未学習カード、上限制限）
+                    new_count = min(level_distribution.get("未学習", 0), new_cards_per_day)
+                    
+                    # 今日の学習数
+                    completed_count = detailed_stats.get("今日の学習数", 0)
+                    
+                    print(f"  - 復習期限: {review_count}問 (レベル0-5の合計)")
+                    print(f"  - 新規カード: {new_count}問 (未学習カード)")
+                    print(f"  - 今日完了: {completed_count}問")
+                    
+                else:
                     detailed_stats = None
                     review_count, new_count, completed_count = _calculate_legacy_stats_full(cards, today, new_cards_per_day)
-            else:
-                # UserDataExtractorが利用できない場合: 従来ロジック
+                    
+            except Exception as e:
+                print(f"[ERROR] UserDataExtractor全体エラー: {e}")
                 detailed_stats = None
                 review_count, new_count, completed_count = _calculate_legacy_stats_full(cards, today, new_cards_per_day)
         # 学習状況を簡潔に表示
@@ -2794,7 +2592,7 @@ def _start_ai_enhanced_learning(session_type: str, problem_count: int, detailed_
     with st.spinner(f"AI分析中... {session_type}モードで最適な問題を選択しています"):
         try:
             # 詳細統計がある場合は常にローカルAI分析を使用
-            if USER_DATA_EXTRACTOR_AVAILABLE and detailed_stats:
+            if detailed_stats:
                 question_ids = _select_questions_by_ai_analysis(
                     uid, session_type, problem_count, detailed_stats
                 )
