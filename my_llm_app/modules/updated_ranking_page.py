@@ -121,7 +121,7 @@ class UpdatedRankingSystem:
 
 
 def render_updated_weekly_ranking(user_profile: dict):
-    """更新された週間ランキング表示"""
+    """更新された週間ランキング表示（Cloud Functions連携版）"""
     st.subheader("🏆 週間アクティブランキング")
     st.caption("この一週間で最もアクティブに学習したユーザーのランキングです。")
     
@@ -132,28 +132,23 @@ def render_updated_weekly_ranking(user_profile: dict):
         st.info("今週のランキングデータがありません。")
         return
     
-    # ユーザー自身の順位を表示（セッション状態から取得）
-    user_ranking_data = st.session_state.get('user_ranking_data', {})
+    # ユーザー自身の順位を直接Firestoreから取得（セッション状態に依存しない）
     current_nickname = user_profile.get("nickname", f"ユーザー{user_profile.get('uid', '')[:8]}") if user_profile else ""
     
-    if user_ranking_data:
-        weekly_points = int(user_ranking_data.get("weekly_points", 0))
-        st.success(f"**{current_nickname}** の週間ポイント: **{weekly_points} pt** (リアルタイム更新)")
-    elif user_profile:
+    if user_profile:
         uid = user_profile.get("uid")
         user_position = ranking_system.get_user_position(uid, "weekly")
         
         if user_position:
             rank = int(user_position.get("rank", 0))
             points = int(user_position.get("weekly_points", 0))
-            st.success(f"**{current_nickname}** の順位: **{rank}位** ({points} pt)")
+            st.success(f"**{current_nickname}** の現在の順位: **{rank}位** ({points} pt)")
         else:
             st.info(f"**{current_nickname}** は週間ランキングにまだ登録されていません。")
     
     # ランキングデータフレームの作成
     if rankings:
         df_data = []
-        current_nickname = user_profile.get("nickname", f"ユーザー{user_profile.get('uid', '')[:8]}") if user_profile else ""
         current_uid = user_profile.get("uid") if user_profile else ""
         
         for ranking in rankings:
@@ -189,7 +184,7 @@ def render_updated_weekly_ranking(user_profile: dict):
 
 
 def render_updated_total_ranking(user_profile: dict):
-    """更新された総合ランキング表示"""
+    """更新された総合ランキング表示（Cloud Functions連携版）"""
     st.subheader("🏅 総合ランキング")
     st.caption("累積学習ポイントによる総合ランキングです。")
     
@@ -200,16 +195,10 @@ def render_updated_total_ranking(user_profile: dict):
         st.info("総合ランキングデータがありません。")
         return
     
-    # ユーザー自身の順位を表示（セッション状態から取得）
-    user_ranking_data = st.session_state.get('user_ranking_data', {})
+    # ユーザー自身の順位を直接Firestoreから取得（セッション状態に依存しない）
     current_nickname = user_profile.get("nickname", f"ユーザー{user_profile.get('uid', '')[:8]}") if user_profile else ""
     
-    if user_ranking_data:
-        total_points = int(user_ranking_data.get("total_points", 0))
-        total_problems = int(user_ranking_data.get("total_problems", 0))
-        accuracy = float(user_ranking_data.get("accuracy_rate", 0))
-        st.success(f"**{current_nickname}** の総合スコア: **{total_points} pt** ({total_problems}問, 正答率{accuracy:.1f}%) (リアルタイム更新)")
-    elif user_profile:
+    if user_profile:
         uid = user_profile.get("uid")
         user_position = ranking_system.get_user_position(uid, "total")
         
@@ -218,14 +207,13 @@ def render_updated_total_ranking(user_profile: dict):
             points = int(user_position.get("total_points", 0))
             problems = int(user_position.get("total_problems", 0))
             accuracy = float(user_position.get("accuracy_rate", 0))
-            st.success(f"**{current_nickname}** の順位: **{rank}位** ({points} pt, {problems}問, 正答率{accuracy:.1f}%)")
+            st.success(f"**{current_nickname}** の現在の順位: **{rank}位** ({points} pt, {problems}問, 正答率{accuracy:.1f}%)")
         else:
             st.info(f"**{current_nickname}** は総合ランキングにまだ登録されていません。")
     
     # ランキングデータフレームの作成
     if rankings:
         df_data = []
-        current_nickname = user_profile.get("nickname", f"ユーザー{user_profile.get('uid', '')[:8]}") if user_profile else ""
         current_uid = user_profile.get("uid") if user_profile else ""
         
         for ranking in rankings:
@@ -257,7 +245,7 @@ def render_updated_total_ranking(user_profile: dict):
 
 
 def render_updated_mastery_ranking(user_profile: dict):
-    """更新された習熟度ランキング表示"""
+    """更新された習熟度ランキング表示（Cloud Functions連携版）"""
     st.subheader("🎓 習熟度ランキング")
     st.caption("SM2アルゴリズムによる習熟度スコアランキングです。")
     
@@ -268,20 +256,10 @@ def render_updated_mastery_ranking(user_profile: dict):
         st.info("習熟度ランキングデータがありません。")
         return
     
-    # ユーザー自身の順位を表示（セッション状態から取得）
-    user_ranking_data = st.session_state.get('user_ranking_data', {})
+    # ユーザー自身の順位を直接Firestoreから取得（セッション状態に依存しない）
     current_nickname = user_profile.get("nickname", f"ユーザー{user_profile.get('uid', '')[:8]}") if user_profile else ""
     
-    if user_ranking_data:
-        mastery_score = float(user_ranking_data.get("mastery_score", 0))
-        expert_cards = int(user_ranking_data.get("expert_cards", 0))
-        advanced_cards = int(user_ranking_data.get("advanced_cards", 0))
-        total_cards = int(user_ranking_data.get("total_cards", 0))
-        last_updated = user_ranking_data.get("last_updated", "")
-        
-        st.success(f"**{current_nickname}** の習熟度スコア: **{mastery_score:.1f}** (エキスパート: {expert_cards}, 上級: {advanced_cards}, 総カード: {total_cards}) (リアルタイム更新)")
-            
-    elif user_profile:
+    if user_profile:
         uid = user_profile.get("uid")
         user_position = ranking_system.get_user_position(uid, "mastery")
         
@@ -289,14 +267,15 @@ def render_updated_mastery_ranking(user_profile: dict):
             rank = int(user_position.get("rank", 0))
             score = float(user_position.get("mastery_score", 0))
             expert_cards = int(user_position.get("expert_cards", 0))
-            st.success(f"**{current_nickname}** の順位: **{rank}位** (習熟度スコア: {score:.1f}, エキスパートカード: {expert_cards})")
+            advanced_cards = int(user_position.get("advanced_cards", 0))
+            total_cards = int(user_position.get("total_cards", 0))
+            st.success(f"**{current_nickname}** の現在の順位: **{rank}位** (習熟度スコア: {score:.1f}, エキスパート: {expert_cards}, 上級: {advanced_cards}, 総カード: {total_cards})")
         else:
             st.info(f"**{current_nickname}** は習熟度ランキングにまだ登録されていません。")
     
     # ランキングデータフレームの作成
     if rankings:
         df_data = []
-        current_nickname = user_profile.get("nickname", f"ユーザー{user_profile.get('uid', '')[:8]}") if user_profile else ""
         current_uid = user_profile.get("uid") if user_profile else ""
         
         for ranking in rankings:
@@ -330,26 +309,15 @@ def render_updated_mastery_ranking(user_profile: dict):
 
 
 def render_updated_ranking_page():
-    """更新されたランキングページ"""
+    """更新されたランキングページ（Cloud Functions連携版）"""
     st.title("📊 学習ランキング")
     st.markdown("---")
     
     # ユーザープロフィール取得
     user_profile = st.session_state.get("user_profile", {})
     
-    # 初回ランキングデータ計算（セッション状態にない場合）
-    if not st.session_state.get('user_ranking_data') and user_profile:
-        try:
-            from modules.ranking_calculator import update_user_ranking_scores
-            uid = user_profile.get("uid")
-            cards = st.session_state.get("cards", {})
-            evaluation_logs = st.session_state.get('evaluation_logs', [])
-            nickname = user_profile.get('nickname', f"ユーザー{uid[:8]}")
-            update_user_ranking_scores(uid, cards, evaluation_logs, nickname)
-        except ImportError:
-            pass
-        except Exception as e:
-            pass
+    # Cloud Functionsからの自動更新に完全依存
+    # ranking_calculator の呼び出しを削除（Cloud Function側で処理）
     
     # タブで切り替え
     tab1, tab2, tab3 = st.tabs(["📈 週間ランキング", "🏅 総合ランキング", "🎓 習熟度ランキング"])
@@ -365,16 +333,25 @@ def render_updated_ranking_page():
     
     # ランキング更新情報
     st.markdown("---")
-    st.info("📅 **ランキング更新スケジュール**: 毎朝3時（JST）に全ユーザーのランキングが自動更新されます。")
+    st.info("📅 **ランキング更新スケジュール**: 毎朝3時（JST）にCloud Functionsで全ユーザーのランキングが自動更新されます。")
     
-    # 最終更新ステータス
+    # 最終更新ステータス（Cloud Functionsからの情報）
     try:
         db = get_firestore_manager().db
         status_doc = db.collection("ranking_status").document("daily").get()
         if status_doc.exists:
             status_data = status_doc.to_dict()
-            last_updated = status_data.get("updated_at", "未更新")
-            st.caption(f"最終更新: {last_updated}")
+            last_updated = status_data.get("updated_at_jst", "未更新")
+            total_users = status_data.get("total_users", 0)
+            processing_time = status_data.get("processing_time_seconds", 0)
+            
+            # 処理時間を人間が読みやすい形式に変換
+            if processing_time > 60:
+                time_str = f"{processing_time/60:.1f}分"
+            else:
+                time_str = f"{processing_time:.1f}秒"
+            
+            st.caption(f"最終更新: {last_updated} | 対象ユーザー: {total_users}人 | 処理時間: {time_str}")
         else:
             st.caption("更新ステータス: 未初期化")
     except Exception:

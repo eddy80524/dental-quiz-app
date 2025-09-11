@@ -1,0 +1,57 @@
+// Firestore Security Rules for Ranking System
+// This file contains rules for the ranking collections updated by Cloud Functions
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 週間ランキング（読み取り専用、Cloud Functions書き込み可）
+    match /weekly_ranking/{userId} {
+      allow read: if true; // 全ユーザーが閲覧可能
+      allow write: if false; // Cloud Functions のみ書き込み可能
+    }
+    
+    // 総合ランキング（読み取り専用、Cloud Functions書き込み可）
+    match /total_ranking/{userId} {
+      allow read: if true; // 全ユーザーが閲覧可能
+      allow write: if false; // Cloud Functions のみ書き込み可能
+    }
+    
+    // 習熟度ランキング（読み取り専用、Cloud Functions書き込み可）
+    match /mastery_ranking/{userId} {
+      allow read: if true; // 全ユーザーが閲覧可能
+      allow write: if false; // Cloud Functions のみ書き込み可能
+    }
+    
+    // ランキング更新ステータス（読み取り専用、Cloud Functions書き込み可）
+    match /ranking_status/{document} {
+      allow read: if true; // 全ユーザーが閲覧可能
+      allow write: if false; // Cloud Functions のみ書き込み可能
+    }
+    
+    // ユーザープロフィール（認証ユーザーのみアクセス可能）
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // 学習カード（認証ユーザーのみアクセス可能）
+    match /study_cards/{cardId} {
+      allow read, write: if request.auth != null && 
+        request.auth.uid == resource.data.uid;
+      allow create: if request.auth != null && 
+        request.auth.uid == request.resource.data.uid;
+    }
+    
+    // 日次アクティブユーザー（読み取り専用）
+    match /daily_active_users/{document} {
+      allow read: if request.auth != null;
+      allow write: if false; // システムのみ更新可能
+    }
+    
+    // 月次分析サマリー（読み取り専用）
+    match /monthly_analytics_summary/{document} {
+      allow read: if request.auth != null;
+      allow write: if false; // システムのみ更新可能
+    }
+  }
+}

@@ -167,16 +167,43 @@ class AuthManager:
             
             if "idToken" in result:
                 # セッション状態を更新（uidベース）
+                uid = result["localId"]
                 try:
                     st.session_state.update({
                         "user_logged_in": True,
-                        "uid": result["localId"],
+                        "uid": uid,
                         "email": email,
                         "name": email.split("@")[0],
                         "id_token": result["idToken"],
                         "refresh_token": result["refreshToken"],
                         "token_timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
                     })
+                    
+                    # セッションに権限情報がない場合のみ、Firestoreに確認
+                    if 'has_gakushi_permission' not in st.session_state:
+                        try:
+                            from firestore_db import check_gakushi_permission
+                            permission = check_gakushi_permission(uid)
+                            st.session_state['has_gakushi_permission'] = permission
+                        except Exception as e:
+                            # 権限チェックエラー時はデフォルトTrue（安全側）
+                            st.session_state['has_gakushi_permission'] = True
+                    
+                    # セッションにカード情報がない場合のみ、Firestoreから全件ロード
+                    if 'cards' not in st.session_state:
+                        try:
+                            from firestore_db import get_firestore_manager
+                            db_manager = get_firestore_manager()
+                            # Firestoreからユーザーの全カードデータをロード
+                            user_cards = db_manager.get_user_data(uid)
+                            if user_cards and 'cards' in user_cards:
+                                st.session_state['cards'] = user_cards['cards']
+                            else:
+                                st.session_state['cards'] = {}
+                        except Exception as e:
+                            print(f"学習データの読み込みに失敗しました: {e}")
+                            st.session_state['cards'] = {}  # エラー時は空で初期化
+                            
                 except Exception as e:
                     print(f"Warning: Could not update session state: {e}")
             
@@ -431,6 +458,33 @@ class CookieManager:
                         "token_timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                         "auto_login_successful": True
                     })
+                    
+                    # セッションに権限情報がない場合のみ、Firestoreに確認
+                    if 'has_gakushi_permission' not in st.session_state:
+                        try:
+                            from firestore_db import check_gakushi_permission
+                            permission = check_gakushi_permission(uid)
+                            st.session_state['has_gakushi_permission'] = permission
+                        except Exception as e:
+                            # 権限チェックエラー時はデフォルトTrue（安全側）
+                            st.session_state['has_gakushi_permission'] = True
+                    
+                    # セッションにカード情報がない場合のみ、Firestoreから全件ロード
+                    if 'cards' not in st.session_state:
+                        try:
+                            from firestore_db import get_firestore_manager
+                            db_manager = get_firestore_manager()
+                            # Firestoreからユーザーの全カードデータをロード
+                            user_cards = db_manager.get_user_data(uid)
+                            if user_cards and 'cards' in user_cards:
+                                st.session_state['cards'] = user_cards['cards']
+                                print(f"自動ログイン時に{len(user_cards['cards'])}件の学習データを読み込みました")
+                            else:
+                                st.session_state['cards'] = {}
+                        except Exception as e:
+                            print(f"学習データの読み込みに失敗しました: {e}")
+                            st.session_state['cards'] = {}  # エラー時は空で初期化
+                    
                     return True
         except Exception as e:
             print(f"Auto-login failed: {e}")

@@ -1,32 +1,30 @@
 {
-  "name": "functions",
+  "name": "dental-ranking-functions",
+  "version": "1.0.0",
+  "description": "歯科国試アプリ用高性能ランキング更新システム",
+  "main": "main.py",
   "scripts": {
-    "lint": "echo 'Lint disabled for now'",
-    "build": "tsc",
-    "build:watch": "tsc --watch",
-    "serve": "npm run build && firebase emulators:start --only functions",
-    "shell": "npm run build && firebase functions:shell",
-    "start": "npm run shell",
-    "deploy": "firebase deploy --only functions",
-    "logs": "firebase functions:log"
+    "deploy": "gcloud functions deploy updateRankings --runtime python311 --trigger-http --allow-unauthenticated --region asia-northeast1 --source . --entry-point update_rankings --timeout 540s --memory 1GB",
+    "deploy:health": "gcloud functions deploy healthCheck --runtime python311 --trigger-http --allow-unauthenticated --region asia-northeast1 --source . --entry-point health_check --timeout 60s --memory 256MB",
+    "test": "python -m pytest tests/ -v",
+    "local": "functions-framework --target=update_rankings --port=8080",
+    "logs": "gcloud functions logs read updateRankings --limit=50"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/eddy80524/dental-quiz-app.git"
+  },
+  "keywords": [
+    "firebase",
+    "cloud-functions",
+    "ranking",
+    "dental",
+    "education"
+  ],
+  "author": "DentalDX Team",
+  "license": "MIT",
   "engines": {
-    "node": "22"
-  },
-  "main": "lib/index.js",
-  "dependencies": {
-    "firebase-admin": "^12.6.0",
-    "firebase-functions": "^6.0.1",
-    "simple-statistics": "^7.8.8"
-  },
-  "devDependencies": {
-    "@typescript-eslint/eslint-plugin": "^5.12.0",
-    "@typescript-eslint/parser": "^5.12.0",
-    "eslint": "^8.9.0",
-    "eslint-config-google": "^0.14.0",
-    "eslint-plugin-import": "^2.25.4",
-    "firebase-functions-test": "^3.1.0",
-    "typescript": "^5.7.3"
+    "python": ">=3.11"
   },
   "private": true
 }

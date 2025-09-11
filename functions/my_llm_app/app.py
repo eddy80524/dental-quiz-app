@@ -225,7 +225,7 @@ class DentalApp:
     def _initialize_available_subjects(self):
         """利用可能な科目を初期化（最適化版）"""
         uid = st.session_state.get("uid")
-        has_gakushi_permission = check_gakushi_permission(uid) if uid else False
+        has_gakushi_permission = get_user_permission() if uid else False
         analysis_target = st.session_state.get("analysis_target", "国試")
         
         # 既に同じ条件で初期化済みの場合はスキップ
@@ -254,7 +254,7 @@ class DentalApp:
     def _initialize_subjects_for_target(self, analysis_target: str):
         """特定の分析対象に対する科目リストを初期化"""
         uid = st.session_state.get("uid")
-        has_gakushi_permission = check_gakushi_permission(uid) if uid else False
+        has_gakushi_permission = get_user_permission() if uid else False
         
         try:
             # 分析対象に応じた科目リストを直接取得
@@ -405,12 +405,12 @@ class DentalApp:
         # ユーザーのアクティビティ追跡
         self._track_user_activity()
         
-        # 🔄 1. Automatic Login Attempt (ログイン画面表示中は実行しない)
+        # 🔄 1. Automatic Login Attempt - ログイン画面表示前に最優先で実行
         if (not st.session_state.get("user_logged_in") and 
-            not st.session_state.get("auto_login_attempted") and
-            not st.session_state.get("manual_login_in_progress")):
+            not st.session_state.get("auto_login_attempted")):
             
             st.session_state["auto_login_attempted"] = True
+            # 自動ログインを試行
             if self.cookie_manager.try_auto_login():
                 # ★★★ 重い処理はここでは実行しない ★★★
                 # self._initialize_available_subjects() # 削除
@@ -423,23 +423,21 @@ class DentalApp:
                 user_info = {
                     'uid': st.session_state.get('uid'),
                     'email': st.session_state.get('email'),
-                    'has_gakushi_permission': check_gakushi_permission(st.session_state.get('uid'))
+                    'has_gakushi_permission': get_user_permission()
                 }
                 self.track_user_login_success(user_info)
                 
+                # 自動ログイン成功時は直接メインコンテンツに移行
                 st.rerun()
         
         # ログイン状態をチェック
         if not st.session_state.get("user_logged_in") or not self.auth_manager.ensure_valid_session():
-            # 手動ログイン中フラグを設定
-            st.session_state["manual_login_in_progress"] = True
+            # 自動ログインが失敗した場合のみログイン画面を表示
             self._render_login_page()
             
             # ログインページビュー追跡
             self.track_page_navigation("login")
         else:
-            # ログイン成功時にフラグをクリア
-            st.session_state.pop("manual_login_in_progress", None)
             # ログイン済みの場合はサイドバーとメインコンテンツを表示
             
             # --- ▼▼▼ 遅延読み込みロジック ▼▼▼ ---
@@ -538,7 +536,19 @@ class DentalApp:
             # パスワード保存状態の表示
             has_saved_password = self.cookie_manager.has_saved_password()
             if has_saved_password:
-                st.info("🔐 ログイン情報が保存されています。メールアドレスのみで自動ログインが可能です。")
+                st.info("🔐 ログイン情報が保存されています。通常はアプリ起動時に自動ログインされます。")
+            
+            # ブラウザのパスワード自動入力を抑制するためのCSS
+            st.markdown("""
+            <style>
+            input[type="password"] {
+                autocomplete: new-password !important;
+            }
+            input[data-testid="textInput"] {
+                autocomplete: off !important;
+            }
+            </style>
+            """, unsafe_allow_html=True)
             
             # フォーム内で入力フィールドをグループ化
             with st.form("login_form", clear_on_submit=False):
@@ -549,13 +559,12 @@ class DentalApp:
                     key="login_email_input"
                 )
                 
-                # パスワード保存がある場合は自動入力をサポート
-                password_placeholder = "保存されたパスワードを使用" if has_saved_password else "パスワードを入力"
+                # パスワード入力（ブラウザの自動入力を抑制）
                 password = st.text_input(
                     "パスワード", 
                     type="password",
                     value=st.session_state["login_password_value"],
-                    placeholder=password_placeholder,
+                    placeholder="パスワードを入力",
                     key="login_password_input"
                 )
                 
@@ -563,123 +572,93 @@ class DentalApp:
                 col1, col2 = st.columns([3, 1])
                 with col1:
                     save_password = st.checkbox(
-                        "パスワードを保存する（30日間自動ログイン）",
+                        "30日間ログイン状態を維持する",
                         value=has_saved_password,
                         key="login_save_password",
-                        help="チェックすると、次回から自動的にログインされます。共用PCでは使用しないでください。"
+                        help="チェックすると、次回からアプリ起動時に自動的にログインされます。共用PCでは使用しないでください。"
                     )
                 with col2:
                     if has_saved_password:
-                        clear_saved = st.button("🗑️", help="保存されたパスワードを削除")
+                        clear_saved = st.button("🗑️", help="保存されたログイン情報を削除")
                         if clear_saved:
                             self.cookie_manager.clear_saved_password()
-                            st.success("保存されたパスワード情報を削除しました")
+                            st.success("保存されたログイン情報を削除しました")
                             st.rerun()
                 
-                # ログインボタン
-                if has_saved_password and email:
-                    # 簡単ログインがある場合は2列レイアウト
-                    col1, col2 = st.columns([1, 1])
-                    with col1:
-                        login_submitted = st.form_submit_button("ログイン", type="primary", use_container_width=True)
-                    with col2:
-                        quick_login = st.form_submit_button("🚀 簡単ログイン", use_container_width=True, help="保存されたパスワードで自動ログイン")
-                else:
-                    # 簡単ログインがない場合は1列レイアウト（フル幅）
-                    login_submitted = st.form_submit_button("ログイン", type="primary", use_container_width=True)
-                    quick_login = False
+                # ログインボタン（シンプルな1つのボタンのみ）
+                login_submitted = st.form_submit_button("ログイン", type="primary", use_container_width=True)
                 
                 # ログイン処理
-                if login_submitted or quick_login:
-                    if email:
-                        if quick_login and has_saved_password:
-                            # 簡単ログインの場合
-                            # セッション状態を更新
-                            st.session_state["login_email_value"] = email
-                            
-                            # ログインボタンが押されたら、まずフォームをスピナーに置き換える
-                            login_container.empty()
-                            with login_container.container():
-                                with st.spinner("簡単ログイン中..."):
-                                    # 自動ログインを試行
-                                    if self.cookie_manager.try_auto_login():
-                                        st.success("簡単ログインしました！")
-                                        time.sleep(1)
-                                        st.rerun()
+                if login_submitted:
+                    if email and password:
+                        # セッション状態を更新
+                        st.session_state["login_email_value"] = email
+                        st.session_state["login_password_value"] = password
+                        
+                        # ログインボタンが押されたら、まずフォームをスピナーに置き換える
+                        login_container.empty()
+                        with login_container.container():
+                            with st.spinner("ログイン中..."):
+                                result = self.auth_manager.signin(email, password)
+                                
+                                if "error" in result:
+                                    # ❌ Failure: エラーメッセージを表示
+                                    error_message = result["error"]["message"]
+                                    if "INVALID_PASSWORD" in error_message:
+                                        st.error("パスワードが正しくありません")
+                                    elif "EMAIL_NOT_FOUND" in error_message:
+                                        st.error("このメールアドレスは登録されていません")
+                                    elif "INVALID_EMAIL" in error_message:
+                                        st.error("メールアドレスの形式が正しくありません")
                                     else:
-                                        st.error("簡単ログインに失敗しました。通常のログインをお試しください。")
-                                        time.sleep(2)
-                                        st.rerun()
-                        elif password:
-                            # 通常ログインの場合
-                            # セッション状態を更新
-                            st.session_state["login_email_value"] = email
-                            if not quick_login:
-                                st.session_state["login_password_value"] = password
-                            
-                            # ログインボタンが押されたら、まずフォームをスピナーに置き換える
-                            login_container.empty()
-                            with login_container.container():
-                                with st.spinner("ログイン中..."):
-                                    result = self.auth_manager.signin(email, password)
+                                        st.error(f"ログインエラー: {error_message}")
                                     
-                                    if "error" in result:
-                                        # ❌ Failure: エラーメッセージを表示
-                                        error_message = result["error"]["message"]
-                                        if "INVALID_PASSWORD" in error_message:
-                                            st.error("パスワードが正しくありません")
-                                        elif "EMAIL_NOT_FOUND" in error_message:
-                                            st.error("このメールアドレスは登録されていません")
-                                        elif "INVALID_EMAIL" in error_message:
-                                            st.error("メールアドレスの形式が正しくありません")
-                                        else:
-                                            st.error(f"ログインエラー: {error_message}")
-                                        
-                                        time.sleep(2)  # エラーメッセージ表示のための待機
-                                        st.rerun()  # フォームを再表示
-                                        
+                                    time.sleep(2)  # エラーメッセージ表示のための待機
+                                    st.rerun()  # フォームを再表示
+                                    
+                                else:
+                                    # ✅ Success: ログイン成功
+                                    if save_password:
+                                        st.success("ログインしました！")
                                     else:
-                                        # ✅ Success: ログイン成功
-                                        if save_password:
-                                            st.success("ログインしました！ログイン状態が30日間維持されます。")
-                                        else:
-                                            st.success("ログインしました！")
-                                        
-                                        # Cookie Saving: 長期間有効なリフレッシュトークンをCookieに保存
-                                        if save_password:
-                                            cookie_data = {
-                                                "refresh_token": result.get("refreshToken", ""),
-                                                "uid": st.session_state.get("uid", ""),
-                                                "email": email,
-                                                "password": password  # 永続ログイン用にパスワードも保存
-                                            }
-                                            # 長期間有効なCookieとして保存（30日間）
-                                            self.cookie_manager.save_login_cookies(cookie_data, save_password=True)
-                                        
-                                        # Google Analytics イベント
-                                        uid = st.session_state.get("uid")
-                                        if uid:
-                                            log_to_ga("login", uid, {
-                                                "method": "email",
-                                                "password_saved": str(save_password)
-                                            })
-                                        
-                                        # ★★★ 重い処理はここでは実行しない ★★★
-                                        # self._initialize_available_subjects() # 削除
-                                        # self._load_user_data() # 削除
-                                        
-                                        # ユーザープロフィールは比較的軽量なため、ここで初期化しても良い
-                                        self._initialize_user_profile()
-                                        
-                                        # スタイルを再初期化するためのフラグをリセット
-                                        st.session_state["styles_applied"] = False
-                                        
-                                        time.sleep(0.5)  # 成功メッセージ表示のための短い待機
-                                        st.rerun()  # メインページに遷移
-                        else:
-                            st.error("パスワードを入力してください")
-                    else:
+                                        st.success("ログインしました！")
+                                    
+                                    # Cookie Saving: 長期間有効なリフレッシュトークンをCookieに保存
+                                    if save_password:
+                                        cookie_data = {
+                                            "refresh_token": result.get("refreshToken", ""),
+                                            "uid": st.session_state.get("uid", ""),
+                                            "email": email,
+                                            "password": password  # 永続ログイン用にパスワードも保存
+                                        }
+                                        # 長期間有効なCookieとして保存（30日間）
+                                        self.cookie_manager.save_login_cookies(cookie_data, save_password=True)
+                                    
+                                    # Google Analytics イベント
+                                    uid = st.session_state.get("uid")
+                                    if uid:
+                                        log_to_ga("login", uid, {
+                                            "method": "email",
+                                            "password_saved": str(save_password)
+                                        })
+                                    
+                                    # ★★★ 重い処理はここでは実行しない ★★★
+                                    # self._initialize_available_subjects() # 削除
+                                    # self._load_user_data() # 削除
+                                    
+                                    # ユーザープロフィールは比較的軽量なため、ここで初期化しても良い
+                                    self._initialize_user_profile()
+                                    
+                                    # スタイルを再初期化するためのフラグをリセット
+                                    st.session_state["styles_applied"] = False
+                                    
+                                    time.sleep(0.5)  # 成功メッセージ表示のための短い待機
+                                    st.rerun()  # メインページに遷移
+                        
+                    elif not email:
                         st.error("メールアドレスを入力してください")
+                    elif not password:
+                        st.error("パスワードを入力してください")
     
     def _render_signup_tab(self):
         """新規登録タブの描画"""
@@ -857,7 +836,7 @@ class DentalApp:
             # --- 検索・進捗ページのサイドバー ---
             # 検索・分析用のフィルター機能のみ
             uid = st.session_state.get("uid")
-            has_gakushi_permission = check_gakushi_permission(uid)
+            has_gakushi_permission = get_user_permission()
 
             st.markdown("#### 🔍 表示フィルター")
 
@@ -1194,7 +1173,7 @@ class DentalApp:
                 if ALL_QUESTIONS:
                     # 権限チェック
                     uid = st.session_state.get("uid")
-                    if uid and check_gakushi_permission(uid):
+                    if uid and get_user_permission():
                         available_questions = [q.get("id") for q in ALL_QUESTIONS if q.get("id")]
                     else:
                         # 学士以外の問題のみ
@@ -1218,7 +1197,7 @@ class DentalApp:
             try:
                 # utils.pyから問題データを取得（既にインポート済み）
                 uid = st.session_state.get("uid")
-                if uid and check_gakushi_permission(uid):
+                if uid and get_user_permission():
                     available_questions = [q.get("id") for q in ALL_QUESTIONS if q.get("id")]
                 else:
                     available_questions = [q.get("id") for q in ALL_QUESTIONS 
@@ -1258,7 +1237,7 @@ class DentalApp:
     def _render_other_page_settings(self):
         """その他のページでの従来設定表示"""
         uid = st.session_state.get("uid")
-        has_gakushi_permission = check_gakushi_permission(uid) if uid else False
+        has_gakushi_permission = get_user_permission() if uid else False
         
         if not has_gakushi_permission:
             st.info("📚 学士試験機能を利用するには権限が必要です")
@@ -1267,19 +1246,25 @@ class DentalApp:
         with st.expander("⚙️ 設定"):
             self._render_settings(has_gakushi_permission)
     def _handle_logout_real(self, keep_password: bool = True):
-        """ログアウト処理（パスワード保持オプション付き）"""
+        """ログアウト処理（永続ログイン情報管理付き）"""
         uid = st.session_state.get("uid")
         if uid:
             log_to_ga("logout", uid, {"keep_password": str(keep_password)})
         
+        # セッション状態のクリア
         self.auth_manager.logout()
         
-        # パスワード情報の処理
+        # Cookie管理: keep_passwordフラグに応じて永続ログイン情報を管理
         if not keep_password:
+            # 完全ログアウト: 永続ログイン用のCookieも削除
             self.cookie_manager.clear_saved_password()
-            st.success("完全にログアウトしました（パスワード情報も削除）")
+            st.success("完全にログアウトしました（永続ログイン情報も削除）")
         else:
-            st.success("ログアウトしました（パスワード情報は保持）")
+            # 部分ログアウト: 永続ログイン情報は保持
+            st.success("ログアウトしました（永続ログイン情報は保持）")
+        
+        # 自動ログイン試行フラグをリセット（次回アクセス時に再試行させる）
+        st.session_state.pop("auto_login_attempted", None)
         
         time.sleep(1)
         st.rerun()
@@ -1345,63 +1330,19 @@ class DentalApp:
             render_practice_page(self.auth_manager)
     
     def _handle_login(self, email: str, password: str, save_password: bool):
-        """ログイン処理（パスワード保存機能付き）"""
-        with st.spinner("ログイン中..."):
-            result = self.auth_manager.signin(email, password)
-            
-            if "error" in result:
-                # ❌ Failure: エラーメッセージを表示
-                error_message = result["error"]["message"]
-                if "INVALID_PASSWORD" in error_message:
-                    st.error("パスワードが正しくありません")
-                elif "EMAIL_NOT_FOUND" in error_message:
-                    st.error("このメールアドレスは登録されていません")
-                elif "INVALID_EMAIL" in error_message:
-                    st.error("メールアドレスの形式が正しくありません")
-                else:
-                    st.error(f"ログインエラー: {error_message}")
-            else:
-                # ✅ Success: ログイン成功
-                if save_password:
-                    st.success("ログインしました！パスワードが保存されました（30日間有効）")
-                else:
-                    st.success("ログインしました！")
-                
-                # Cookie Saving: パスワード保存オプションに応じて保存
-                cookie_data = {
-                    "refresh_token": result.get("refreshToken", ""),
-                    "uid": st.session_state.get("uid", ""),
-                    "email": email,
-                    "password": password if save_password else ""
-                }
-                self.cookie_manager.save_login_cookies(cookie_data, save_password)
-                
-                # Google Analytics イベント
-                uid = st.session_state.get("uid")
-                if uid:
-                    log_to_ga("login", uid, {
-                        "method": "email",
-                        "password_saved": str(save_password)
-                    })
-                
-                # 科目の初期化（ログイン後にユーザー権限を反映）
-                self._initialize_available_subjects()
-                
-                # ユーザーデータを読み込み
-                self._load_user_data()
-                
-                # ユーザープロフィールを初期化
-                self._initialize_user_profile()
-                
-                # スタイルを再初期化するためのフラグをリセット
-                st.session_state["styles_applied"] = False
-                
-                # Rerun: アプリをリロードしてメインインターフェースへ
-                time.sleep(0.5)
-                st.rerun()
+        """ログイン処理（レガシー - 新しいUI統合版で処理されるため簡略化）"""
+        # この関数は _render_login_tab 内で直接処理されるようになったため、
+        # 基本的には使用されませんが、後方互換性のために残しています
+        pass
     
     def _handle_quick_login(self, email: str):
-        """簡単ログイン処理（保存されたトークンを使用）"""
+        """
+        簡単ログイン処理（非推奨）
+        
+        注意: この機能は非推奨です。
+        現在は app.run() メソッドの開始時に自動的に try_auto_login() が呼び出され、
+        有効なCookieがあれば自動的にログイン画面をスキップします。
+        """
         with st.spinner("簡単ログイン中..."):
             # 自動ログインを試行
             if self.cookie_manager.try_auto_login():
@@ -1410,7 +1351,7 @@ class DentalApp:
                 # Google Analytics イベント
                 uid = st.session_state.get("uid")
                 if uid:
-                    log_to_ga("login", uid, {"method": "quick_login"})
+                    log_to_ga("login", uid, {"method": "quick_login_deprecated"})
                 
                 # ★★★ 重い処理はここでは実行しない ★★★
                 # self._initialize_available_subjects() # 削除

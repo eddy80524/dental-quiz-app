@@ -8,6 +8,7 @@ Firestore 認証はアプリ側の secrets に依存しているため、
 """
 
 import sys
+import traceback
 
 
 def main() -> int:
@@ -19,6 +20,8 @@ def main() -> int:
         return 0
     except Exception as e:
         print(f"Ranking update failed: {e}", file=sys.stderr)
+        print("Stack trace:", file=sys.stderr)
+        traceback.print_exc()
         return 1
 
 

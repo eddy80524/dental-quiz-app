@@ -1,18 +1,14 @@
 # requirements.txt
 
-streamlit
-firebase-admin
-firebase-functions
+streamlit>=1.28.0
+firebase-admin>=6.2.0
 streamlit-authenticator
 streamlit-cookies-manager
-pandas
-requests
+pandas>=1.5.0
+requests>=2.31.0
 PyYAML
 Pillow
-numpy
+numpy>=1.24.0
 plotly>=5.0.0
 scipy>=1.7.0
-firebase-functions
-reportlab
-weasyprint
-pytz
+pytz>=2023.3

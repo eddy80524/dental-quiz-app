@@ -228,7 +228,9 @@ def _load_user_cards(uid: str) -> Dict[str, Any]:
             for doc in user_cards_docs:
                 try:
                     card_data = doc.to_dict()
-                    question_id = doc.id.split('_')[-1] if '_' in doc.id else doc.id
+                    # doc.idがNoneの場合の処理を追加
+                    doc_id = doc.id if doc.id is not None else ""
+                    question_id = doc_id.split('_')[-1] if '_' in doc_id else doc_id
                     
                     # 既存の形式に変換
                     card = {
@@ -696,6 +698,8 @@ def _is_similar_user(nickname1: str, nickname2: str, email1: str = "", email2: s
     
     # メールアドレスのベース部分比較
     def get_email_base(email_or_uid):
+        if email_or_uid is None:
+            return ""
         if "@" in email_or_uid:
             return email_or_uid.split("@")[0].lower()
         return ""
