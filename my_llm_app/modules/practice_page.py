@@ -67,8 +67,29 @@ except ImportError:
         return "LLM機能は現在利用できません。"
     def save_llm_feedback(*args, **kwargs):
         pass
-from firestore_db import get_firestore_manager, save_user_data
-from auth import AuthManager, check_gakushi_permission, get_user_permission
+try:
+    from firestore_db import get_firestore_manager, save_user_data, check_gakushi_permission
+except ImportError:
+    # フォールバック: Firestoreが利用できない場合
+    def get_firestore_manager():
+        return None
+    def save_user_data(*args, **kwargs):
+        pass
+    def check_gakushi_permission(*args, **kwargs):
+        return False
+try:
+    from auth import AuthManager, get_user_permission
+except ImportError:
+    # フォールバック: 認証が利用できない場合
+    class AuthManager:
+        @staticmethod
+        def login(*args, **kwargs):
+            return False
+        @staticmethod
+        def logout(*args, **kwargs):
+            pass
+    def get_user_permission(*args, **kwargs):
+        return False
 from utils import (
     log_to_ga, QuestionUtils, ALL_QUESTIONS, ALL_QUESTIONS_DICT, 
     CardSelectionUtils, SM2Algorithm, AnalyticsUtils,
