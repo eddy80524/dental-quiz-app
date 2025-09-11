@@ -631,7 +631,6 @@ class AnswerModeComponent:
                         secure_url = get_secure_image_url(img_url)
                         if secure_url:
                             st.image(secure_url, use_container_width=True)
-                            st.image(secure_url, use_container_width=True)
                             
         return action_result
 
