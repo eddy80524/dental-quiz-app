@@ -38,8 +38,11 @@ class FirestoreManager:
             try:
                 firebase_creds = None
                 try:
-                    # secrets に資格情報がある場合はそれを優先
-                    firebase_creds = self._to_dict(st.secrets["firebase_credentials"])  # may raise KeyError
+                    # Streamlit Cloud: st.secrets["firebase"] を使用
+                    firebase_creds = self._to_dict(st.secrets.get("firebase", {}))
+                    # 旧形式との互換性のため firebase_credentials もチェック
+                    if not firebase_creds:
+                        firebase_creds = self._to_dict(st.secrets.get("firebase_credentials", {}))
                 except Exception:
                     firebase_creds = None
 

@@ -524,7 +524,9 @@ class CookieManager:
 def call_cloud_function(function_name: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Cloud Function呼び出し用のヘルパー関数（Firebase v2 Functions対応）"""
     try:
-        firebase_project_id = st.secrets.get("firebase_project_id", "dent-ai-4d8d8")
+        # Streamlit Cloud: firebase設定からproject_idを取得
+        firebase_config = st.secrets.get("firebase", {})
+        firebase_project_id = firebase_config.get("project_id") or st.secrets.get("firebase_project_id", "dent-ai-4d8d8")
         
         # Firebase v2 Cloud Functions用のURL
         # リージョンが指定されている場合のURL形式
