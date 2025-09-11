@@ -24,7 +24,7 @@ from collections import Counter
 JST = pytz.timezone('Asia/Tokyo')
 
 # ローカル開発用デバッグフラグ
-LOCAL_DEBUG_MODE = True  # Firebaseをスキップしてローカルテスト可能
+LOCAL_DEBUG_MODE = False  # Firebaseをスキップしてローカルテスト可能
 
 def get_japan_now() -> datetime.datetime:
     """日本時間の現在時刻を取得"""
