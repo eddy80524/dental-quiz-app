@@ -593,30 +593,74 @@ class AnswerModeComponent:
                 total_count = len(result_data)
                 
                 if correct_count == total_count:
-                    st.success("✅ 正解！")
+                    # すべて正解の場合
+                    if total_count == 1:
+                        # 単一問題の場合、複数正解対応のメッセージを表示
+                        qid = list(result_data.keys())[0]
+                        q_result = result_data[qid]
+                        user_ans = ''.join(q_result.get('user_answer', []))
+                        correct_answer = q_result.get('correct_answer', '')
+                        
+                        from utils import QuestionUtils
+                        main_msg, additional_info = QuestionUtils.get_answer_feedback_message(
+                            user_ans, correct_answer, True
+                        )
+                        
+                        if additional_info:
+                            st.success(f"{main_msg} {additional_info}")
+                        else:
+                            st.success(main_msg)
+                    else:
+                        # 複数問題の場合
+                        st.success("✅ 全問正解！")
                 else:
-                    incorrect_details = []
-                    for qid, q_result in result_data.items():
-                        if not q_result.get('is_correct'):
-                            user_ans = ''.join(q_result.get('user_answer', [])) or '無回答'
-                            
-                            # シャッフル後の正解ラベルと選択肢テキストを取得
-                            shuffled_labels = q_result.get('shuffled_correct_answer_labels', [])
-                            shuffled_texts = q_result.get('shuffled_correct_answer_texts', [])
-                            
-                            if shuffled_labels and shuffled_texts:
-                                # シャッフル後のラベルと選択肢テキストで表示
-                                correct_display_parts = []
-                                for label, text in zip(shuffled_labels, shuffled_texts):
-                                    correct_display_parts.append(f"{label}. {text}")
-                                correct_display = ", ".join(correct_display_parts)
-                            else:
-                                # フォールバック: 元の正解ラベルを表示
-                                correct_ans = q_result.get('correct_answer', '')
-                                correct_display = correct_ans
-                            
-                            incorrect_details.append(f"**{qid}**: あなたの解答: `{user_ans}` | 正解: {correct_display}")
-                    st.error("❌ 不正解の問題がありました。\n\n" + "\n\n".join(incorrect_details))
+                    # 不正解の場合
+                    if total_count == 1:
+                        # 単一問題の場合、シンプルな表示
+                        qid = list(result_data.keys())[0]
+                        q_result = result_data[qid]
+                        user_ans = ''.join(q_result.get('user_answer', [])) or '無回答'
+                        correct_answer = q_result.get('correct_answer', '')
+                        
+                        from utils import QuestionUtils
+                        main_msg, additional_info = QuestionUtils.get_answer_feedback_message(
+                            user_ans, correct_answer, False
+                        )
+                        
+                        # シンプルな表示: "❌ 不正解 正解：A または E"
+                        if additional_info:
+                            st.error(f"{main_msg} {additional_info}")
+                        else:
+                            st.error(f"{main_msg} 正解：{correct_answer}")
+                    else:
+                        # 複数問題の場合は詳細表示
+                        incorrect_details = []
+                        for qid, q_result in result_data.items():
+                            if not q_result.get('is_correct'):
+                                user_ans = ''.join(q_result.get('user_answer', [])) or '無回答'
+                                correct_answer = q_result.get('correct_answer', '')
+                                
+                                from utils import QuestionUtils
+                                _, additional_info = QuestionUtils.get_answer_feedback_message(
+                                    user_ans, correct_answer, False
+                                )
+                                
+                                # シャッフル後の正解ラベルと選択肢テキストを取得
+                                shuffled_labels = q_result.get('shuffled_correct_answer_labels', [])
+                                shuffled_texts = q_result.get('shuffled_correct_answer_texts', [])
+                                
+                                if shuffled_labels and shuffled_texts:
+                                    # シャッフル後のラベルと選択肢テキストで表示
+                                    correct_display_parts = []
+                                    for label, text in zip(shuffled_labels, shuffled_texts):
+                                        correct_display_parts.append(f"{label}. {text}")
+                                    correct_display = ", ".join(correct_display_parts)
+                                else:
+                                    # フォールバック: 元の正解ラベルを表示
+                                    correct_display = additional_info or f"正解：{correct_answer}"
+                                
+                                incorrect_details.append(f"**{qid}**: あなたの解答: `{user_ans}` | {correct_display}")
+                        st.error("❌ 不正解の問題がありました。\n\n" + "\n\n".join(incorrect_details))
 
                 # 2. その下に自己評価フォームを表示
                 st.markdown("---")

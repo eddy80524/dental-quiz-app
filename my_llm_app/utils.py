@@ -324,6 +324,56 @@ class QuestionUtils:
         return correct_answer.upper()
     
     @staticmethod
+    def get_answer_feedback_message(user_choice: str, correct_answer: str, is_correct: bool) -> tuple:
+        """
+        複数正解対応の回答フィードバックメッセージを生成
+        
+        Args:
+            user_choice: ユーザーの選択
+            correct_answer: 正解
+            is_correct: 正解かどうか
+        
+        Returns:
+            tuple: (main_message, additional_info)
+        """
+        if not correct_answer:
+            return ("結果を表示できません", "")
+        
+        # 全角スラッシュを半角に統一
+        normalized_answer = correct_answer.replace('／', '/')
+        
+        if is_correct:
+            # 正解の場合
+            if '/' in normalized_answer:
+                # 複数正解の場合
+                answers = [ans.strip() for ans in normalized_answer.split('/')]
+                user_upper = user_choice.upper()
+                
+                # ユーザーが選択しなかった他の正解があるかチェック
+                other_correct = [ans for ans in answers if ans.upper() != user_upper]
+                
+                main_msg = "✅ 正解！"
+                if other_correct:
+                    if len(other_correct) == 1:
+                        additional_info = f"{other_correct[0]}も正答です"
+                    else:
+                        additional_info = f"{', '.join(other_correct)}も正答です"
+                else:
+                    additional_info = ""
+                
+                return (main_msg, additional_info)
+            else:
+                return ("✅ 正解！", "")
+        else:
+            # 不正解の場合
+            if '/' in normalized_answer:
+                answers = [ans.strip() for ans in normalized_answer.split('/')]
+                formatted_answers = " または ".join(answers)
+                return ("❌ 不正解", f"正解は {formatted_answers} です")
+            else:
+                return ("❌ 不正解", f"正解は {correct_answer} です")
+    
+    @staticmethod
     def build_gakushi_indices(all_questions: List[Dict[str, Any]]):
         """学士試験の年度、回数、領域の情報を整理する"""
         years = set()

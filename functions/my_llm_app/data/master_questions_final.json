@@ -51235,6 +51235,22 @@
     },
     {
       "number": "109B19",
+      "question": "6歳の男児。下顎右側第二乳臼歯に生活歯髄切断法を行うこととした。歯冠部歯髄除去および交互洗浄後の口腔内写真（別冊No.19）を別に示す。次に用いるのはどれか。１つ選べ。",
+      "choices": [
+        "有鉤探針",
+        "錬成充塡器",
+        "ラウンドバー",
+        "フィッシャーバー",
+        "スプーンエキスカベータ"
+      ],
+      "image_urls": [
+        "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2018/10/109B19a.png"
+      ],
+      "answer": "C",
+      "subject": "歯内治療学"
+    },
+    {
+      "number": "109B20",
       "question": "56歳の男性。上下顎全部床義歯の新製を希望して来院した。印象採得後の写真（別冊No.20A）と続けて行った操作途中の写真（別冊No.20B）を別に示す。本操作の終了後に模型を製作する目的はどれか。すべて選べ。",
       "choices": [
         "石膏の硬化膨張抑制",
@@ -60327,7 +60343,7 @@
         "ホルムアルデヒド"
       ],
       "image_urls": null,
-      "answer": "CorE",
+      "answer": "C/E",
       "subject": "衛生学"
     },
     {
@@ -61363,7 +61379,7 @@
         "O’LearyのPCR",
         "角化歯肉幅の測定",
         "歯周ポケット検査",
-        "歯肉溝滲出液誠の測定"
+        "歯肉溝滲出液の測定"
       ],
       "image_urls": [
         "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2018/10/111A86.png"
@@ -61373,6 +61389,23 @@
     },
     {
       "number": "111A87",
+      "question": "60歳の女性。下顎右側小臼歯の腫脹を主訴として来院した。2年前から自覚していたが、そのままにしていたところ緩徐に腫脹は増大したという。腫脹は骨様硬で、下唇の感覚異常は認められない。生検を行ったところ、内部は軟らかい組織が充満していた。初診時の口腔内写真（別冊No.31A）、エックス線画像（別冊No.31B）、CT（別冊No.31C）及び生検時のH-E染色病理組織像（別冊No.31D）を別に示す。適切な治療法はどれか。1つ選べ。",
+      "choices": [
+        "開　窓",
+        "皮質骨除去",
+        "下顎辺縁切除",
+        "抗癌剤投与",
+        "放射線治療"
+      ],
+      "image_urls": [
+        "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2018/10/111A87a.png",
+        "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2018/10/111A87b.png"
+      ],
+      "answer": "C",
+      "subject": "口腔外科学"
+    },
+    {
+      "number": "111A88",
       "question": "15歳の女子。口唇が閉じにくいことを主訴として来院した。永久前歯萌出後、咬み合わせに大きな変化はないという。11歳時に初潮を迎えたという。初診時の顔面写真（別冊No.32A）、口腔内写真（別冊No.328）及び口腔模型の写真（別冊No.32C）を別に示す。セファロ分析の結果を図に示す。適切な治療目標はどれか。2つ選べ。",
       "choices": [
         "上顎大臼歯の挺出",
@@ -61798,7 +61831,7 @@
         "危害を加えそうな人"
       ],
       "image_urls": null,
-      "answer": "ABCorD",
+      "answer": "ABC/ABD/ACD/BCD",
       "subject": "発生学・加齢老年学"
     },
     {
@@ -62529,6 +62562,22 @@
     },
     {
       "number": "111B78",
+      "question": "17歳の女子。上顎前歯の前突を主訴として来院した。術前矯正治療後に顎矯正手術を行うこととした。手術の口腔内写真（別冊No.19）を別に示す。この手術法はどれか。1つ選べ。",
+      "choices": [
+        "Dingman法",
+        "Robinson法",
+        "Wunderer法",
+        "Le Fort I型骨切り術",
+        "Obwegeser-Dal Pont 法"
+      ],
+      "image_urls": [
+        "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2018/10/111B78.png"
+      ],
+      "answer": "C",
+      "subject": "口腔外科学"
+    },
+    {
+      "number": "111B79",
       "question": "53歳の女性。下顎前歯欠損による審美不良を主訴として来院した。ジルコニアを用いたオールセラミックブリッジで補綴処憫を行うこととした。製作過程の写真（別冊No. 20A,B）と完成したブリッジを装着した口腔内写真（別冊No.20C）を別に示す。20Bから20Cの間に歯科医師が歯科技工士に行った指示はどれか。1つ選べ。",
       "choices": [
         "「模型をスキャンしてください」",
@@ -72027,7 +72076,7 @@
       "image_urls": [
         "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2020/02/113A81.png"
       ],
-      "answer": "AorB",
+      "answer": "A/B",
       "subject": "歯科麻酔学"
     },
     {
@@ -73039,7 +73088,7 @@
       "image_urls": [
         "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2020/02/113B62.png"
       ],
-      "answer": "ABDorABEorADEorBDE",
+      "answer": "ABD/ABE/ADE/BDE",
       "subject": "部分床義歯学"
     },
     {
@@ -74437,7 +74486,7 @@
       "image_urls": [
         "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2020/02/113C65a.png"
       ],
-      "answer": "BorE",
+      "answer": "B/E",
       "subject": "歯科麻酔学"
     },
     {
@@ -74531,7 +74580,7 @@
       "image_urls": [
         "https://i0.wp.com/dentalyouth.blog/wp-content/uploads/2020/02/113C70a.png"
       ],
-      "answer": "AorE",
+      "answer": "A/E",
       "subject": "小児歯科学"
     },
     {
@@ -75294,7 +75343,7 @@
         "自立支援医療費の支給"
       ],
       "image_urls": null,
-      "answer": "AorB",
+      "answer": "A/B",
       "subject": "衛生学"
     },
     {
@@ -80252,7 +80301,7 @@
         "リンパ上皮性嚢胞"
       ],
       "image_urls": null,
-      "answer": "DorE",
+      "answer": "D/E",
       "subject": "病理学"
     },
     {
@@ -80850,7 +80899,7 @@
         "インプレッションコンパウンド"
       ],
       "image_urls": null,
-      "answer": "ACorADorCD",
+      "answer": "AC/AD/CD",
       "subject": "全部床義歯学"
     },
     {
@@ -81182,7 +81231,7 @@
         "虹彩毛様体炎"
       ],
       "image_urls": null,
-      "answer": "ACDorACEorCDEorADE",
+      "answer": "ACD/ACE/CDE/ADE",
       "subject": "病理学"
     },
     {
@@ -82783,7 +82832,7 @@
         "結核性リンパ節炎"
       ],
       "image_urls": null,
-      "answer": "ADEorACDorACEorCDE",
+      "answer": "ADE/ACD/ACE/CDE",
       "subject": "口腔外科学"
     },
     {
@@ -86891,7 +86940,7 @@
         "終末呼気二酸化炭素分圧測定"
       ],
       "image_urls": null,
-      "answer": "BEorBCorCE",
+      "answer": "BE/BC/CE",
       "subject": "歯科麻酔学"
     },
     {
@@ -119660,6 +119709,21 @@
     },
     {
       "number": "98B36",
+      "question": "限局した深い歯周ポケットの原因となるのはどれか。３つ選べ。",
+      "choices": [
+        "舌面歯頸溝",
+        "歯根破折",
+        "エナメル突起",
+        "くさび状欠損",
+        "セメント質肥大"
+      ],
+      "image_urls": [
+      ],
+      "answer": "ABC",
+      "subject": "歯周病学"
+    },
+    {
+      "number": "98B37",
       "question": "歯肉切除術の切開線はどれか。 1つ選べ。",
       "choices": [
         "ア",
