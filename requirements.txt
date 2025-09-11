@@ -12,3 +12,4 @@ numpy>=1.24.0
 plotly>=5.0.0
 scipy>=1.7.0
 pytz>=2023.3
+huggingface_hub>=0.17.0
