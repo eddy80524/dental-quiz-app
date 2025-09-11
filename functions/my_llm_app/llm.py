@@ -9,7 +9,10 @@ try:
     # Hugging Face直接接続を使用してInferenceClientを初期化
     client = InferenceClient(api_key=PROVIDER_API_KEY)
 except (FileNotFoundError, KeyError):
-    st.error("APIキーが設定されていません。管理者にお問い合わせください。")
+    print("[WARNING] PROVIDER_API_KEY が見つかりません。LLM機能は無効化されます。")
+    client = None
+except Exception as e:
+    print(f"[ERROR] InferenceClient初期化エラー: {e}")
     client = None
 
 def generate_dental_explanation(question_text: str, choices: list, image_url: str = None) -> str:

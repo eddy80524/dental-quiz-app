@@ -59,7 +59,14 @@ def get_japan_datetime_from_timestamp(timestamp) -> datetime.datetime:
 
 # 必要な関数とクラスのインポート
 from llm import generate_dental_explanation
-from llm_fixed import handle_llm_explanation_request, save_llm_feedback
+try:
+    from llm_fixed import handle_llm_explanation_request, save_llm_feedback
+except ImportError:
+    # フォールバック: llm_fixedが利用できない場合
+    def handle_llm_explanation_request(*args, **kwargs):
+        return "LLM機能は現在利用できません。"
+    def save_llm_feedback(*args, **kwargs):
+        pass
 from firestore_db import get_firestore_manager, save_user_data
 from auth import AuthManager, check_gakushi_permission, get_user_permission
 from utils import (
