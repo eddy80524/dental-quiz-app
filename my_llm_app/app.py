@@ -23,6 +23,9 @@ from collections import Counter
 # 日本時間用のタイムゾーン
 JST = pytz.timezone('Asia/Tokyo')
 
+# ローカル開発用デバッグフラグ
+LOCAL_DEBUG_MODE = True  # Firebaseをスキップしてローカルテスト可能
+
 def get_japan_now() -> datetime.datetime:
     """日本時間の現在時刻を取得"""
     return datetime.datetime.now(JST)
@@ -114,9 +117,20 @@ class DentalApp:
         # パフォーマンス最適化を最初に適用
         apply_performance_optimizations()
         
-        self.auth_manager = AuthManager()
-        self.cookie_manager = CookieManager()
-        self.firestore_manager = get_firestore_manager()
+        # ローカルデバッグモードの場合はFirebaseをスキップ
+        if LOCAL_DEBUG_MODE:
+            self.auth_manager = None
+            self.cookie_manager = None  
+            self.firestore_manager = None
+            # ダミーユーザー情報を設定
+            st.session_state["user_logged_in"] = True
+            st.session_state["uid"] = "debug_user"
+            st.session_state["email"] = "debug@example.com"
+            st.session_state["name"] = "デバッグユーザー"
+        else:
+            self.auth_manager = AuthManager()
+            self.cookie_manager = CookieManager()
+            self.firestore_manager = get_firestore_manager()
         
         # 強化されたGoogle Analytics統合
         # self.analytics = enhanced_ga
@@ -125,7 +139,8 @@ class DentalApp:
         self._initialize_session_state()
         
         # ユーザー行動追跡の初期化
-        self._initialize_user_tracking()
+        if not LOCAL_DEBUG_MODE:
+            self._initialize_user_tracking()
     
     def _initialize_session_state(self):
         """セッション状態の初期化"""
@@ -406,7 +421,10 @@ class DentalApp:
         self._track_user_activity()
         
         # 🔄 1. Automatic Login Attempt - ログイン画面表示前に最優先で実行
-        if (not st.session_state.get("user_logged_in") and 
+        if LOCAL_DEBUG_MODE:
+            # ローカルデバッグモードの場合は自動的にログイン済み状態
+            pass
+        elif (not st.session_state.get("user_logged_in") and 
             not st.session_state.get("auto_login_attempted")):
             
             st.session_state["auto_login_attempted"] = True
@@ -431,13 +449,7 @@ class DentalApp:
                 st.rerun()
         
         # ログイン状態をチェック
-        if not st.session_state.get("user_logged_in") or not self.auth_manager.ensure_valid_session():
-            # 自動ログインが失敗した場合のみログイン画面を表示
-            self._render_login_page()
-            
-            # ログインページビュー追跡
-            self.track_page_navigation("login")
-        else:
+        if LOCAL_DEBUG_MODE or (st.session_state.get("user_logged_in") and (not self.auth_manager or self.auth_manager.ensure_valid_session())):
             # ログイン済みの場合はサイドバーとメインコンテンツを表示
             
             # --- ▼▼▼ 遅延読み込みロジック ▼▼▼ ---
@@ -448,9 +460,13 @@ class DentalApp:
                 
             # 2. 学習データ(cards)がなければ読み込む (最も重い処理)
             if not st.session_state.get("cards"):
-                with st.spinner("学習データを読み込んでいます..."):
-                    self._load_user_data()
-
+                if LOCAL_DEBUG_MODE:
+                    # ローカルデバッグモードでは空の学習データ
+                    st.session_state["cards"] = {}
+                else:
+                    with st.spinner("学習データを読み込んでいます..."):
+                        self._load_user_data()
+            
             # 3. 科目リストがなければ初期化
             if not st.session_state.get('available_subjects'):
                 self._initialize_available_subjects()
@@ -465,10 +481,21 @@ class DentalApp:
             
             # ログイン後のページビュー追跡
             current_page = st.session_state.get("page", "練習")
-            self.track_page_navigation(current_page)
+            if not LOCAL_DEBUG_MODE:
+                self.track_page_navigation(current_page)
+        else:
+            # 自動ログインが失敗した場合のみログイン画面を表示
+            self._render_login_page()
+            
+            # ログインページビュー追跡
+            if not LOCAL_DEBUG_MODE:
+                self.track_page_navigation("login")
     
     def _track_user_activity(self):
         """ユーザーアクティビティの追跡"""
+        if LOCAL_DEBUG_MODE:
+            return  # ローカルデバッグモードでは追跡をスキップ
+            
         try:
             uid = st.session_state.get("uid")
             if uid:

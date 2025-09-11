@@ -673,6 +673,39 @@ class CardSelectionUtils:
         
         return selected
 
+    @staticmethod
+    def group_consecutive_questions(selected_qids: List[str], all_questions_dict: Dict[str, Dict]) -> List[List[str]]:
+        """連問をグループ化する"""
+        grouped = []
+        case_groups = {}
+        ungrouped = []
+        
+        # 同じcase_idを持つ問題をグループ化
+        for qid in selected_qids:
+            question = all_questions_dict.get(qid)
+            if question and question.get('case_id'):
+                case_id = question['case_id']
+                if case_id not in case_groups:
+                    case_groups[case_id] = []
+                case_groups[case_id].append(qid)
+            else:
+                ungrouped.append(qid)
+        
+        # 連問グループを追加（問題番号順にソート）
+        for case_id, qids in case_groups.items():
+            # 問題番号でソート（102D13, 102D14のような順序で）
+            sorted_qids = sorted(qids, key=lambda x: (
+                int(x.split('D')[0] if 'D' in x else x.split('C')[0] if 'C' in x else x.split('B')[0] if 'B' in x else x.split('A')[0]),
+                x.split('D')[1] if 'D' in x else x.split('C')[1] if 'C' in x else x.split('B')[1] if 'B' in x else x.split('A')[1]
+            ))
+            grouped.append(sorted_qids)
+        
+        # 単独問題を個別グループとして追加
+        for qid in ungrouped:
+            grouped.append([qid])
+        
+        return grouped
+
 
 @st.cache_data(ttl=3600)  # 1時間キャッシュ
 def load_master_data(version: str = "v2025-08-22-all-gakushi-files") -> tuple:

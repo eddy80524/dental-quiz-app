@@ -541,6 +541,16 @@ class AnswerModeComponent:
         
         is_checked = st.session_state.get(f"checked_{group_id}", False)
         
+        # 連問（同じcase_idを持つ問題）の場合の特別処理
+        if len(questions) > 1 and all(q.get('case_id') for q in questions):
+            case_id = questions[0].get('case_id')
+            if all(q.get('case_id') == case_id for q in questions):
+                # 連問として表示
+                return AnswerModeComponent._render_consecutive_questions(
+                    questions, group_id, case_data, is_checked, user_selections, action_result
+                )
+        
+        # 従来の単一問題または異なるcase_idの問題の処理
         if case_data and case_data.get('scenario_text'):
             st.info(f"📋 **症例:** {case_data['scenario_text']}")
         
@@ -689,8 +699,173 @@ class AnswerModeComponent:
                         secure_url = get_secure_image_url(img_url)
                         if secure_url:
                             st.image(secure_url, use_container_width=True)
+                            st.image(secure_url, use_container_width=True)
                             
         return action_result
+
+    @staticmethod
+    def _render_consecutive_questions(questions: List[Dict], group_id: str, case_data: Dict, 
+                                    is_checked: bool, user_selections: Dict, action_result: Dict) -> Dict[str, Any]:
+        """連問の統合表示"""
+        
+        # 症例文がある場合は最初に表示（症例:ラベルを削除）
+        if case_data and case_data.get('scenario_text'):
+            st.info(case_data['scenario_text'])
+        
+        with st.form(key=f"answer_form_{group_id}"):
+            # 連問を順番に表示
+            for q_index, question in enumerate(questions):
+                qid = question.get('number', '')
+                
+                # 問題番号と問題文を表示
+                st.markdown(f"#### {qid}")
+                st.markdown(question.get('question', ''))
+                
+                # 選択肢のシャッフルとマッピング情報の保存
+                shuffled_choices, label_mapping = st.session_state.setdefault(
+                    f"shuffled_mapping_{qid}_{group_id}", 
+                    QuestionComponent.shuffle_choices_with_mapping(question.get('choices', []))
+                )
+                st.session_state[f"label_mapping_{qid}_{group_id}"] = label_mapping
+
+                # 選択肢の描画とユーザー選択の取得
+                selected_labels = []
+                for choice_index, choice_text in enumerate(shuffled_choices):
+                    label = QuestionComponent.get_choice_label(choice_index)
+                    is_selected = st.checkbox(
+                        f"{label}. {choice_text}",
+                        key=f"choice_{qid}_{choice_index}_{group_id}",
+                        disabled=is_checked
+                    )
+                    if is_selected:
+                        selected_labels.append(label)
+                user_selections[qid] = selected_labels
+                
+                # 問題間の区切り線
+                if q_index < len(questions) - 1:
+                    st.markdown("---")
+
+            # フォームの内側で状態に応じて表示を切り替える
+            if not is_checked:
+                # 【解答中のUI】
+                st.markdown("---")
+                col1, col2 = st.columns(2)
+                with col1:
+                    action_result['check_submitted'] = st.form_submit_button("回答をチェック", type="primary", use_container_width=True)
+                with col2:
+                    action_result['skip_submitted'] = st.form_submit_button("スキップ", use_container_width=True)
+            else:
+                # 【結果表示中のUI】
+                result_data = st.session_state.get(f"result_{group_id}", {})
+                
+                # 1. 正誤判定のアラートバーをここに表示
+                correct_count = sum(1 for r in result_data.values() if r.get('is_correct'))
+                total_count = len(result_data)
+                
+                if correct_count == total_count:
+                    # すべて正解の場合
+                    if total_count == 1:
+                        # 単一問題の場合、複数正解対応のメッセージを表示
+                        qid = list(result_data.keys())[0]
+                        q_result = result_data[qid]
+                        user_ans = ''.join(q_result.get('user_answer', []))
+                        correct_answer = q_result.get('correct_answer', '')
+                        
+                        from utils import QuestionUtils
+                        main_msg, additional_info = QuestionUtils.get_answer_feedback_message(
+                            user_ans, correct_answer, True
+                        )
+                        
+                        if additional_info:
+                            st.success(f"{main_msg} {additional_info}")
+                        else:
+                            st.success(main_msg)
+                    else:
+                        # 複数問題の場合
+                        st.success("✅ 全問正解！")
+                else:
+                    # 不正解の場合
+                    if total_count == 1:
+                        # 単一問題の場合、シンプルな表示
+                        qid = list(result_data.keys())[0]
+                        q_result = result_data[qid]
+                        user_ans = ''.join(q_result.get('user_answer', [])) or '無回答'
+                        correct_answer = q_result.get('correct_answer', '')
+                        
+                        from utils import QuestionUtils
+                        main_msg, additional_info = QuestionUtils.get_answer_feedback_message(
+                            user_ans, correct_answer, False
+                        )
+                        
+                        # シンプルな表示: "❌ 不正解 正解：A または E"
+                        if additional_info:
+                            st.error(f"{main_msg} {additional_info}")
+                        else:
+                            st.error(f"{main_msg} 正解：{correct_answer}")
+                    else:
+                        # 複数問題の場合は詳細表示
+                        incorrect_details = []
+                        for qid, q_result in result_data.items():
+                            if not q_result.get('is_correct'):
+                                user_ans = ''.join(q_result.get('user_answer', [])) or '無回答'
+                                correct_answer = q_result.get('correct_answer', '')
+                                
+                                from utils import QuestionUtils
+                                _, additional_info = QuestionUtils.get_answer_feedback_message(
+                                    user_ans, correct_answer, False
+                                )
+                                
+                                # シャッフル後の正解ラベルと選択肢テキストを取得
+                                shuffled_labels = q_result.get('shuffled_correct_answer_labels', [])
+                                shuffled_texts = q_result.get('shuffled_correct_answer_texts', [])
+                                
+                                if shuffled_labels and shuffled_texts:
+                                    # シャッフル後のラベルと選択肢テキストで表示
+                                    correct_display_parts = []
+                                    for label, text in zip(shuffled_labels, shuffled_texts):
+                                        correct_display_parts.append(f"{label}. {text}")
+                                    correct_display = ", ".join(correct_display_parts)
+                                else:
+                                    # フォールバック: 元の正解ラベルを表示
+                                    correct_display = additional_info or f"正解：{correct_answer}"
+                                
+                                incorrect_details.append(f"**{qid}**: あなたの解答: `{user_ans}` | {correct_display}")
+                        st.error("❌ 不正解の問題がありました。\n\n" + "\n\n".join(incorrect_details))
+
+                # 2. その下に自己評価フォームを表示
+                st.markdown("---")
+                st.markdown("#### 自己評価")
+                quality_options = ["× もう一度", "△ 難しい", "○ 普通", "◎ 簡単"]
+                default_index = 2 if correct_count == total_count else 1
+                
+                quality = st.radio(
+                    "学習評価", options=quality_options, index=default_index,
+                    key=f"quality_{group_id}", horizontal=True, label_visibility="collapsed"
+                )
+                action_result['quality'] = quality
+                action_result['next_submitted'] = st.form_submit_button("次の問題へ", type="primary", use_container_width=True)
+
+        action_result['user_selections'] = user_selections
+        
+        # 症例画像をフォームの外に表示（通常の問題画像と同じ扱い）
+        if case_data and case_data.get('image_urls'):
+            with st.expander("📸 症例画像を見る", expanded=is_checked):
+                for img_url in case_data.get('image_urls', []):
+                    from utils import get_secure_image_url
+                    secure_url = get_secure_image_url(img_url)
+                    if secure_url:
+                        st.image(secure_url, use_container_width=True)
+        
+        # 各問題の画像（症例画像以外）はフォームの外に表示
+        for question in questions:
+            all_images = (question.get('image_urls', []) or []) + (question.get('image_paths', []) or [])
+            if all_images:
+                with st.expander(f"📸 {question.get('number', '')}の図を見る", expanded=is_checked):
+                    for img_url in all_images:
+                        from utils import get_secure_image_url
+                        secure_url = get_secure_image_url(img_url)
+                        if secure_url:
+                            st.image(secure_url, use_container_width=True)
 
     @staticmethod
     def _is_ordering_question(question_text: str, choices: List[str] = None) -> bool:
@@ -872,15 +1047,41 @@ class PracticeSession:
                     except (ValueError, TypeError):
                         continue
             
-            # グループ化（5問ずつ）
+            # グループ化（5問ずつ+連問グループ化）
             all_cards = selected_new + due_cards
             random.shuffle(all_cards)
             
+            # 連問を考慮したグループ化
+            individual_groups = CardSelectionUtils.group_consecutive_questions(all_cards, ALL_QUESTIONS_DICT)
+            
+            # 5問ずつのグループに再編成（連問グループは分割しない）
             main_queue = []
-            for i in range(0, len(all_cards), 5):
-                group = all_cards[i:i+5]
-                if group:
-                    main_queue.append(group)
+            current_group = []
+            current_size = 0
+            
+            for group in individual_groups:
+                group_size = len(group)
+                
+                # 現在のグループにこのグループを追加できるかチェック
+                if current_size + group_size <= 5:
+                    current_group.extend(group)
+                    current_size += group_size
+                else:
+                    # 現在のグループを完成させ、新しいグループを開始
+                    if current_group:
+                        main_queue.append(current_group)
+                    current_group = group
+                    current_size = group_size
+                
+                # グループが満杯または5を超える場合はそのまま追加
+                if current_size >= 5:
+                    main_queue.append(current_group)
+                    current_group = []
+                    current_size = 0
+            
+            # 残りのグループがあれば追加
+            if current_group:
+                main_queue.append(current_group)
             
             st.session_state["main_queue"] = main_queue
             st.session_state["current_q_group"] = []
