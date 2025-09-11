@@ -10,7 +10,7 @@ from collections import defaultdict
 import logging
 from google.cloud import logging as cloud_logging
 import functions_framework
-from flask import Request, Flask
+from flask import Request, Flask, request
 
 # --- グローバル変数の設定 ---
 
@@ -412,7 +412,7 @@ def import_ranking_updater():
         setup_python_path()
         
         # my_llm_app モジュールからインポート
-        from modules.ranking_updater import update_all_rankings, should_update_today
+        from modules.ranking_updater import update_all_rankings, should_update_today  # type: ignore
         return update_all_rankings, should_update_today
     except ImportError as e:
         logger.error(f"Failed to import ranking_updater: {e}")
