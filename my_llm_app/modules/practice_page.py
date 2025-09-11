@@ -529,8 +529,20 @@ class AnswerModeComponent:
                             user_ans, correct_answer, False
                         )
                         
-                        # シンプルな表示: "❌ 不正解 正解：A または E"
-                        if additional_info:
+                        # 連問でもシャッフル後の正解を使用
+                        # シャッフル後の正解ラベルと選択肢テキストを取得
+                        shuffled_labels = q_result.get('shuffled_correct_answer_labels', [])
+                        shuffled_texts = q_result.get('shuffled_correct_answer_texts', [])
+                        
+                        # シャッフル後の正解表示を優先使用
+                        if shuffled_labels and shuffled_texts:
+                            # シャッフル後のラベルと選択肢テキストで表示
+                            correct_display_parts = []
+                            for label, text in zip(shuffled_labels, shuffled_texts):
+                                correct_display_parts.append(f"{label}. {text}")
+                            correct_display = " または ".join(correct_display_parts)
+                            st.error(f"{main_msg} 正解：{correct_display}")
+                        elif additional_info:
                             st.error(f"{main_msg} {additional_info}")
                         else:
                             st.error(f"{main_msg} 正解：{correct_answer}")
@@ -689,8 +701,20 @@ class AnswerModeComponent:
                             user_ans, correct_answer, False
                         )
                         
-                        # シンプルな表示: "❌ 不正解 正解：A または E"
-                        if additional_info:
+                        # 単一問題でもシャッフル後の正解を使用
+                        # シャッフル後の正解ラベルと選択肢テキストを取得
+                        shuffled_labels = q_result.get('shuffled_correct_answer_labels', [])
+                        shuffled_texts = q_result.get('shuffled_correct_answer_texts', [])
+                        
+                        # シャッフル後の正解表示を優先使用
+                        if shuffled_labels and shuffled_texts:
+                            # シャッフル後のラベルと選択肢テキストで表示
+                            correct_display_parts = []
+                            for label, text in zip(shuffled_labels, shuffled_texts):
+                                correct_display_parts.append(f"{label}. {text}")
+                            correct_display = " または ".join(correct_display_parts)
+                            st.error(f"{main_msg} 正解：{correct_display}")
+                        elif additional_info:
                             st.error(f"{main_msg} {additional_info}")
                         else:
                             st.error(f"{main_msg} 正解：{correct_answer}")
