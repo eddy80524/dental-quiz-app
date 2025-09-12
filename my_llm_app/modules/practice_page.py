@@ -809,6 +809,8 @@ class AnswerModeComponent:
                         secure_url = get_secure_image_url(img_url)
                         if secure_url:
                             st.image(secure_url, use_container_width=True)
+        
+        return action_result
 
     @staticmethod
     def _is_ordering_question(question_text: str, choices: List[str] = None) -> bool:
@@ -1196,6 +1198,10 @@ def _display_current_question(practice_session: PracticeSession, uid: str):
     
     # is_checkedフラグによる分岐をなくし、ResultModeComponentの呼び出しを完全に削除
     action_result = AnswerModeComponent.render(q_objects, group_id, case_data)
+    
+    # action_resultがNoneの場合の安全な処理
+    if action_result is None:
+        action_result = {}
     
     if action_result.get('check_submitted'):
         _process_group_answer_improved(
