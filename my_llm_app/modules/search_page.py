@@ -617,9 +617,46 @@ def calculate_progress_metrics(cards: Dict, base_df: pd.DataFrame, uid: str, ana
     recent_accuracy = enhanced_data.get('recent_accuracy', 0)
     previous_accuracy = enhanced_data.get('previous_accuracy', 0)
     
-    # 差分計算
-    progress_delta = 0  # 学習進捗のデルタ（前日比など）
-    hisshu_delta = 0    # 必修問題のデルタ
+    # 差分計算（前日比の進捗変化）
+    # 昨日時点での学習済み数を計算（昨日までの学習ログをもとに）
+    yesterday_studied_count = 0
+    yesterday_hisshu_studied_count = 0
+    
+    if uid and uid != "guest":
+        # 昨日までの学習ログから昨日時点での進捗を計算
+        evaluation_logs = st.session_state.get('evaluation_logs', [])
+        yesterday_learned_questions = set()
+        yesterday_learned_hisshu = set()
+        
+        for log in evaluation_logs:
+            try:
+                log_timestamp = log['timestamp']
+                log_datetime_jst = get_japan_datetime_from_timestamp(log_timestamp)
+                log_date = log_datetime_jst.date()
+                
+                # 昨日以前の学習記録
+                if log_date <= yesterday:
+                    q_id = log.get('question_id', '')
+                    
+                    # analysis_targetでフィルタリング
+                    if analysis_target == "学士試験":
+                        if q_id.startswith('G'):
+                            yesterday_learned_questions.add(q_id)
+                            if q_id in GAKUSHI_HISSHU_Q_NUMBERS_SET:
+                                yesterday_learned_hisshu.add(q_id)
+                    else:
+                        if not q_id.startswith('G'):
+                            yesterday_learned_questions.add(q_id)
+                            if q_id in HISSHU_Q_NUMBERS_SET:
+                                yesterday_learned_hisshu.add(q_id)
+            except Exception:
+                continue
+        
+        yesterday_studied_count = len(yesterday_learned_questions)
+        yesterday_hisshu_studied_count = len(yesterday_learned_hisshu)
+    
+    progress_delta = current_studied_count - yesterday_studied_count
+    hisshu_delta = current_hisshu_studied_count - yesterday_hisshu_studied_count
     accuracy_delta = recent_accuracy - previous_accuracy
     
     return {
@@ -674,6 +711,12 @@ def render_search_page():
         # メトリクス計算には全体データ（フィルタされていない）を使用
         metrics = calculate_progress_metrics(cards, base_df, uid, analysis_target)
         
+        # デバッグ情報表示（開発時のみ）
+        if st.session_state.get("debug_mode", False):
+            st.write(f"デバッグ - 現在学習済み: {metrics['current_studied_count']}, 昨日時点: {metrics['current_studied_count'] - metrics['progress_delta']}, デルタ: {metrics['progress_delta']}")
+            st.write(f"デバッグ - 必修現在: {metrics['current_hisshu_studied_count']}, 必修昨日時点: {metrics['current_hisshu_studied_count'] - metrics['hisshu_delta']}, 必修デルタ: {metrics['hisshu_delta']}")
+            st.write(f"デバッグ - 学習ログ数: {len(st.session_state.get('evaluation_logs', []))}")
+        
         # 4つの主要指標をst.metricで表示
         col1, col2, col3, col4 = st.columns(4)
         
@@ -709,6 +752,35 @@ def render_search_page():
                 f"{metrics['recent_accuracy']:.1f}%",
                 delta=f"前週比 {accuracy_delta_text}"
             )
+        
+        # 進捗更新ボタン
+        st.divider()
+        col_refresh, col_debug = st.columns([1, 3])
+        with col_refresh:
+            if st.button("🔄 進捗データを更新", help="最新の学習記録を反映します"):
+                # 学習ログを強制更新
+                if HAS_USER_DATA_EXTRACTOR and uid and uid != "guest":
+                    try:
+                        extractor = UserDataExtractor()
+                        evaluation_logs = extractor.extract_self_evaluation_logs(uid)
+                        if evaluation_logs:
+                            st.session_state['evaluation_logs'] = evaluation_logs
+                            st.session_state['evaluation_logs_initialized'] = True
+                            st.success("進捗データを更新しました！")
+                            st.rerun()
+                        else:
+                            st.info("更新する学習記録が見つかりません。")
+                    except Exception as e:
+                        st.error(f"進捗データの更新に失敗しました: {e}")
+                else:
+                    st.info("現在のセッションログから進捗を計算しています。")
+        
+        with col_debug:
+            if st.checkbox("デバッグ情報を表示", key="debug_mode_checkbox"):
+                st.session_state["debug_mode"] = True
+                st.rerun()
+            else:
+                st.session_state["debug_mode"] = False
     
     # タブコンテナ - 4つのタブ（元UIを完全復元）
     tab1, tab2, tab3, tab4 = st.tabs(["概要", "グラフ分析", "問題リスト", "キーワード検索"])

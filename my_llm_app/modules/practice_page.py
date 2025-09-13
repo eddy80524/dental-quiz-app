@@ -3003,8 +3003,8 @@ def _start_ai_enhanced_learning(session_type: str, problem_count: int, detailed_
                 questions = [q for q in ALL_QUESTIONS if q.get("number") in question_ids]
                 
                 # 連問の適切なグループ化
-                from utils import QuestionUtils
-                grouped_questions = QuestionUtils.group_consecutive_questions(question_ids, ALL_QUESTIONS_DICT)
+                from utils import CardSelectionUtils
+                grouped_questions = CardSelectionUtils.group_consecutive_questions(question_ids, ALL_QUESTIONS_DICT)
                 
                 st.session_state["main_queue"] = grouped_questions
                 st.session_state["practice_mode"] = "auto"
@@ -3318,8 +3318,8 @@ def _start_auto_learning():
                 questions = [q for q in ALL_QUESTIONS if q.get("number") in question_ids]
                 
                 # 連問の適切なグループ化
-                from utils import QuestionUtils
-                grouped_questions = QuestionUtils.group_consecutive_questions(question_ids, ALL_QUESTIONS_DICT)
+                from utils import CardSelectionUtils
+                grouped_questions = CardSelectionUtils.group_consecutive_questions(question_ids, ALL_QUESTIONS_DICT)
                 
                 st.session_state["main_queue"] = grouped_questions
                 st.session_state["session_mode"] = "auto_learning"
@@ -3424,9 +3424,9 @@ def _fallback_auto_learning():
     
     
     # 連問の適切なグループ化
-    from utils import QuestionUtils
+    from utils import CardSelectionUtils
     selected_qids = [q.get("number") for q in selected_questions if q.get("number")]
-    grouped_questions = QuestionUtils.group_consecutive_questions(selected_qids, ALL_QUESTIONS_DICT)
+    grouped_questions = CardSelectionUtils.group_consecutive_questions(selected_qids, ALL_QUESTIONS_DICT)
     
     st.session_state["main_queue"] = grouped_questions
     st.session_state["session_mode"] = "auto_learning"
