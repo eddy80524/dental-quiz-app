@@ -716,21 +716,18 @@ class DentalApp:
                                 
                             else:
                                 # ✅ Success: ログイン成功
+                                st.success("ログインしました！")
+                                
+                                # Cookie Saving: 長期間有効なリフレッシュトークンをCookieに保存
                                 if save_password:
-                                    st.success("ログインしました！")
-                                    else:
-                                        st.success("ログインしました！")
-                                    
-                                    # Cookie Saving: 長期間有効なリフレッシュトークンをCookieに保存
-                                    if save_password:
-                                        cookie_data = {
-                                            "refresh_token": result.get("refreshToken", ""),
-                                            "uid": st.session_state.get("uid", ""),
-                                            "email": email,
-                                            "password": password  # 永続ログイン用にパスワードも保存
-                                        }
-                                        # 長期間有効なCookieとして保存（30日間）
-                                        self.cookie_manager.save_login_cookies(cookie_data, save_password=True)
+                                    cookie_data = {
+                                        "refresh_token": result.get("refreshToken", ""),
+                                        "uid": st.session_state.get("uid", ""),
+                                        "email": email,
+                                        "password": password  # 永続ログイン用にパスワードも保存
+                                    }
+                                    # 長期間有効なCookieとして保存（30日間）
+                                    self.cookie_manager.save_login_cookies(cookie_data, save_password=True)
                                     
                                     # Google Analytics イベント
                                     uid = st.session_state.get("uid")

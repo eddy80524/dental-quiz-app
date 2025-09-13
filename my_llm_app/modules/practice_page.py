@@ -37,23 +37,24 @@ def get_japan_today() -> datetime.date:
 
 def get_japan_datetime_from_timestamp(timestamp) -> datetime.datetime:
     """タイムスタンプから日本時間のdatetimeオブジェクトを取得"""
-    if hasattr(timestamp, 'replace'):
-        # DatetimeWithNanoseconds または datetime オブジェクト
-        if hasattr(timestamp, 'tzinfo') and timestamp.tzinfo is None:
-            # ナイーブなdatetimeの場合、UTCとして扱って日本時間に変換
-            return pytz.UTC.localize(timestamp).astimezone(JST)
-        else:
-            return timestamp.astimezone(JST)
-    elif isinstance(timestamp, str):
-        try:
+    try:
+        if isinstance(timestamp, str):
             # ISO文字列をパース
             dt = datetime.datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
             return dt.astimezone(JST)
-        except Exception:
-            # パースに失敗した場合は現在時刻を返す
+        elif hasattr(timestamp, 'replace'):
+            # DatetimeWithNanoseconds または datetime オブジェクト
+            if hasattr(timestamp, 'tzinfo') and timestamp.tzinfo is None:
+                # ナイーブなdatetimeの場合、UTCとして扱って日本時間に変換
+                return pytz.UTC.localize(timestamp).astimezone(JST)
+            else:
+                return timestamp.astimezone(JST)
+        else:
+            # その他の場合は現在時刻を返す
             return get_japan_now()
-    else:
-        # その他の場合は現在時刻を返す
+    except Exception as e:
+        print(f"[DEBUG] タイムスタンプ変換エラー詳細: {timestamp}, type: {type(timestamp)}, error: {e}")
+        # パースに失敗した場合は現在時刻を返す
         return get_japan_now()
 
 
@@ -1010,49 +1011,37 @@ def render_practice_page(auth_manager=None):
         
         # Firestore DBから継続可能なセッションをチェック
         try:
-            from firestore_db import FirestoreManager
-            firestore_manager = FirestoreManager()
+            firestore_manager = get_firestore_manager()
             
-            # 継続可能なセッションがあるかチェック
-            if firestore_manager.has_resumable_session(uid):
-                st.warning("⚠️ 前回の演習セッションが完了していません。")
+            # デバッグ: メソッドの存在確認
+            print(f"[DEBUG] has_resumable_session メソッド存在: {hasattr(firestore_manager, 'has_resumable_session')}")
+            print(f"[DEBUG] clear_session_state メソッド存在: {hasattr(firestore_manager, 'clear_session_state')}")
+            
+            # 継続可能なセッションがあるかチェック（サイドバー復元済みの場合はスキップ）
+            if (hasattr(firestore_manager, 'has_resumable_session') and 
+                firestore_manager.has_resumable_session(uid) and 
+                not st.session_state.get("sidebar_restored", False)):
                 
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("🔄 前回の続きから開始", type="primary", key="resume_session"):
-                        # 前回のセッション状態を復元
-                        saved_state = firestore_manager.load_session_state(uid)
-                        if saved_state:
-                            # セッション状態を復元
-                            for key, value in saved_state.items():
-                                if key != "session_metadata":  # メタデータは別途処理
-                                    st.session_state[key] = value
-                            
-                            # セッション継続フラグを設定
-                            st.session_state["continue_previous"] = True
-                            st.session_state["session_choice_made"] = True
-                            
-                            st.success("前回のセッション状態を復元しました！")
-                            st.rerun()
-                        else:
-                            st.error("セッション復元に失敗しました。")
+                st.info("⚠️ 前回の演習セッションが未完了です。サイドバーの「🔄 前回の続きから再開」ボタンで復元できます。")
                 
-                with col2:
-                    if st.button("🆕 新しいセッションを開始", key="start_new_session"):
-                        # 古いセッション情報をクリア
-                        firestore_manager.clear_session_state(uid)
-                        st.session_state["session_continuity_checked"] = False
-                        
-                        # ページ状態をリセット
-                        for key in list(st.session_state.keys()):
-                            if key.startswith(("session_", "current_", "main_", "short_term_")):
-                                del st.session_state[key]
-                        
-                        st.success("新しいセッションの準備が完了しました！")
-                        st.rerun()
+                # 簡単な新規開始ボタンのみ表示
+                if st.button("🆕 新規セッションを開始", key="simple_new_session"):
+                    print(f"[DEBUG] 🆕 簡単新規開始ボタンがクリックされました！")
+                    # 古いセッション情報をクリア
+                    firestore_manager.clear_session_state(uid)
+                    st.session_state["session_continuity_checked"] = False
+                    # 新規セッション開始のための状態をクリア
+                    for key in ['continue_previous', 'session_choice_made', 'question_queue', 
+                               'current_q_group', 'main_queue', 'short_term_review_queue',
+                               'restoration_choice_made', 'auto_restore_preference', 'show_restore_details',
+                               'sidebar_restored']:
+                        if key in st.session_state:
+                            del st.session_state[key]
+                    st.success("新しいセッションを開始します！")
+                    st.rerun()
                 
-                # ユーザーが選択するまで待機
-                st.stop()
+                # 選択が済んでいない場合は、ここで処理を停止
+                return
                 
         except Exception as e:
             print(f"セッション継続チェックエラー: {e}")
@@ -1062,6 +1051,14 @@ def render_practice_page(auth_manager=None):
     if st.session_state.get("continue_previous") and st.session_state.get("session_choice_made"):
         st.success("前回のセッションを復帰しました")
         st.session_state.pop("continue_previous", None)
+        
+        # 復元後の状態をデバッグ
+        print(f"[DEBUG] 復元後の状態確認:")
+        print(f"[DEBUG] - question_queue: {len(st.session_state.get('question_queue', []))} items")
+        print(f"[DEBUG] - main_queue: {len(st.session_state.get('main_queue', []))} items") 
+        print(f"[DEBUG] - current_q_group: {len(st.session_state.get('current_q_group', []))} items")
+        print(f"[DEBUG] - current_question_index: {st.session_state.get('current_question_index', 'N/A')}")
+        print(f"[DEBUG] - session_type: {st.session_state.get('session_type', 'N/A')}")
         
         if st.session_state.get("current_question_index") is not None:
             st.info(f"問題 {st.session_state.get('current_question_index', 0) + 1} から継続します")
@@ -1472,7 +1469,23 @@ def _process_self_evaluation_improved(q_objects: List[Dict], quality_text: str,
         try:
             if save_user_data:
                 print(f"💾 演習結果を保存中: {qid} (UID: {uid[:8]}...)")
-                save_user_data(uid, qid, updated_card)
+                
+                # セッション状態を更新してから保存
+                import datetime
+                session_data = dict(st.session_state)
+                session_data["cards"] = cards.copy()
+                
+                # セッションメタデータを更新
+                current_metadata = session_data.get("session_metadata", {})
+                current_metadata.update({
+                    "is_active_session": True,  # 明示的にTrueに設定
+                    "last_activity_time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    "current_question_index": session_data.get("current_question_index", 0),
+                    "total_questions_answered": current_metadata.get("total_questions_answered", 0) + 1
+                })
+                session_data["session_metadata"] = current_metadata
+                
+                save_user_data(uid, qid, updated_card, session_data)
                 print(f"✅ 保存完了: {qid}")
             else:
                 print(f"❌ save_user_data関数が利用できません")
@@ -1670,8 +1683,7 @@ def _reset_session():
     try:
         uid = st.session_state.get("uid")
         if uid:
-            from firestore_db import FirestoreManager
-            firestore_manager = FirestoreManager()
+            firestore_manager = get_firestore_manager()
             firestore_manager.clear_session_state(uid)
             print(f"✅ Firestoreセッション状態をクリアしました（UID: {uid}）")
     except Exception as e:
@@ -1696,6 +1708,79 @@ def render_practice_sidebar():
         if not uid:
             st.warning("ユーザーIDが見つかりません")
             return
+        
+        # --- セッション復元機能 ---
+        from firestore_db import FirestoreManager
+        
+        # FirestoreManagerインスタンスを取得
+        if 'firestore_manager' not in st.session_state:
+            st.session_state.firestore_manager = FirestoreManager()
+        firestore_manager = st.session_state.firestore_manager
+        
+        # 継続可能なセッションがあるかチェック（サイドバー版）
+        if hasattr(firestore_manager, 'has_resumable_session') and firestore_manager.has_resumable_session(uid):
+            st.markdown("### 🔄 セッション復元")
+            
+            # セッション情報のプレビュー
+            saved_state = firestore_manager.load_session_state(uid)
+            if saved_state:
+                session_type = saved_state.get('session_type', 'N/A')
+                remaining_questions = len(saved_state.get('main_queue', []))
+                current_index = saved_state.get('current_question_index', 0)
+                answered_count = saved_state.get('total_questions_answered', 0)
+                
+                st.info(f"""
+**前回のセッション**
+- タイプ: {session_type}
+- 残り問題: {remaining_questions}問
+- 進行状況: {answered_count}問回答済み
+                """)
+                
+                # 復元ボタン
+                if st.button("🔄 前回の続きから再開", type="primary", key="sidebar_resume_session"):
+                    print(f"[DEBUG] 🔄 サイドバー復元ボタンがクリックされました！")
+                    print(f"[DEBUG] サイドバーから復元処理を開始...")
+                    print(f"[DEBUG] load_session_state呼び出し中...")
+                    
+                    if saved_state:
+                        print(f"[DEBUG] 復元されたセッション状態: {list(saved_state.keys())}")
+                        print(f"[DEBUG] main_queue: {len(saved_state.get('main_queue', []))} items")
+                        print(f"[DEBUG] current_q_group: {len(saved_state.get('current_q_group', []))} items")
+                        print(f"[DEBUG] current_question_index: {saved_state.get('current_question_index', 'N/A')}")
+                        
+                        # セッション状態を復元
+                        for key, value in saved_state.items():
+                            if key != "session_metadata":  # メタデータは別途処理
+                                st.session_state[key] = value
+                                print(f"[DEBUG] 復元: {key} -> {type(value)} (length: {len(value) if isinstance(value, (list, dict, str)) else 'N/A'})")
+                        
+                        # question_queueが空の場合、current_q_groupから復元
+                        if not st.session_state.get("question_queue") and st.session_state.get("current_q_group"):
+                            st.session_state["question_queue"] = st.session_state["current_q_group"][:]
+                            print(f"[DEBUG] question_queueを復元: {len(st.session_state['question_queue'])} items")
+                        
+                        # セッション継続フラグを設定
+                        st.session_state["continue_previous"] = True
+                        st.session_state["session_choice_made"] = True
+                        
+                        # メインページでの復元処理をスキップするフラグ
+                        st.session_state["sidebar_restored"] = True
+                        
+                        print(f"[DEBUG] サイドバーからのセッション復元完了")
+                        st.success("前回のセッション状態を復元しました！")
+                        st.rerun()
+                    else:
+                        print(f"[DEBUG] セッション復元失敗 - saved_stateがNone")
+                        st.error("セッション復元に失敗しました。")
+                
+                # セッションクリアボタン
+                if st.button("🗑️ 前回のセッションを削除", key="sidebar_clear_session"):
+                    print(f"[DEBUG] 🗑️ サイドバーセッションクリアボタンがクリックされました！")
+                    firestore_manager.clear_session_state(uid)
+                    st.success("前回のセッションを削除しました")
+                    st.rerun()
+            
+            st.divider()
             
         # --- 演習ページのサイドバー ---
         st.markdown("### 🎓 学習ハブ")
@@ -1768,6 +1853,8 @@ def render_practice_sidebar():
                 
 
                 try:
+                    print(f"[DEBUG] 学習統計計算開始 - カード数: {len(cards)}, 今日: {today}")
+                    debug_count = 0
                     for q_num, card in cards.items():
                         if not isinstance(card, dict) or q_num in processed_cards:
                             continue
@@ -1787,7 +1874,13 @@ def render_practice_sidebar():
                                 try:
                                     review_datetime_jst = get_japan_datetime_from_timestamp(review_timestamp)
                                     review_date_obj = review_datetime_jst.date()
-                                except Exception:
+                                    if debug_count < 3:  # 最初の3件だけデバッグ出力
+                                        print(f"[DEBUG] カード{q_num}: 日付={review_date_obj}, 今日={today}, 一致={review_date_obj == today}")
+                                        debug_count += 1
+                                except Exception as e:
+                                    if debug_count < 3:
+                                        print(f"[DEBUG] タイムスタンプ解析エラー: {review_timestamp}, エラー: {e}")
+                                        debug_count += 1
                                     continue
                                 
                                 if review_date_obj == today:
@@ -1855,6 +1948,9 @@ def render_practice_sidebar():
                 # 残り目標数を計算（安全な値チェック付き）
                 review_remaining = max(0, review_count - today_reviews_done) if isinstance(review_count, int) and isinstance(today_reviews_done, int) else 0
                 new_remaining = max(0, new_target - today_new_done) if isinstance(new_target, int) and isinstance(today_new_done, int) else 0
+                
+                # デバッグ: 学習統計の計算結果
+                print(f"[DEBUG] 学習統計計算: review_done={today_reviews_done}, new_done={today_new_done}, review_target={review_count}, new_target={new_target}")
 
                 # 本日の進捗サマリー
                 total_done = today_reviews_done + today_new_done
@@ -2009,7 +2105,21 @@ def render_practice_sidebar():
 
                             if save_user_data:
                                 print(f"💾 学習セッション状態を保存中...")
-                                save_user_data(st.session_state.get("uid"), st.session_state)
+                                
+                                # セッションメタデータを追加
+                                import datetime
+                                session_data = dict(st.session_state)
+                                session_data["session_metadata"] = {
+                                    "is_active_session": True,
+                                    "session_type": "today_study",
+                                    "session_start_time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                                    "last_activity_time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                                    "current_question_index": session_data.get("current_question_index", 0),
+                                    "total_questions": len(grouped_queue),
+                                    "total_questions_answered": 0
+                                }
+                                
+                                save_user_data(st.session_state.get("uid"), session_data)
                                 print(f"✅ セッション状態保存完了")
                             else:
                                 print(f"❌ save_user_data関数が利用できません（セッション保存）")
@@ -2209,7 +2319,21 @@ def render_practice_sidebar():
 
                         if save_user_data:
                             print(f"💾 自由演習セッション状態を保存中...")
-                            save_user_data(st.session_state.get("uid"), st.session_state)
+                            
+                            # セッションメタデータを追加
+                            import datetime
+                            session_data = dict(st.session_state)
+                            session_data["session_metadata"] = {
+                                "is_active_session": True,
+                                "session_type": "free_practice",
+                                "session_start_time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                                "last_activity_time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                                "current_question_index": session_data.get("current_question_index", 0),
+                                "total_questions": len(grouped_queue),
+                                "total_questions_answered": 0
+                            }
+                            
+                            save_user_data(st.session_state.get("uid"), session_data)
                             print(f"✅ 自由演習セッション状態保存完了")
                         else:
                             print(f"❌ save_user_data関数が利用できません（自由演習）")

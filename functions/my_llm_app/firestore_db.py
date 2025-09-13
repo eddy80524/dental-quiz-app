@@ -408,11 +408,11 @@ class FirestoreManager:
                 
                 # 演習セッション継続のための情報を追加
                 "session_metadata": {
-                    "session_type": session_data.get("session_type", ""),
-                    "session_start_time": session_data.get("session_start_time", ""),
-                    "current_question_index": session_data.get("current_question_index", 0),
-                    "total_questions_answered": session_data.get("total_questions_answered", 0),
-                    "is_active_session": session_data.get("is_active_session", False),
+                    "session_type": session_data.get("session_metadata", {}).get("session_type", session_data.get("session_type", "")),
+                    "session_start_time": session_data.get("session_metadata", {}).get("session_start_time", session_data.get("session_start_time", "")),
+                    "current_question_index": session_data.get("session_metadata", {}).get("current_question_index", session_data.get("current_question_index", 0)),
+                    "total_questions_answered": session_data.get("session_metadata", {}).get("total_questions_answered", session_data.get("total_questions_answered", 0)),
+                    "is_active_session": session_data.get("session_metadata", {}).get("is_active_session", session_data.get("is_active_session", True)),
                     "last_activity_time": datetime.datetime.utcnow().isoformat()
                 }
             }
@@ -665,12 +665,109 @@ class FirestoreManager:
             print(f"[ERROR] 画像URL取得エラー: {e}")
             return None
 
+    def has_resumable_session(self, uid: str) -> bool:
+        """ユーザーが再開可能な演習セッションを持っているかチェック"""
+        if not uid:
+            return False
+        
+        try:
+            session_data = self.load_session_state(uid)
+            print(f"[DEBUG] セッション継続チェック - UID: {uid[:8]}...")
+            
+            # セッションメタデータから継続可能性をチェック
+            session_metadata = session_data.get('session_metadata', {})
+            print(f"[DEBUG] セッションメタデータ: {session_metadata}")
+            
+            # アクティブなセッションかつ問題キューが存在するかチェック
+            is_active = session_metadata.get('is_active_session', False)
+            
+            # 複数の問題キューをチェック（後方互換性も考慮）
+            has_questions = bool(
+                session_data.get('question_queue', []) or 
+                session_data.get('main_queue', []) or 
+                session_data.get('current_q_group', [])
+            )
+            
+            print(f"[DEBUG] is_active_session: {is_active}")
+            print(f"[DEBUG] has_questions: {has_questions}")
+            print(f"[DEBUG] question_queue length: {len(session_data.get('question_queue', []))}")
+            print(f"[DEBUG] main_queue length: {len(session_data.get('main_queue', []))}")
+            print(f"[DEBUG] current_q_group length: {len(session_data.get('current_q_group', []))}")
+            
+            # 最終活動時間をチェック（24時間以内）
+            last_activity = session_metadata.get('last_activity_time')
+            if last_activity:
+                try:
+                    if isinstance(last_activity, str):
+                        last_activity_dt = datetime.datetime.fromisoformat(last_activity.replace('Z', '+00:00'))
+                    else:
+                        last_activity_dt = last_activity
+                    
+                    # 24時間以内の活動かチェック
+                    time_diff = datetime.datetime.now(datetime.timezone.utc) - last_activity_dt.replace(tzinfo=datetime.timezone.utc)
+                    is_recent = time_diff.total_seconds() < 24 * 3600
+                    
+                    print(f"[DEBUG] last_activity_time: {last_activity}")
+                    print(f"[DEBUG] is_recent: {is_recent} (time_diff: {time_diff})")
+                    
+                    result = is_active and has_questions and is_recent
+                    print(f"[DEBUG] 継続可能セッション判定結果: {result}")
+                    print(f"[DEBUG] 判定条件 - is_active: {is_active}, has_questions: {has_questions}, is_recent: {is_recent}")
+                    return result
+                except Exception as e:
+                    print(f"[DEBUG] 時間解析エラー: {e}")
+                    result = is_active and has_questions
+                    print(f"[DEBUG] 継続可能セッション判定結果（時間チェック失敗）: {result}")
+                    return result
+            
+            result = is_active and has_questions
+            print(f"[DEBUG] 継続可能セッション判定結果（活動時間なし）: {result}")
+            return result
+            
+        except Exception as e:
+            print(f"[ERROR] セッション継続確認エラー: {e}")
+            return False
+
+    def clear_session_state(self, uid: str) -> bool:
+        """ユーザーのセッション状態をクリア"""
+        if not uid:
+            return False
+        
+        try:
+            session_data = {
+                'session_metadata': {
+                    'is_active_session': False,
+                    'session_type': None,
+                    'last_activity_time': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    'session_cleared': True
+                },
+                'question_queue': [],
+                'current_question_index': 0,
+                'total_questions': 0,
+                'session_answers': []
+            }
+            
+            # セッション状態を保存
+            result = self.save_session_state(uid, session_data)
+            
+            if result:
+                print(f"[DEBUG] ユーザー {uid} のセッション状態をクリアしました")
+            
+            return result
+            
+        except Exception as e:
+            print(f"[ERROR] セッション状態クリアエラー: {e}")
+            return False
+
 
 # グローバルインスタンス
 @st.cache_resource
 def get_firestore_manager():
     """FirestoreManagerのシングルトンインスタンスを取得"""
-    return FirestoreManager()
+    print("[DEBUG] FirestoreManagerインスタンスを作成中...")
+    manager = FirestoreManager()
+    print(f"[DEBUG] 作成されたインスタンスのメソッド: has_resumable_session={hasattr(manager, 'has_resumable_session')}, clear_session_state={hasattr(manager, 'clear_session_state')}")
+    return manager
 
 
 # 後方互換性のための関数
@@ -793,66 +890,6 @@ def list_all_permissions() -> Dict[str, Dict[str, bool]]:
     except Exception as e:
         print(f"[ERROR] 権限リスト取得エラー: {e}")
         return {}
-
-    def has_resumable_session(self, uid: str) -> bool:
-        """ユーザーが再開可能な演習セッションを持っているかチェック"""
-        if not uid:
-            return False
-        
-        try:
-            session_data = self.load_session_state(uid)
-            
-            # セッションメタデータから継続可能性をチェック
-            session_metadata = session_data.get("session_metadata", {})
-            is_active = session_metadata.get("is_active_session", False)
-            current_group = session_data.get("current_q_group", [])
-            main_queue = session_data.get("main_queue", [])
-            session_type = session_metadata.get("session_type", "")
-            last_activity = session_metadata.get("last_activity_time", "")
-            
-            # 継続可能な条件をチェック
-            has_questions = bool(current_group or main_queue)
-            has_recent_activity = False
-            
-            if last_activity:
-                try:
-                    import datetime
-                    last_time = datetime.datetime.fromisoformat(last_activity.replace('Z', '+00:00'))
-                    now = datetime.datetime.now(datetime.timezone.utc)
-                    hours_diff = (now - last_time).total_seconds() / 3600
-                    has_recent_activity = hours_diff < 24  # 24時間以内
-                except Exception:
-                    has_recent_activity = False
-            
-            # 復元可能なセッションがあるかどうか
-            return is_active and has_questions and has_recent_activity and session_type
-                
-        except Exception as e:
-            print(f"[ERROR] セッション復元チェックエラー: {e}")
-            return False
-
-    def clear_session_state(self, uid: str) -> bool:
-        """演習セッション状態をクリア（完了時やリセット時に使用）"""
-        if not uid:
-            return False
-        
-        try:
-            # セッション状態をクリア
-            empty_session = {
-                "session_metadata": {
-                    "is_active_session": False,
-                    "last_activity_time": datetime.datetime.now(datetime.timezone.utc).isoformat()
-                }
-            }
-            
-            return self.save_session_state(uid, empty_session)
-            
-        except Exception as e:
-            print(f"[ERROR] セッション状態クリアエラー: {e}")
-            return False
-
-
-# グローバル関数
 
 
 # グローバル関数
