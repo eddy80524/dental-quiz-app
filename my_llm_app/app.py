@@ -607,14 +607,20 @@ class DentalApp:
             if has_saved_password:
                 st.info("🔐 ログイン情報が保存されています。通常はアプリ起動時に自動ログインされます。")
             
-            # ブラウザのパスワード自動入力を抑制するためのCSS
+            # ブラウザのパスワード自動入力を有効にするためのCSS
             st.markdown("""
             <style>
+            /* ブラウザのパスワード自動入力を有効化 */
             input[type="password"] {
-                autocomplete: new-password !important;
+                autocomplete: current-password !important;
             }
-            input[data-testid="textInput"] {
-                autocomplete: off !important;
+            /* メールアドレス入力も自動入力を有効化 */
+            input[data-testid="textInput"]:first-of-type {
+                autocomplete: email !important;
+            }
+            /* フォーム識別のための名前属性を設定 */
+            form[data-testid="form"] {
+                name: "login-form";
             }
             </style>
             """, unsafe_allow_html=True)
@@ -657,38 +663,61 @@ class DentalApp:
                 # ログインボタン（シンプルな1つのボタンのみ）
                 login_submitted = st.form_submit_button("ログイン", type="primary", use_container_width=True)
                 
-                # ログイン処理
-                if login_submitted:
-                    if email and password:
-                        # セッション状態を更新
-                        st.session_state["login_email_value"] = email
-                        st.session_state["login_password_value"] = password
-                        
-                        # ログインボタンが押されたら、まずフォームをスピナーに置き換える
-                        login_container.empty()
-                        with login_container.container():
-                            with st.spinner("ログイン中..."):
-                                result = self.auth_manager.signin(email, password)
-                                
-                                if "error" in result:
-                                    # ❌ Failure: エラーメッセージを表示
-                                    error_message = result["error"]["message"]
-                                    if "INVALID_PASSWORD" in error_message:
-                                        st.error("パスワードが正しくありません")
-                                    elif "EMAIL_NOT_FOUND" in error_message:
-                                        st.error("このメールアドレスは登録されていません")
-                                    elif "INVALID_EMAIL" in error_message:
-                                        st.error("メールアドレスの形式が正しくありません")
-                                    else:
-                                        st.error(f"ログインエラー: {error_message}")
-                                    
-                                    time.sleep(2)  # エラーメッセージ表示のための待機
-                                    st.rerun()  # フォームを再表示
-                                    
+            # JavaScriptでautocomplete属性を動的に設定（ブラウザの自動入力を有効化）
+            st.markdown("""
+            <script>
+            setTimeout(function() {
+                const emailInput = document.querySelector('input[data-testid="textInput"]');
+                const passwordInput = document.querySelector('input[type="password"]');
+                const form = document.querySelector('form[data-testid="form"]');
+                
+                if (emailInput) {
+                    emailInput.setAttribute('autocomplete', 'email');
+                    emailInput.setAttribute('name', 'email');
+                }
+                if (passwordInput) {
+                    passwordInput.setAttribute('autocomplete', 'current-password');
+                    passwordInput.setAttribute('name', 'password');
+                }
+                if (form) {
+                    form.setAttribute('name', 'login-form');
+                }
+            }, 100);
+            </script>
+            """, unsafe_allow_html=True)
+                
+            # ログイン処理
+            if login_submitted:
+                if email and password:
+                    # セッション状態を更新
+                    st.session_state["login_email_value"] = email
+                    st.session_state["login_password_value"] = password
+                    
+                    # ログインボタンが押されたら、まずフォームをスピナーに置き換える
+                    login_container.empty()
+                    with login_container.container():
+                        with st.spinner("ログイン中..."):
+                            result = self.auth_manager.signin(email, password)
+                            
+                            if "error" in result:
+                                # ❌ Failure: エラーメッセージを表示
+                                error_message = result["error"]["message"]
+                                if "INVALID_PASSWORD" in error_message:
+                                    st.error("パスワードが正しくありません")
+                                elif "EMAIL_NOT_FOUND" in error_message:
+                                    st.error("このメールアドレスは登録されていません")
+                                elif "INVALID_EMAIL" in error_message:
+                                    st.error("メールアドレスの形式が正しくありません")
                                 else:
-                                    # ✅ Success: ログイン成功
-                                    if save_password:
-                                        st.success("ログインしました！")
+                                    st.error(f"ログインエラー: {error_message}")
+                                
+                                time.sleep(2)  # エラーメッセージ表示のための待機
+                                st.rerun()  # フォームを再表示
+                                
+                            else:
+                                # ✅ Success: ログイン成功
+                                if save_password:
+                                    st.success("ログインしました！")
                                     else:
                                         st.success("ログインしました！")
                                     
@@ -723,11 +752,11 @@ class DentalApp:
                                     
                                     time.sleep(0.5)  # 成功メッセージ表示のための短い待機
                                     st.rerun()  # メインページに遷移
-                        
-                    elif not email:
-                        st.error("メールアドレスを入力してください")
-                    elif not password:
-                        st.error("パスワードを入力してください")
+                    
+                elif not email:
+                    st.error("メールアドレスを入力してください")
+                elif not password:
+                    st.error("パスワードを入力してください")
     
     def _render_signup_tab(self):
         """新規登録タブの描画"""

@@ -1004,6 +1004,59 @@ def render_practice_page(auth_manager=None):
         st.error("ユーザーIDが見つかりません。")
         return
     
+    # セッション継続チェック（最初の一回のみ実行）
+    if not st.session_state.get("session_continuity_checked", False):
+        st.session_state["session_continuity_checked"] = True
+        
+        # Firestore DBから継続可能なセッションをチェック
+        try:
+            from firestore_db import FirestoreManager
+            firestore_manager = FirestoreManager()
+            
+            # 継続可能なセッションがあるかチェック
+            if firestore_manager.has_resumable_session(uid):
+                st.warning("⚠️ 前回の演習セッションが完了していません。")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("🔄 前回の続きから開始", type="primary", key="resume_session"):
+                        # 前回のセッション状態を復元
+                        saved_state = firestore_manager.load_session_state(uid)
+                        if saved_state:
+                            # セッション状態を復元
+                            for key, value in saved_state.items():
+                                if key != "session_metadata":  # メタデータは別途処理
+                                    st.session_state[key] = value
+                            
+                            # セッション継続フラグを設定
+                            st.session_state["continue_previous"] = True
+                            st.session_state["session_choice_made"] = True
+                            
+                            st.success("前回のセッション状態を復元しました！")
+                            st.rerun()
+                        else:
+                            st.error("セッション復元に失敗しました。")
+                
+                with col2:
+                    if st.button("🆕 新しいセッションを開始", key="start_new_session"):
+                        # 古いセッション情報をクリア
+                        firestore_manager.clear_session_state(uid)
+                        st.session_state["session_continuity_checked"] = False
+                        
+                        # ページ状態をリセット
+                        for key in list(st.session_state.keys()):
+                            if key.startswith(("session_", "current_", "main_", "short_term_")):
+                                del st.session_state[key]
+                        
+                        st.success("新しいセッションの準備が完了しました！")
+                        st.rerun()
+                
+                # ユーザーが選択するまで待機
+                st.stop()
+                
+        except Exception as e:
+            print(f"セッション継続チェックエラー: {e}")
+            # エラーが発生した場合は通常通り続行
     
     # 前回セッション復帰処理
     if st.session_state.get("continue_previous") and st.session_state.get("session_choice_made"):
@@ -1612,6 +1665,17 @@ def _reset_session():
     
     for key in keys_to_remove:
         st.session_state.pop(key, None)
+    
+    # Firestoreのセッション状態もクリア
+    try:
+        uid = st.session_state.get("uid")
+        if uid:
+            from firestore_db import FirestoreManager
+            firestore_manager = FirestoreManager()
+            firestore_manager.clear_session_state(uid)
+            print(f"✅ Firestoreセッション状態をクリアしました（UID: {uid}）")
+    except Exception as e:
+        print(f"❌ Firestoreセッション状態クリアエラー: {e}")
     
     st.success("🔄 セッションをリセットしました")
     st.rerun()

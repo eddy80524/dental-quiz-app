@@ -196,7 +196,16 @@ class FirestoreManager:
                 result = {
                     "current_q_group": deserialize_queue(session_data.get("current_q_group", [])),
                     "main_queue": deserialize_queue(session_data.get("main_queue", [])),
-                    "short_term_review_queue": session_data.get("short_term_review_queue", [])
+                    "short_term_review_queue": session_data.get("short_term_review_queue", []),
+                    
+                    # セッションメタデータを追加
+                    "session_metadata": session_data.get("session_metadata", {}),
+                    "session_type": session_data.get("session_metadata", {}).get("session_type", ""),
+                    "session_start_time": session_data.get("session_metadata", {}).get("session_start_time", ""),
+                    "current_question_index": session_data.get("session_metadata", {}).get("current_question_index", 0),
+                    "total_questions_answered": session_data.get("session_metadata", {}).get("total_questions_answered", 0),
+                    "is_active_session": session_data.get("session_metadata", {}).get("is_active_session", False),
+                    "last_activity_time": session_data.get("session_metadata", {}).get("last_activity_time", "")
                 }
                 
                 return result
@@ -395,7 +404,17 @@ class FirestoreManager:
                 "main_queue": serialize_queue(session_data.get("main_queue", [])),
                 "short_term_review_queue": session_data.get("short_term_review_queue", []),
                 "result_log": session_data.get("result_log", {}),
-                "last_updated": datetime.datetime.utcnow().isoformat()
+                "last_updated": datetime.datetime.utcnow().isoformat(),
+                
+                # 演習セッション継続のための情報を追加
+                "session_metadata": {
+                    "session_type": session_data.get("session_type", ""),
+                    "session_start_time": session_data.get("session_start_time", ""),
+                    "current_question_index": session_data.get("current_question_index", 0),
+                    "total_questions_answered": session_data.get("total_questions_answered", 0),
+                    "is_active_session": session_data.get("is_active_session", False),
+                    "last_activity_time": datetime.datetime.utcnow().isoformat()
+                }
             }
             
             session_ref = self.db.collection("users").document(uid).collection("sessionState").document("current")
@@ -752,11 +771,92 @@ def get_user_permissions(uid: str) -> Dict[str, bool]:
 
 
 def list_all_permissions() -> Dict[str, Dict[str, bool]]:
-    """全ユーザーの権限一覧を取得"""
+    """全ユーザーの権限リストを取得（管理者用）"""
     manager = get_firestore_manager()
-    return manager.list_all_user_permissions()
+    
+    try:
+        users_collection = manager.db.collection("users")
+        docs = users_collection.get()
+        
+        permissions = {}
+        for doc in docs:
+            user_data = doc.to_dict()
+            uid = doc.id
+            email = user_data.get("email", "Unknown")
+            
+            permissions[uid] = {
+                "email": email,
+                "has_gakushi_permission": user_data.get("has_gakushi_permission", False)
+            }
+        
+        return permissions
+    except Exception as e:
+        print(f"[ERROR] 権限リスト取得エラー: {e}")
+        return {}
+
+    def has_resumable_session(self, uid: str) -> bool:
+        """ユーザーが再開可能な演習セッションを持っているかチェック"""
+        if not uid:
+            return False
+        
+        try:
+            session_data = self.load_session_state(uid)
+            
+            # セッションメタデータから継続可能性をチェック
+            session_metadata = session_data.get("session_metadata", {})
+            is_active = session_metadata.get("is_active_session", False)
+            current_group = session_data.get("current_q_group", [])
+            main_queue = session_data.get("main_queue", [])
+            session_type = session_metadata.get("session_type", "")
+            last_activity = session_metadata.get("last_activity_time", "")
+            
+            # 継続可能な条件をチェック
+            has_questions = bool(current_group or main_queue)
+            has_recent_activity = False
+            
+            if last_activity:
+                try:
+                    import datetime
+                    last_time = datetime.datetime.fromisoformat(last_activity.replace('Z', '+00:00'))
+                    now = datetime.datetime.now(datetime.timezone.utc)
+                    hours_diff = (now - last_time).total_seconds() / 3600
+                    has_recent_activity = hours_diff < 24  # 24時間以内
+                except Exception:
+                    has_recent_activity = False
+            
+            # 復元可能なセッションがあるかどうか
+            return is_active and has_questions and has_recent_activity and session_type
+                
+        except Exception as e:
+            print(f"[ERROR] セッション復元チェックエラー: {e}")
+            return False
+
+    def clear_session_state(self, uid: str) -> bool:
+        """演習セッション状態をクリア（完了時やリセット時に使用）"""
+        if not uid:
+            return False
+        
+        try:
+            # セッション状態をクリア
+            empty_session = {
+                "session_metadata": {
+                    "is_active_session": False,
+                    "last_activity_time": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                }
+            }
+            
+            return self.save_session_state(uid, empty_session)
+            
+        except Exception as e:
+            print(f"[ERROR] セッション状態クリアエラー: {e}")
+            return False
+
+
+# グローバル関数
+def check_user_permission(uid: str, permission: str = "can_access_gakushi") -> bool:
+    """ユーザー権限をチェック"""
     manager = get_firestore_manager()
-    return manager.check_user_permission(uid, "can_access_gakushi")
+    return manager.check_user_permission(uid, permission)
 
 
 def fetch_ranking_data(limit: int = 100) -> List[Dict[str, Any]]:
