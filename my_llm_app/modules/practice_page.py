@@ -532,9 +532,13 @@ class AnswerModeComponent:
                         user_ans = ''.join(q_result.get('user_answer', []))
                         correct_answer = q_result.get('correct_answer', '')
                         
+                        # 問題の選択肢情報を取得
+                        question = next((q for q in questions if q.get('number') == qid), None)
+                        question_choices = question.get('choices', []) if question else []
+                        
                         from utils import QuestionUtils
                         main_msg, additional_info = QuestionUtils.get_answer_feedback_message(
-                            user_ans, correct_answer, True
+                            user_ans, correct_answer, True, question_choices
                         )
                         
                         if additional_info:
@@ -553,9 +557,13 @@ class AnswerModeComponent:
                         user_ans = ''.join(q_result.get('user_answer', [])) or '無回答'
                         correct_answer = q_result.get('correct_answer', '')
                         
+                        # 問題の選択肢情報を取得
+                        question = next((q for q in questions if q.get('number') == qid), None)
+                        question_choices = question.get('choices', []) if question else []
+                        
                         from utils import QuestionUtils
                         main_msg, additional_info = QuestionUtils.get_answer_feedback_message(
-                            user_ans, correct_answer, False
+                            user_ans, correct_answer, False, question_choices
                         )
                         
                         # 連問でもシャッフル後の正解を使用
@@ -584,8 +592,12 @@ class AnswerModeComponent:
                                 correct_answer = q_result.get('correct_answer', '')
                                 
                                 from utils import QuestionUtils
+                                # 問題の選択肢情報を取得
+                                question = next((q for q in questions if q.get('number') == qid), None)
+                                question_choices = question.get('choices', []) if question else []
+                                
                                 _, additional_info = QuestionUtils.get_answer_feedback_message(
-                                    user_ans, correct_answer, False
+                                    user_ans, correct_answer, False, question_choices
                                 )
                                 
                                 # シャッフル後の正解ラベルと選択肢テキストを取得
@@ -703,9 +715,13 @@ class AnswerModeComponent:
                         user_ans = ''.join(q_result.get('user_answer', []))
                         correct_answer = q_result.get('correct_answer', '')
                         
+                        # 問題の選択肢情報を取得
+                        question = next((q for q in questions if q.get('number') == qid), None)
+                        question_choices = question.get('choices', []) if question else []
+                        
                         from utils import QuestionUtils
                         main_msg, additional_info = QuestionUtils.get_answer_feedback_message(
-                            user_ans, correct_answer, True
+                            user_ans, correct_answer, True, question_choices
                         )
                         
                         if additional_info:
@@ -736,8 +752,8 @@ class AnswerModeComponent:
                                 correct_answer = q_result.get('correct_answer', '')
                                 from utils import QuestionUtils
                                 _, additional_info = QuestionUtils.get_answer_feedback_message(
-                                    user_ans, correct_answer, True
-                                )
+                            user_ans, correct_answer, True, question_choices
+                        )
                                 correct_display = additional_info or f"正解：{correct_answer}"
                             
                             st.success(f"**{qid}**: ✅ 正解！ あなたの解答: `{user_ans}` | 正解：{correct_display}")
@@ -750,9 +766,13 @@ class AnswerModeComponent:
                         user_ans = ''.join(q_result.get('user_answer', [])) or '無回答'
                         correct_answer = q_result.get('correct_answer', '')
                         
+                        # 問題の選択肢情報を取得
+                        question = next((q for q in questions if q.get('number') == qid), None)
+                        question_choices = question.get('choices', []) if question else []
+                        
                         from utils import QuestionUtils
                         main_msg, additional_info = QuestionUtils.get_answer_feedback_message(
-                            user_ans, correct_answer, False
+                            user_ans, correct_answer, False, question_choices
                         )
                         
                         # 単一問題でもシャッフル後の正解を使用
@@ -796,8 +816,12 @@ class AnswerModeComponent:
                             else:
                                 # フォールバック: 元の正解ラベルを表示
                                 from utils import QuestionUtils
+                                # 問題の選択肢情報を取得
+                                question = next((q for q in questions if q.get('number') == qid), None)
+                                question_choices = question.get('choices', []) if question else []
+                                
                                 _, additional_info = QuestionUtils.get_answer_feedback_message(
-                                    user_ans, correct_answer, False
+                                    user_ans, correct_answer, False, question_choices
                                 )
                                 correct_display = additional_info or f"正解：{correct_answer}"
                             

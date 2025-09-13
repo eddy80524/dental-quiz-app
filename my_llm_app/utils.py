@@ -441,7 +441,7 @@ class QuestionUtils:
         return correct_answer.upper()
     
     @staticmethod
-    def get_answer_feedback_message(user_choice: str, correct_answer: str, is_correct: bool) -> tuple:
+    def get_answer_feedback_message(user_choice: str, correct_answer: str, is_correct: bool, question_choices: List[str] = None) -> tuple:
         """
         複数正解対応の回答フィードバックメッセージを生成
         
@@ -449,6 +449,7 @@ class QuestionUtils:
             user_choice: ユーザーの選択
             correct_answer: 正解
             is_correct: 正解かどうか
+            question_choices: 問題の選択肢リスト（ラベルを選択肢テキストに変換するため）
         
         Returns:
             tuple: (main_message, additional_info)
@@ -458,6 +459,19 @@ class QuestionUtils:
         
         # 全角スラッシュを半角に統一
         normalized_answer = correct_answer.replace('／', '/')
+        
+        # 選択肢ラベルを選択肢テキストに変換するヘルパー関数
+        def label_to_text(label: str) -> str:
+            if not question_choices:
+                return label
+            
+            # ラベル（A, B, C, D, E）を対応する選択肢テキストに変換
+            choice_labels = ['A', 'B', 'C', 'D', 'E']
+            if label.upper() in choice_labels:
+                index = choice_labels.index(label.upper())
+                if index < len(question_choices):
+                    return f"{label.upper()}. {question_choices[index]}"
+            return label
         
         if is_correct:
             # 正解の場合
@@ -471,10 +485,12 @@ class QuestionUtils:
                 
                 main_msg = "✅ 正解！"
                 if other_correct:
-                    if len(other_correct) == 1:
-                        additional_info = f"{other_correct[0]}も正答です"
+                    # 他の正解を選択肢テキストに変換
+                    other_correct_texts = [label_to_text(ans) for ans in other_correct]
+                    if len(other_correct_texts) == 1:
+                        additional_info = f"{other_correct_texts[0]} も正答です"
                     else:
-                        additional_info = f"{', '.join(other_correct)}も正答です"
+                        additional_info = f"{' または '.join(other_correct_texts)} も正答です"
                 else:
                     additional_info = ""
                 
@@ -485,10 +501,12 @@ class QuestionUtils:
             # 不正解の場合
             if '/' in normalized_answer:
                 answers = [ans.strip() for ans in normalized_answer.split('/')]
-                formatted_answers = " または ".join(answers)
+                # 正解選択肢を選択肢テキストに変換
+                formatted_answers = " または ".join([label_to_text(ans) for ans in answers])
                 return ("❌ 不正解", f"正解は {formatted_answers} です")
             else:
-                return ("❌ 不正解", f"正解は {correct_answer} です")
+                formatted_answer = label_to_text(correct_answer)
+                return ("❌ 不正解", f"正解は {formatted_answer} です")
     
     @staticmethod
     def build_gakushi_indices(all_questions: List[Dict[str, Any]]):
