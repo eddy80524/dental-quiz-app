@@ -369,6 +369,21 @@ def update_rankings(request):
         logging.info("=== ランキング更新処理が正常に完了しました ===")
         logging.info(f"処理時間: {processing_time:.2f}秒")
         
+        # UIステータス保存（ドライランでも実行）
+        try:
+            status_doc = {
+                'updated_at_jst': datetime.datetime.now(JST),
+                'total_users': total_written,
+                'mastery_users': mastery_written,
+                'processing_time_seconds': processing_time,
+                'dry_run': dry_run,
+                'status': 'success'
+            }
+            db.collection('ranking_status').document('daily').set(status_doc)
+            logging.info("UI更新ステータスを保存しました（ドライランモード）")
+        except Exception as e:
+            logging.error(f"UI更新ステータス保存エラー（ドライランモード）: {e}")
+        
         return {
             "status": "success",
             "message": "ランキング更新が正常に完了しました",
@@ -463,6 +478,20 @@ def updateRankings(request: Request) -> Dict[str, Any]:
         
         end_time = datetime.datetime.now(JST)
         execution_time = (end_time - start_time).total_seconds()
+        
+        # UI用の更新ステータスをFirestoreに保存
+        try:
+            status_doc = {
+                "updated_at_jst": start_time.strftime("%Y年%m月%d日 %H:%M"),
+                "total_users": update_result.get("processed", 0),
+                "processing_time_seconds": execution_time,
+                "updated_at": start_time.isoformat(),
+                "last_update_date": start_time.strftime("%Y-%m-%d")
+            }
+            db.collection("ranking_status").document("daily").set(status_doc, merge=True)
+            logger.info("ランキング更新ステータスをFirestoreに保存しました")
+        except Exception as e:
+            logger.error(f"ステータス保存エラー: {e}")
         
         result = {
             'status': 'success',

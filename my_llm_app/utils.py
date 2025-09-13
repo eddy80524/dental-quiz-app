@@ -77,9 +77,10 @@ except ImportError:
 
 # Google Analytics設定
 try:
-    GA_MEASUREMENT_ID = st.secrets.get("google_analytics_id", "G-XXXXXXXXXX")
+    # 実際のFirebase Analytics IDを設定
+    GA_MEASUREMENT_ID = st.secrets.get("google_analytics_id", "G-4V14HSE21L")  # Firebase プロジェクトの実際のID
 except:
-    GA_MEASUREMENT_ID = "G-XXXXXXXXXX"  # フォールバック値
+    GA_MEASUREMENT_ID = "G-4V14HSE21L"  # Firebase プロジェクトの実際のID
 
 
 class AnalyticsUtils:
@@ -87,40 +88,135 @@ class AnalyticsUtils:
     
     @staticmethod
     def inject_ga_script():
-        """Google Analytics スクリプトを注入"""
-        ga_script = f"""
-        <!-- Google tag (gtag.js) -->
-        <script async src="https://www.googletagmanager.com/gtag/js?id={GA_MEASUREMENT_ID}"></script>
-        <script>
-          window.dataLayer = window.dataLayer || [];
-          function gtag(){{dataLayer.push(arguments);}}
-          gtag('js', new Date());
-          gtag('config', '{GA_MEASUREMENT_ID}', {{
-            cookie_domain: 'auto',
-            cookie_flags: 'SameSite=None;Secure'
-          }});
-        </script>
-        """
-        components.html(ga_script, height=0)
+        """Google Analytics 標準タグを注入"""
+        if GA_MEASUREMENT_ID and GA_MEASUREMENT_ID != "G-XXXXXXXXXX":
+            # Google Analytics 標準実装
+            ga_script = f"""
+            <!-- Google tag (gtag.js) -->
+            <script async src="https://www.googletagmanager.com/gtag/js?id={GA_MEASUREMENT_ID}"></script>
+            <script>
+              window.dataLayer = window.dataLayer || [];
+              function gtag(){{dataLayer.push(arguments);}}
+              gtag('js', new Date());
+
+              gtag('config', '{GA_MEASUREMENT_ID}');
+              
+              // デバッグ用ログ
+              console.log('🔍 Google Analytics initialized:', '{GA_MEASUREMENT_ID}');
+            </script>
+            """
+            components.html(ga_script, height=0)
+            
+            # 追加のページビューイベント（確実にデータ送信するため）
+            page_view_script = f"""
+            <script>
+            // ページロード完了後にページビューを送信
+            window.addEventListener('load', function() {{
+                setTimeout(function() {{
+                    if (typeof gtag !== 'undefined') {{
+                        gtag('event', 'page_view', {{
+                            page_title: document.title || 'Dental Quiz App',
+                            page_location: window.location.href
+                        }});
+                        console.log('📊 Page view sent to GA4');
+                    }}
+                }}, 1000);
+            }});
+            </script>
+            """
+    @staticmethod
+    def inject_ga_script():
+        """Google Analytics 標準タグを<head>に注入"""
+        if GA_MEASUREMENT_ID and GA_MEASUREMENT_ID != "G-XXXXXXXXXX":
+            # <head>セクションにGoogle Analyticsタグを挿入
+            head_html = f"""
+            <script async src="https://www.googletagmanager.com/gtag/js?id={GA_MEASUREMENT_ID}"></script>
+            <script>
+              window.dataLayer = window.dataLayer || [];
+              function gtag(){{dataLayer.push(arguments);}}
+              gtag('js', new Date());
+
+              gtag('config', '{GA_MEASUREMENT_ID}');
+              
+              console.log('🔍 Google Analytics initialized:', '{GA_MEASUREMENT_ID}');
+            </script>
+            """
+            
+            # headタグに挿入
+            components.html(head_html, height=0)
+            
+            # 追加でbodyでページビューを送信
+            body_script = f"""
+            <script>
+              // ページが完全に読み込まれた後にページビューを送信
+              document.addEventListener('DOMContentLoaded', function() {{
+                if (typeof gtag !== 'undefined') {{
+                  gtag('event', 'page_view', {{
+                    page_title: document.title || 'Dental Quiz App',
+                    page_location: window.location.href,
+                    content_group1: 'StreamlitApp'
+                  }});
+                  console.log('📊 Page view sent to GA4');
+                }}
+              }});
+              
+              // 5秒後に追加のエンゲージメントイベント
+              setTimeout(function() {{
+                if (typeof gtag !== 'undefined') {{
+                  gtag('event', 'user_engagement', {{
+                    engagement_time_msec: 5000
+                  }});
+                  console.log('💓 User engagement sent to GA4');
+                }}
+              }}, 5000);
+            </script>
+            """
+            components.html(body_script, height=0)
     
     @staticmethod
     def track_event(event_name: str, parameters: Dict[str, Any] = None):
         """Google Analyticsイベントを追跡"""
+        if not GA_MEASUREMENT_ID or GA_MEASUREMENT_ID == "G-XXXXXXXXXX":
+            return  # 無効なIDの場合はスキップ
+            
         if parameters is None:
             parameters = {}
         
         # ユーザーIDを取得（セッション状態から）
-        user_id = st.session_state.get('user_id', 'anonymous')
+        user_id = st.session_state.get('uid', st.session_state.get('user_id', 'anonymous'))
         parameters['user_id'] = user_id
         
         # タイムスタンプを追加
         parameters['timestamp'] = datetime.datetime.now(JST).isoformat()
         
-        # JavaScriptでGoogle Analytics イベントを送信
+        # FirestoreとGoogle Analytics両方にログ
+        try:
+            # 1. Firestoreにログ（デバッグ用）
+            from firestore_db import get_firestore_manager
+            firestore_manager = get_firestore_manager()
+            if firestore_manager and firestore_manager.db:
+                analytics_doc = {
+                    'event_name': event_name,
+                    'parameters': parameters,
+                    'timestamp': datetime.datetime.now(JST),
+                    'user_id': user_id
+                }
+                firestore_manager.db.collection('analytics_events').add(analytics_doc)
+        except Exception as e:
+            print(f"Firestore analytics logging error: {e}")
+        
+        # 2. JavaScriptでGoogle Analytics イベントを送信
         ga_js = f"""
         <script>
-        if (typeof gtag !== 'undefined') {{
-            gtag('event', '{event_name}', {json.dumps(parameters)});
+        try {{
+            if (typeof gtag !== 'undefined') {{
+                gtag('event', '{event_name}', {json.dumps(parameters)});
+                console.log('GA Event sent:', '{event_name}', {json.dumps(parameters)});
+            }} else {{
+                console.warn('gtag not available for event: {event_name}');
+            }}
+        }} catch (error) {{
+            console.error('GA Event error:', error);
         }}
         </script>
         """
@@ -132,7 +228,8 @@ class AnalyticsUtils:
         AnalyticsUtils.track_event('study_session_start', {
             'session_type': session_type,
             'question_count': question_count,
-            'page_title': 'Practice Session'
+            'page_title': 'Practice Session',
+            'custom_parameter_1': 'dental_quiz_app'
         })
     
     @staticmethod
@@ -142,7 +239,8 @@ class AnalyticsUtils:
             'question_id': question_id,
             'is_correct': is_correct,
             'quality': quality,
-            'page_title': 'Practice Page'
+            'page_title': 'Practice Page',
+            'custom_parameter_1': 'dental_quiz_app'
         })
     
     @staticmethod
@@ -152,7 +250,8 @@ class AnalyticsUtils:
             'session_duration_minutes': round(session_duration / 60, 2),
             'questions_answered': questions_answered,
             'accuracy_percentage': round(accuracy * 100, 1),
-            'page_title': 'Practice Results'
+            'page_title': 'Practice Results',
+            'custom_parameter_1': 'dental_quiz_app'
         })
     
     @staticmethod
@@ -160,7 +259,25 @@ class AnalyticsUtils:
         """ページビューを追跡"""
         AnalyticsUtils.track_event('page_view', {
             'page_name': page_name,
-            'page_title': page_name
+            'page_title': page_name,
+            'custom_parameter_1': 'dental_quiz_app'
+        })
+    
+    @staticmethod
+    def track_user_login(uid: str, login_method: str = 'google'):
+        """ユーザーログインを追跡"""
+        AnalyticsUtils.track_event('login', {
+            'method': login_method,
+            'user_id': uid,
+            'custom_parameter_1': 'dental_quiz_app'
+        })
+    
+    @staticmethod
+    def track_app_engagement():
+        """アプリエンゲージメント（ハートビート）を追跡"""
+        AnalyticsUtils.track_event('user_engagement', {
+            'engagement_time_msec': 30000,  # 30秒
+            'custom_parameter_1': 'dental_quiz_app'
         })
 
 

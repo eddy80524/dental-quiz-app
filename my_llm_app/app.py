@@ -38,6 +38,29 @@ st.set_page_config(
     initial_sidebar_state="expanded"  # サイドバーを展開状態で開始
 )
 
+# 早期にGoogle Analyticsを初期化
+try:
+    from utils import AnalyticsUtils, GA_MEASUREMENT_ID
+    
+    # HTMLヘッダーにGoogle Analyticsタグを挿入
+    ga_head_html = f"""
+    <script async src="https://www.googletagmanager.com/gtag/js?id={GA_MEASUREMENT_ID}"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){{dataLayer.push(arguments);}}
+      gtag('js', new Date());
+      gtag('config', '{GA_MEASUREMENT_ID}');
+    </script>
+    """
+    st.markdown(ga_head_html, unsafe_allow_html=True)
+    
+    # ページロード時に即座にAnalyticsを初期化
+    if 'ga_early_init' not in st.session_state:
+        AnalyticsUtils.inject_ga_script()
+        st.session_state['ga_early_init'] = True
+except ImportError:
+    pass
+
 # モジュールのインポート
 from auth import AuthManager, CookieManager, call_cloud_function, get_user_permission
 from firestore_db import get_firestore_manager, check_gakushi_permission, save_user_data, get_user_profile_for_ranking, save_user_profile
@@ -180,6 +203,9 @@ class DentalApp:
     
     def track_page_navigation(self, page_name: str):
         """ページナビゲーション追跡"""
+        # Google Analytics ページビュー
+        AnalyticsUtils.track_page_view(page_name)
+        
         # ページビュー追跡
         # self.analytics.track_page_view(
         #     page_name=page_name,
@@ -203,6 +229,12 @@ class DentalApp:
             'login_timestamp': get_japan_now().isoformat(),  # 日本時間で記録
             'has_gakushi_permission': user_info.get('has_gakushi_permission', False)
         }
+        
+        # Google Analytics追跡
+        uid = user_info.get('uid')
+        if uid:
+            AnalyticsUtils.track_user_login(uid, 'manual_login')
+            AnalyticsUtils.track_page_view('main_app_manual_login')
         
         # self.analytics.track_user_login(
         #     login_method='firebase',
@@ -408,14 +440,11 @@ class DentalApp:
     def run(self):
         """アプリケーションのメイン実行（デフォルト設定版）"""
         # デフォルトのStreamlit設定を使用
+        # Google Analytics初期化（最初に実行して確実にロード）
+        AnalyticsUtils.inject_ga_script()
         
         # パフォーマンス最適化の適用
         apply_performance_optimizations()
-        
-        # Google Analytics初期化（ページ読み込み時に一度だけ実行）
-        if not st.session_state.get("ga_initialized"):
-            AnalyticsUtils.inject_ga_script()
-            st.session_state["ga_initialized"] = True
         
         # ユーザーのアクティビティ追跡
         self._track_user_activity()
@@ -438,6 +467,10 @@ class DentalApp:
                 self._initialize_user_profile()
                 
                 # ログイン成功追跡
+                uid = st.session_state.get('uid')
+                if uid:
+                    AnalyticsUtils.track_user_login(uid, 'auto_login')
+                    AnalyticsUtils.track_page_view('main_app_auto_login')
                 user_info = {
                     'uid': st.session_state.get('uid'),
                     'email': st.session_state.get('email'),
@@ -506,6 +539,12 @@ class DentalApp:
                         "timestamp": get_japan_now().isoformat(),  # 日本時間で記録
                         "user_agent": st.context.headers.get("User-Agent", "unknown") if hasattr(st.context, 'headers') else "unknown"
                     })
+                    
+                    # Google Analytics セッション開始
+                    AnalyticsUtils.track_event('session_start', {
+                        'session_type': 'web_app',
+                        'user_id': uid
+                    })
                     st.session_state["session_tracked"] = True
                 
                 # アクティブユーザーの追跡（5分ごと）
@@ -518,6 +557,9 @@ class DentalApp:
                         "active_duration_seconds": current_time - last_activity,
                         "current_page": st.session_state.get("current_page", "unknown")
                     })
+                    
+                    # Google Analytics エンゲージメント
+                    AnalyticsUtils.track_app_engagement()
                     st.session_state["last_activity_logged"] = current_time
                     
         except Exception:

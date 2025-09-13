@@ -712,8 +712,34 @@ class AnswerModeComponent:
                         else:
                             st.success(main_msg)
                     else:
-                        # 複数問題の場合
+                        # 複数問題の場合：全問正解＋各問題の正解を表示
                         st.success("✅ 全問正解！")
+                        
+                        # 各問題の正解を表示
+                        st.markdown("#### 各問題の正解")
+                        for qid, q_result in result_data.items():
+                            user_ans = ''.join(q_result.get('user_answer', [])) or '無回答'
+                            
+                            # シャッフル後の正解ラベルと選択肢テキストを取得
+                            shuffled_labels = q_result.get('shuffled_correct_answer_labels', [])
+                            shuffled_texts = q_result.get('shuffled_correct_answer_texts', [])
+                            
+                            if shuffled_labels and shuffled_texts:
+                                # シャッフル後のラベルと選択肢テキストで表示
+                                correct_display_parts = []
+                                for label, text in zip(shuffled_labels, shuffled_texts):
+                                    correct_display_parts.append(f"{label}. {text}")
+                                correct_display = ", ".join(correct_display_parts)
+                            else:
+                                # フォールバック: 元の正解ラベルを表示
+                                correct_answer = q_result.get('correct_answer', '')
+                                from utils import QuestionUtils
+                                _, additional_info = QuestionUtils.get_answer_feedback_message(
+                                    user_ans, correct_answer, True
+                                )
+                                correct_display = additional_info or f"正解：{correct_answer}"
+                            
+                            st.success(f"**{qid}**: ✅ 正解！ あなたの解答: `{user_ans}` | 正解：{correct_display}")
                 else:
                     # 不正解の場合
                     if total_count == 1:
@@ -746,34 +772,39 @@ class AnswerModeComponent:
                         else:
                             st.error(f"{main_msg} 正解：{correct_answer}")
                     else:
-                        # 複数問題の場合は詳細表示
-                        incorrect_details = []
+                        # 複数問題の場合：全問題の結果を表示
+                        st.error(f"❌ {total_count}問中{correct_count}問正解")
+                        
+                        # 各問題の詳細を表示
+                        st.markdown("#### 各問題の解答結果")
                         for qid, q_result in result_data.items():
-                            if not q_result.get('is_correct'):
-                                user_ans = ''.join(q_result.get('user_answer', [])) or '無回答'
-                                correct_answer = q_result.get('correct_answer', '')
-                                
+                            user_ans = ''.join(q_result.get('user_answer', [])) or '無回答'
+                            correct_answer = q_result.get('correct_answer', '')
+                            is_correct = q_result.get('is_correct', False)
+                            
+                            # シャッフル後の正解ラベルと選択肢テキストを取得
+                            shuffled_labels = q_result.get('shuffled_correct_answer_labels', [])
+                            shuffled_texts = q_result.get('shuffled_correct_answer_texts', [])
+                            
+                            if shuffled_labels and shuffled_texts:
+                                # シャッフル後のラベルと選択肢テキストで表示
+                                correct_display_parts = []
+                                for label, text in zip(shuffled_labels, shuffled_texts):
+                                    correct_display_parts.append(f"{label}. {text}")
+                                correct_display = ", ".join(correct_display_parts)
+                            else:
+                                # フォールバック: 元の正解ラベルを表示
                                 from utils import QuestionUtils
                                 _, additional_info = QuestionUtils.get_answer_feedback_message(
                                     user_ans, correct_answer, False
                                 )
-                                
-                                # シャッフル後の正解ラベルと選択肢テキストを取得
-                                shuffled_labels = q_result.get('shuffled_correct_answer_labels', [])
-                                shuffled_texts = q_result.get('shuffled_correct_answer_texts', [])
-                                
-                                if shuffled_labels and shuffled_texts:
-                                    # シャッフル後のラベルと選択肢テキストで表示
-                                    correct_display_parts = []
-                                    for label, text in zip(shuffled_labels, shuffled_texts):
-                                        correct_display_parts.append(f"{label}. {text}")
-                                    correct_display = ", ".join(correct_display_parts)
-                                else:
-                                    # フォールバック: 元の正解ラベルを表示
-                                    correct_display = additional_info or f"正解：{correct_answer}"
-                                
-                                incorrect_details.append(f"**{qid}**: あなたの解答: `{user_ans}` | {correct_display}")
-                        st.error("❌ 不正解の問題がありました。\n\n" + "\n\n".join(incorrect_details))
+                                correct_display = additional_info or f"正解：{correct_answer}"
+                            
+                            # 正誤による表示の色分け
+                            if is_correct:
+                                st.success(f"**{qid}**: ✅ 正解！ あなたの解答: `{user_ans}` | 正解：{correct_display}")
+                            else:
+                                st.error(f"**{qid}**: ❌ 不正解 あなたの解答: `{user_ans}` | 正解：{correct_display}")
 
                 # 2. その下に自己評価フォームを表示
                 st.markdown("---")
@@ -1204,12 +1235,43 @@ def _display_current_question(practice_session: PracticeSession, uid: str):
         action_result = {}
     
     if action_result.get('check_submitted'):
+        # Analytics: 回答提出イベント
+        AnalyticsUtils.track_event(
+            event_name="answer_submitted",
+            parameters={
+                'question_count': len(q_objects),
+                'group_id': group_id,
+                'study_mode': st.session_state.get('current_mode', 'unknown')
+            }
+        )
+        
         _process_group_answer_improved(
             q_objects, action_result['user_selections'], group_id
         )
     elif action_result.get('skip_submitted'):
+        # Analytics: スキップイベント
+        AnalyticsUtils.track_event(
+            event_name="question_skipped",
+            parameters={
+                'question_count': len(q_objects),
+                'group_id': group_id,
+                'study_mode': st.session_state.get('current_mode', 'unknown')
+            }
+        )
+        
         _skip_current_group(practice_session)
     elif action_result.get('next_submitted'):
+        # Analytics: 自己評価完了イベント  
+        AnalyticsUtils.track_event(
+            event_name="self_evaluation_completed",
+            parameters={
+                'quality': action_result['quality'],
+                'question_count': len(q_objects),
+                'group_id': group_id,
+                'study_mode': st.session_state.get('current_mode', 'unknown')
+            }
+        )
+        
         _process_self_evaluation_improved(
             q_objects, action_result['quality'], group_id, practice_session, uid
         )
@@ -1800,6 +1862,18 @@ def render_practice_sidebar():
 
                 # 学習開始ボタン
                 if st.button("🚀 今日の学習を開始する", type="primary", key="start_today_study"):
+                    # Analytics: 学習セッション開始
+                    AnalyticsUtils.track_event(
+                        event_name="study_session_started",
+                        parameters={
+                            'study_mode': 'recommended',
+                            'goal_questions': new_remaining + review_remaining,
+                            'review_count': review_remaining,
+                            'new_count': new_remaining,
+                            'user_id': uid
+                        }
+                    )
+                    
                     # 学習開始中フラグを設定
                     st.session_state["initializing_study"] = True
                     # 復習セッションフラグを設定（復習問題の状態をリセットするため）
@@ -1998,6 +2072,19 @@ def render_practice_sidebar():
                 if not questions_to_load:
                     st.warning("該当する問題がありません。")
                 else:
+                    # Analytics: 自由演習開始
+                    AnalyticsUtils.track_event(
+                        event_name="free_study_started",
+                        parameters={
+                            'study_mode': 'free',
+                            'mode_type': mode,
+                            'target_exam': target_exam,
+                            'total_questions': len(questions_to_load),
+                            'order_mode': order_mode,
+                            'user_id': uid
+                        }
+                    )
+                    
                     # 権限フィルタリング
                     filtered_questions = []
                     for q in questions_to_load:
@@ -2661,7 +2748,11 @@ def _start_ai_enhanced_learning(session_type: str, problem_count: int, detailed_
                 # 問題データを取得
                 questions = [q for q in ALL_QUESTIONS if q.get("number") in question_ids]
                 
-                st.session_state["main_queue"] = [[q.get("number")] for q in questions]
+                # 連問の適切なグループ化
+                from utils import QuestionUtils
+                grouped_questions = QuestionUtils.group_consecutive_questions(question_ids, ALL_QUESTIONS_DICT)
+                
+                st.session_state["main_queue"] = grouped_questions
                 st.session_state["practice_mode"] = "auto"
                 st.session_state["current_session_type"] = session_type
                 st.session_state["session_type"] = session_type  # バリデーション用にも設定
@@ -2972,7 +3063,11 @@ def _start_auto_learning():
                 question_ids = result["questionIds"]
                 questions = [q for q in ALL_QUESTIONS if q.get("number") in question_ids]
                 
-                st.session_state["main_queue"] = [[q.get("number")] for q in questions]
+                # 連問の適切なグループ化
+                from utils import QuestionUtils
+                grouped_questions = QuestionUtils.group_consecutive_questions(question_ids, ALL_QUESTIONS_DICT)
+                
+                st.session_state["main_queue"] = grouped_questions
                 st.session_state["session_mode"] = "auto_learning"
                 st.session_state["session_choice_made"] = True
                 st.session_state["session_type"] = "おまかせ演習"
@@ -3074,8 +3169,12 @@ def _fallback_auto_learning():
             selected_years[year_prefix] = selected_years.get(year_prefix, 0) + 1
     
     
-    # グループ化せずに直接リストとして設定
-    st.session_state["main_queue"] = [[q.get("number")] for q in selected_questions]
+    # 連問の適切なグループ化
+    from utils import QuestionUtils
+    selected_qids = [q.get("number") for q in selected_questions if q.get("number")]
+    grouped_questions = QuestionUtils.group_consecutive_questions(selected_qids, ALL_QUESTIONS_DICT)
+    
+    st.session_state["main_queue"] = grouped_questions
     st.session_state["session_mode"] = "auto_learning"
     st.session_state["session_choice_made"] = True
     st.session_state["session_type"] = "おまかせ演習"
@@ -3208,8 +3307,13 @@ def _start_free_learning(quiz_format: str, target_exam: str, question_order: str
             # 自由演習では条件に該当する全ての問題を使用
             selected_questions = available_questions
             
+            # 連問の適切なグループ化
+            from utils import QuestionUtils
+            selected_qids = [q.get("number") for q in selected_questions if q.get("number")]
+            grouped_questions = QuestionUtils.group_consecutive_questions(selected_qids, ALL_QUESTIONS_DICT)
+            
             # セッション状態を設定
-            st.session_state["main_queue"] = [[q.get("number")] for q in selected_questions]
+            st.session_state["main_queue"] = grouped_questions
             st.session_state["session_mode"] = "free_learning"
             st.session_state["session_choice_made"] = True
             st.session_state["session_type"] = f"自由演習({quiz_format}/{target_exam})"
