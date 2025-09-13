@@ -1134,9 +1134,20 @@ def _render_omakase_session(practice_session: PracticeSession, uid: str):
                 })
                 
                 st.session_state["session_completed_logged"] = True
+                
+                # 演習完了時にFirestoreのセッション状態を自動クリア
+                try:
+                    firestore_manager = get_firestore_manager()
+                    if firestore_manager.clear_session_state(uid):
+                        print(f"✅ 演習完了時にFirestoreセッション状態をクリアしました（UID: {uid}）")
+                    else:
+                        print(f"⚠️ セッション状態のクリアに失敗しました（UID: {uid}）")
+                except Exception as e:
+                    print(f"❌ セッション状態クリアエラー: {e}")
             
-            st.info("📚 全ての問題が完了しました！新しいセッションを開始してください。")
-            if st.button("新しいセッションを開始"):
+            st.success("🎉 おめでとうございます！全ての問題が完了しました！")
+            st.info("新しいセッションを開始するか、別のページに移動してください。")
+            if st.button("新しいセッションを開始", type="primary"):
                 _reset_session()
             return
     
@@ -1172,9 +1183,20 @@ def _render_free_learning_session(practice_session: PracticeSession, uid: str):
                 })
                 
                 st.session_state["session_completed_logged"] = True
+                
+                # 演習完了時にFirestoreのセッション状態を自動クリア
+                try:
+                    firestore_manager = get_firestore_manager()
+                    if firestore_manager.clear_session_state(uid):
+                        print(f"✅ 自由演習完了時にFirestoreセッション状態をクリアしました（UID: {uid}）")
+                    else:
+                        print(f"⚠️ セッション状態のクリアに失敗しました（UID: {uid}）")
+                except Exception as e:
+                    print(f"❌ セッション状態クリアエラー: {e}")
             
-            st.info("📚 全ての問題が完了しました！新しいセッションを開始してください。")
-            if st.button("新しいセッションを開始"):
+            st.success("🎉 おめでとうございます！全ての問題が完了しました！")
+            st.info("新しいセッションを開始するか、別のページに移動してください。")
+            if st.button("新しいセッションを開始", type="primary"):
                 _reset_session()
             return
     
@@ -1742,43 +1764,87 @@ def render_practice_sidebar():
                     print(f"[DEBUG] サイドバーから復元処理を開始...")
                     print(f"[DEBUG] load_session_state呼び出し中...")
                     
-                    if saved_state:
-                        print(f"[DEBUG] 復元されたセッション状態: {list(saved_state.keys())}")
-                        print(f"[DEBUG] main_queue: {len(saved_state.get('main_queue', []))} items")
-                        print(f"[DEBUG] current_q_group: {len(saved_state.get('current_q_group', []))} items")
-                        print(f"[DEBUG] current_question_index: {saved_state.get('current_question_index', 'N/A')}")
-                        
-                        # セッション状態を復元
-                        for key, value in saved_state.items():
-                            if key != "session_metadata":  # メタデータは別途処理
-                                st.session_state[key] = value
-                                print(f"[DEBUG] 復元: {key} -> {type(value)} (length: {len(value) if isinstance(value, (list, dict, str)) else 'N/A'})")
-                        
-                        # question_queueが空の場合、current_q_groupから復元
-                        if not st.session_state.get("question_queue") and st.session_state.get("current_q_group"):
-                            st.session_state["question_queue"] = st.session_state["current_q_group"][:]
-                            print(f"[DEBUG] question_queueを復元: {len(st.session_state['question_queue'])} items")
-                        
-                        # セッション継続フラグを設定
-                        st.session_state["continue_previous"] = True
-                        st.session_state["session_choice_made"] = True
-                        
-                        # メインページでの復元処理をスキップするフラグ
-                        st.session_state["sidebar_restored"] = True
-                        
-                        print(f"[DEBUG] サイドバーからのセッション復元完了")
-                        st.success("前回のセッション状態を復元しました！")
+                    try:
+                        # セッション状態の復元を試行
+                        if saved_state:
+                            print(f"[DEBUG] 復元されたセッション状態: {list(saved_state.keys())}")
+                            print(f"[DEBUG] main_queue: {len(saved_state.get('main_queue', []))} items")
+                            print(f"[DEBUG] current_q_group: {len(saved_state.get('current_q_group', []))} items")
+                            print(f"[DEBUG] current_question_index: {saved_state.get('current_question_index', 'N/A')}")
+                            
+                            # データ検証：必須フィールドのチェック
+                            required_fields = ['questions', 'current_question_index', 'selected_subjects']
+                            missing_fields = [field for field in required_fields if field not in saved_state]
+                            
+                            if missing_fields:
+                                st.warning(f"セッションデータに不備があります（不足: {', '.join(missing_fields)}）。新規開始をお勧めします。")
+                                print(f"[ERROR] 必須フィールド不足: {missing_fields}")
+                                # 破損したセッションデータを削除
+                                firestore_manager.clear_session_state(uid)
+                                st.rerun()
+                                return
+                            
+                            # データ型の検証
+                            if not isinstance(saved_state.get('questions', []), list):
+                                st.error("セッションデータが破損しています。新規に開始してください。")
+                                firestore_manager.clear_session_state(uid)
+                                st.rerun()
+                                return
+                            
+                            # セッション状態を復元
+                            for key, value in saved_state.items():
+                                if key != "session_metadata":  # メタデータは別途処理
+                                    st.session_state[key] = value
+                                    print(f"[DEBUG] 復元: {key} -> {type(value)} (length: {len(value) if isinstance(value, (list, dict, str)) else 'N/A'})")
+                            
+                            # question_queueが空の場合、current_q_groupから復元
+                            if not st.session_state.get("question_queue") and st.session_state.get("current_q_group"):
+                                st.session_state["question_queue"] = st.session_state["current_q_group"][:]
+                                print(f"[DEBUG] question_queueを復元: {len(st.session_state['question_queue'])} items")
+                            
+                            # セッション継続フラグを設定
+                            st.session_state["continue_previous"] = True
+                            st.session_state["session_choice_made"] = True
+                            
+                            # メインページでの復元処理をスキップするフラグ
+                            st.session_state["sidebar_restored"] = True
+                            
+                            print(f"[DEBUG] サイドバーからのセッション復元完了")
+                            st.success("前回のセッション状態を復元しました！")
+                            st.rerun()
+                        else:
+                            print(f"[DEBUG] セッション復元失敗 - saved_stateがNone")
+                            st.error("復元できるセッションデータがありません。")
+                            # 無効なセッション情報をクリア
+                            firestore_manager.clear_session_state(uid)
+                            st.rerun()
+                            
+                    except Exception as e:
+                        print(f"[ERROR] セッション復元中にエラー: {e}")
+                        st.error(f"セッション復元中にエラーが発生しました: {str(e)}")
+                        # エラー時は安全のためセッションをクリア
+                        try:
+                            firestore_manager.clear_session_state(uid)
+                        except Exception as clear_error:
+                            print(f"[ERROR] セッションクリア中にもエラー: {clear_error}")
                         st.rerun()
-                    else:
-                        print(f"[DEBUG] セッション復元失敗 - saved_stateがNone")
-                        st.error("セッション復元に失敗しました。")
                 
                 # セッションクリアボタン
                 if st.button("🗑️ 前回のセッションを削除", key="sidebar_clear_session"):
                     print(f"[DEBUG] 🗑️ サイドバーセッションクリアボタンがクリックされました！")
-                    firestore_manager.clear_session_state(uid)
-                    st.success("前回のセッションを削除しました")
-                    st.rerun()
+                    try:
+                        success = firestore_manager.clear_session_state(uid)
+                        if success:
+                            st.success("前回のセッションを削除しました")
+                            print(f"[DEBUG] セッション削除成功")
+                        else:
+                            st.warning("削除するセッションが見つかりませんでした")
+                            print(f"[DEBUG] セッション削除 - データなし")
+                        st.rerun()
+                    except Exception as e:
+                        print(f"[ERROR] セッション削除中にエラー: {e}")
+                        st.error(f"セッション削除中にエラーが発生しました: {str(e)}")
+                        st.rerun()
             
             st.divider()
             

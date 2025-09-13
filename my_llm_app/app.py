@@ -1345,6 +1345,22 @@ class DentalApp:
         uid = st.session_state.get("uid")
         if uid:
             log_to_ga("logout", uid, {"keep_password": str(keep_password)})
+            
+            # ログアウト前にセッション状態をFirestoreに保存（完全ログアウト時以外）
+            if keep_password and self._has_practice_session():
+                try:
+                    self._save_current_session_to_firestore()
+                    print(f"[LOGOUT] セッション状態をFirestoreに保存しました (uid: {uid})")
+                except Exception as e:
+                    print(f"[LOGOUT] セッション状態の保存に失敗: {e}")
+            
+            # 完全ログアウト時はFirestoreのセッション情報も削除
+            if not keep_password:
+                try:
+                    self.firestore_manager.clear_session_state(uid)
+                    print(f"[LOGOUT] Firestoreのセッション情報を削除しました (uid: {uid})")
+                except Exception as e:
+                    print(f"[LOGOUT] Firestoreセッション情報の削除に失敗: {e}")
         
         # セッション状態のクリア
         self.auth_manager.logout()
@@ -1353,16 +1369,62 @@ class DentalApp:
         if not keep_password:
             # 完全ログアウト: 永続ログイン用のCookieも削除
             self.cookie_manager.clear_saved_password()
-            st.success("完全にログアウトしました（永続ログイン情報も削除）")
+            st.success("完全にログアウトしました（永続ログイン情報と演習データも削除）")
         else:
             # 部分ログアウト: 永続ログイン情報は保持
-            st.success("ログアウトしました（永続ログイン情報は保持）")
+            st.success("ログアウトしました（永続ログイン情報と進行中の演習データは保持）")
         
         # 自動ログイン試行フラグをリセット（次回アクセス時に再試行させる）
         st.session_state.pop("auto_login_attempted", None)
         
         time.sleep(1)
         st.rerun()
+    
+    def _has_practice_session(self) -> bool:
+        """現在進行中の演習セッションがあるかチェック"""
+        # 演習関連のセッション状態をチェック
+        practice_keys = [
+            'questions', 'current_question_index', 'answers', 'confidence_ratings',
+            'selected_subjects', 'practice_count', 'correct_answer_displayed',
+            'is_practice_complete', 'practice_state'
+        ]
+        
+        # いずれかのキーが存在し、かつ演習が未完了の場合
+        has_session = any(key in st.session_state for key in practice_keys)
+        is_incomplete = not st.session_state.get('is_practice_complete', False)
+        
+        return has_session and is_incomplete
+    
+    def _save_current_session_to_firestore(self):
+        """現在のセッション状態をFirestoreに保存"""
+        uid = st.session_state.get("uid")
+        if not uid:
+            return
+            
+        # 演習セッションのデータを収集
+        session_data = {}
+        preserve_keys = [
+            'questions', 'current_question_index', 'answers', 'confidence_ratings',
+            'selected_subjects', 'practice_count', 'correct_answer_displayed',
+            'is_practice_complete', 'practice_state', 'practice_start_time'
+        ]
+        
+        for key in preserve_keys:
+            if key in st.session_state:
+                session_data[key] = st.session_state[key]
+        
+        if session_data:
+            # Firestoreに保存
+            try:
+                self.firestore_manager.db.collection('user_sessions').document(uid).set({
+                    'session_data': session_data,
+                    'last_saved': datetime.datetime.now(),
+                    'session_type': 'practice'
+                })
+                print(f"[SESSION_SAVE] セッションデータを保存: {list(session_data.keys())}")
+            except Exception as e:
+                print(f"[SESSION_SAVE] 保存エラー: {e}")
+                raise e
     
     def _render_settings(self, has_gakushi_permission: bool):
         """設定の描画"""
