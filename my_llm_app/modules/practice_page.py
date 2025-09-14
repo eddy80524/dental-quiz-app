@@ -1406,18 +1406,17 @@ def _process_group_answer_improved(q_objects: List[Dict], user_selections: Dict,
             # テキスト入力の場合（並び替え問題など）
             mapped_chars = [label_mapping.get(char, char) for char in user_answer.upper()]
             user_answer_str = "".join(mapped_chars)
-        # 正誤判定（集合比較による堅牢な判定）
-        # 文字列比較ではなく、含まれる文字の集合が一致するかで判定
-        # これにより順序や空白・特殊文字の問題を回避
-        correct_answer_set = set(correct_answer.strip().upper())
-        user_answer_set = set(user_answer_str.strip().upper())
-        is_correct = (correct_answer_set == user_answer_set)
+        # 正誤判定（複数正解対応）
+        from utils import QuestionUtils
+        is_correct = QuestionUtils.check_answer(user_answer_str, correct_answer)
         
-        # デバッグ情報（集合比較）
+        # デバッグ情報（複数正解対応判定）
         if st.session_state.get("debug_mode", False):
-            st.write(f"  正解文字集合: {correct_answer_set}")
-            st.write(f"  ユーザー文字集合: {user_answer_set}")
+            st.write(f"  問題ID: {qid}")
+            st.write(f"  ユーザー回答: '{user_answer_str}'")
+            st.write(f"  正解: '{correct_answer}'")
             st.write(f"  判定結果: {is_correct}")
+            st.write(f"  ラベルマッピング: {label_mapping}")
         
         # シャッフル後の正解ラベルを計算
         shuffled_correct_answer_labels = []
@@ -3616,9 +3615,9 @@ def _start_free_learning(quiz_format: str, target_exam: str, question_order: str
             selected_questions = available_questions
             
             # 連問の適切なグループ化
-            from utils import QuestionUtils
+            from utils import CardSelectionUtils
             selected_qids = [q.get("number") for q in selected_questions if q.get("number")]
-            grouped_questions = QuestionUtils.group_consecutive_questions(selected_qids, ALL_QUESTIONS_DICT)
+            grouped_questions = CardSelectionUtils.group_consecutive_questions(selected_qids, ALL_QUESTIONS_DICT)
             
             # セッション状態を設定
             st.session_state["main_queue"] = grouped_questions

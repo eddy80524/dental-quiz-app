@@ -377,12 +377,12 @@ class QuestionUtils:
         # 全角スラッシュを半角に統一
         normalized_correct = correct_answer.replace('／', '/')
         
-        # 複数正解の場合（/区切り）
+        # 複数正解の場合（/区切り）- どれか一つでも正解なら正解
         if '/' in normalized_correct:
             valid_answers = [ans.strip() for ans in normalized_correct.split('/')]
             is_match = user_choice in valid_answers
             if st.session_state.get("debug_mode", False):
-                st.write(f"複数正解判定 - 選択肢: {valid_answers}, 結果: {is_match}")
+                st.write(f"複数正解判定 - 選択肢: {valid_answers}, ユーザー選択: '{user_choice}', 結果: {is_match}")
             return is_match
         
         # 複数選択問題の場合（正答が「AC」「BD」など複数文字）
