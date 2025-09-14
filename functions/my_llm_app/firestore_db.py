@@ -196,6 +196,7 @@ class FirestoreManager:
                 result = {
                     "current_q_group": deserialize_queue(session_data.get("current_q_group", [])),
                     "main_queue": deserialize_queue(session_data.get("main_queue", [])),
+                    "question_queue": deserialize_queue(session_data.get("question_queue", [])),
                     "short_term_review_queue": session_data.get("short_term_review_queue", []),
                     
                     # セッションメタデータを追加

@@ -172,6 +172,7 @@ class FirestoreManager:
             print("[DEBUG] UIDが空です - デフォルト空データを返します")
             return {
                 "main_queue": [],
+                "question_queue": [],
                 "short_term_review_queue": [],
                 "current_q_group": []
             }
@@ -194,9 +195,10 @@ class FirestoreManager:
                 # 各キューの詳細確認
                 main_queue_raw = session_data.get("main_queue", [])
                 current_q_group_raw = session_data.get("current_q_group", [])
+                question_queue_raw = session_data.get("question_queue", [])
                 short_term_raw = session_data.get("short_term_review_queue", [])
                 
-                print(f"[DEBUG] 生データ - main_queue長: {len(main_queue_raw)}, current_q_group長: {len(current_q_group_raw)}, short_term長: {len(short_term_raw)}")
+                print(f"[DEBUG] 生データ - main_queue長: {len(main_queue_raw)}, current_q_group長: {len(current_q_group_raw)}, question_queue長: {len(question_queue_raw)}, short_term長: {len(short_term_raw)}")
                 
                 # Firestore対応：JSON文字列を元のリスト形式に復元
                 def deserialize_queue(queue, queue_name="unknown"):
@@ -223,6 +225,7 @@ class FirestoreManager:
                 result = {
                     "current_q_group": deserialize_queue(current_q_group_raw, "current_q_group"),
                     "main_queue": deserialize_queue(main_queue_raw, "main_queue"),
+                    "question_queue": deserialize_queue(question_queue_raw, "question_queue"),
                     "short_term_review_queue": short_term_raw,
                     
                     # セッションメタデータを追加
@@ -235,7 +238,7 @@ class FirestoreManager:
                     "last_activity_time": session_metadata.get("last_activity_time", "")
                 }
                 
-                print(f"[DEBUG] 最終結果 - main_queue: {len(result['main_queue'])}, current_q_group: {len(result['current_q_group'])}, session_type: {result['session_type']}")
+                print(f"[DEBUG] 最終結果 - main_queue: {len(result['main_queue'])}, current_q_group: {len(result['current_q_group'])}, question_queue: {len(result['question_queue'])}, session_type: {result['session_type']}")
                 print(f"[DEBUG] load_session_state処理時間: {time.time() - start:.3f}秒")
                 
                 return result
@@ -243,6 +246,7 @@ class FirestoreManager:
                 print("[DEBUG] セッション文書が存在しません - デフォルト空データを返します")
                 return {
                     "main_queue": [],
+                    "question_queue": [],
                     "short_term_review_queue": [],
                     "current_q_group": []
                 }

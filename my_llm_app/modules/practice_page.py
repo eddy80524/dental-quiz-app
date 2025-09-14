@@ -1797,13 +1797,24 @@ def render_practice_sidebar():
                             print(f"[DEBUG] current_question_index: {saved_state.get('current_question_index', 'N/A')}")
                             
                             # データ検証：必須フィールドのチェック
-                            required_fields = ['questions', 'current_question_index', 'selected_subjects']
+                            required_fields = ['session_type', 'current_question_index']
+                            # キューフィールドの検証（少なくとも1つは存在すべき）
+                            queue_fields = ['question_queue', 'current_q_group', 'main_queue']
+                            has_queue = any(saved_state.get(field) for field in queue_fields)
+                            
                             missing_fields = [field for field in required_fields if field not in saved_state]
                             
                             if missing_fields:
                                 st.warning(f"セッションデータに不備があります（不足: {', '.join(missing_fields)}）。新規開始をお勧めします。")
                                 print(f"[ERROR] 必須フィールド不足: {missing_fields}")
                                 # 破損したセッションデータを削除
+                                firestore_manager.clear_session_state(uid)
+                                st.rerun()
+                                return
+                            
+                            if not has_queue:
+                                st.warning("演習問題キューが見つかりません。新規開始をお勧めします。")
+                                print(f"[ERROR] 演習問題キューが存在しません")
                                 firestore_manager.clear_session_state(uid)
                                 st.rerun()
                                 return
@@ -1821,10 +1832,20 @@ def render_practice_sidebar():
                                     st.session_state[key] = value
                                     print(f"[DEBUG] 復元: {key} -> {type(value)} (length: {len(value) if isinstance(value, (list, dict, str)) else 'N/A'})")
                             
-                            # question_queueが空の場合、current_q_groupから復元
-                            if not st.session_state.get("question_queue") and st.session_state.get("current_q_group"):
-                                st.session_state["question_queue"] = st.session_state["current_q_group"][:]
-                                print(f"[DEBUG] question_queueを復元: {len(st.session_state['question_queue'])} items")
+                            # question_queueの復元ロジック強化
+                            if not st.session_state.get("question_queue"):
+                                # 優先順位: current_q_group -> main_queue
+                                if st.session_state.get("current_q_group"):
+                                    st.session_state["question_queue"] = st.session_state["current_q_group"][:]
+                                    print(f"[DEBUG] question_queueをcurrent_q_groupから復元: {len(st.session_state['question_queue'])} items")
+                                elif st.session_state.get("main_queue"):
+                                    st.session_state["question_queue"] = st.session_state["main_queue"][:]
+                                    print(f"[DEBUG] question_queueをmain_queueから復元: {len(st.session_state['question_queue'])} items")
+                                else:
+                                    st.session_state["question_queue"] = []
+                                    print(f"[DEBUG] 復元可能なキューが見つかりません - 空のキューを設定")
+                            else:
+                                print(f"[DEBUG] question_queueは既に存在: {len(st.session_state['question_queue'])} items")
                             
                             # セッション継続フラグを設定
                             st.session_state["continue_previous"] = True
