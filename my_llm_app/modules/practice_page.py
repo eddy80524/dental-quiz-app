@@ -2165,10 +2165,17 @@ def render_practice_sidebar():
                         # 今日の復習対象カードを優先度順で取得
                         priority_cards = get_review_priority_cards(cards, today)
                         
+                        # デバッグ情報を表示
+                        if st.session_state.get("debug_mode", False):
+                            st.write(f"🔍 復習対象カード数: {len(priority_cards)}")
                         
-                        # 復習カードを優先度順で追加（最大100問まで）
-                        for q_id, priority_score, days_overdue in priority_cards[:100]:
+                        # 復習カードを優先度順で追加（全ての復習対象問題）
+                        for q_id, priority_score, days_overdue in priority_cards:
                             grouped_queue.append([q_id])
+                            
+                        # デバッグ情報：復習問題追加後
+                        if st.session_state.get("debug_mode", False):
+                            st.write(f"🔍 復習問題追加後のキュー数: {len(grouped_queue)}")
 
                         # 新規カードの追加
                         recent_ids = list(st.session_state.get("result_log", {}).keys())[-15:]
@@ -2193,10 +2200,19 @@ def render_practice_sidebar():
                             recent_qids=recent_ids
                         )
 
+                        # デバッグ情報：新規問題数
+                        if st.session_state.get("debug_mode", False):
+                            st.write(f"🔍 新規問題数: {len(pick_ids)}")
+
                         for qid in pick_ids:
                             grouped_queue.append([qid])
                             if qid not in st.session_state.cards:
                                 st.session_state.cards[qid] = {}
+
+                        # デバッグ情報：最終キュー数
+                        if st.session_state.get("debug_mode", False):
+                            st.write(f"🔍 最終的なキュー数: {len(grouped_queue)}")
+                            st.write(f"🔍 復習問題: {len(priority_cards)}, 新規問題: {len(pick_ids)}")
 
                         # 復習問題と新規問題を混合してシャッフル（完全ランダム出題順序）
                         import random
@@ -2243,6 +2259,7 @@ def render_practice_sidebar():
                             else:
                                 print(f"❌ save_user_data関数が利用できません（セッション保存）")
                             st.session_state["initializing_study"] = False
+                            print(f"📊 学習キュー作成完了: 合計 {len(grouped_queue)} 問 (復習: {len(priority_cards)}, 新規: {len(pick_ids)})")
                             st.success(f"今日の学習を開始します！（{len(grouped_queue)}問）")
                             st.rerun()
                         else:
