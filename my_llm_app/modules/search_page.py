@@ -713,9 +713,16 @@ def render_search_page():
         
         # デバッグ情報表示（開発時のみ）
         if st.session_state.get("debug_mode", False):
-            st.write(f"デバッグ - 現在学習済み: {metrics['current_studied_count']}, 昨日時点: {metrics['current_studied_count'] - metrics['progress_delta']}, デルタ: {metrics['progress_delta']}")
+            st.write(f"デバッグ - 現在学習済み問題数({analysis_target}): {metrics['current_studied_count']}, 昨日時点: {metrics['current_studied_count'] - metrics['progress_delta']}, デルタ: {metrics['progress_delta']}")
             st.write(f"デバッグ - 必修現在: {metrics['current_hisshu_studied_count']}, 必修昨日時点: {metrics['current_hisshu_studied_count'] - metrics['hisshu_delta']}, 必修デルタ: {metrics['hisshu_delta']}")
-            st.write(f"デバッグ - 学習ログ数: {len(st.session_state.get('evaluation_logs', []))}")
+            
+            # 全体の練習記録数と現在の分析対象の関係を表示
+            total_practice_records = len(st.session_state.get('evaluation_logs', []))
+            all_cards = st.session_state.get("cards", {})
+            total_learned_all = sum(1 for card in all_cards.values() if card.get('history') and calculate_card_level(card) != "未学習")
+            
+            st.write(f"デバッグ - 総練習記録数: {total_practice_records}回 | 全分野学習済み: {total_learned_all}問 | {analysis_target}学習済み: {metrics['current_studied_count']}問")
+            st.info(f"💡 表示中: {analysis_target}の学習進捗。全分野の合計は{total_learned_all}問です。")
         
         # 4つの主要指標をst.metricで表示
         col1, col2, col3, col4 = st.columns(4)
@@ -723,9 +730,10 @@ def render_search_page():
         with col1:
             progress_delta_text = f"+{metrics['progress_delta']} 問" if metrics['progress_delta'] > 0 else f"{metrics['progress_delta']} 問" if metrics['progress_delta'] < 0 else "変化なし"
             st.metric(
-                "学習進捗率",
+                f"学習進捗率（{analysis_target}）",
                 f"{metrics['current_studied_count']} / {metrics['total_count']} 問",
-                delta=progress_delta_text
+                delta=progress_delta_text,
+                help=f"{analysis_target}で学習済みのユニークな問題数です。同じ問題の復習は重複カウントされません。"
             )
         
         with col2:
