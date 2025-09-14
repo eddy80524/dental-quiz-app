@@ -643,7 +643,10 @@ class AnswerModeComponent:
                         from utils import get_secure_image_url
                         secure_url = get_secure_image_url(img_url)
                         if secure_url:
-                            st.image(secure_url, use_container_width=True)
+                            st.image(
+                                secure_url, 
+                                use_container_width=True  # コンテナ幅に合わせてレスポンシブ表示
+                            )
                             
         return action_result
 
@@ -853,7 +856,10 @@ class AnswerModeComponent:
                     from utils import get_secure_image_url
                     secure_url = get_secure_image_url(img_url)
                     if secure_url:
-                        st.image(secure_url, use_container_width=True)
+                        st.image(
+                            secure_url, 
+                            use_container_width=True  # コンテナ幅に合わせてレスポンシブ表示
+                        )
         
         # 各問題の画像（症例画像以外）はフォームの外に表示
         for question in questions:
@@ -864,7 +870,10 @@ class AnswerModeComponent:
                         from utils import get_secure_image_url
                         secure_url = get_secure_image_url(img_url)
                         if secure_url:
-                            st.image(secure_url, use_container_width=True)
+                            st.image(
+                                secure_url, 
+                                use_container_width=True  # コンテナ幅に合わせてレスポンシブ表示
+                            )
         
         return action_result
 
