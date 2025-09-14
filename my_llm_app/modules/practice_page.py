@@ -2160,7 +2160,7 @@ def render_practice_sidebar():
 
                     with st.spinner("学習セッションを準備中..."):
                         # SM-2アルゴリズムベースの復習カード選択
-                        grouped_queue = []
+                        all_question_ids = []
                         
                         # 今日の復習対象カードを優先度順で取得
                         priority_cards = get_review_priority_cards(cards, today)
@@ -2171,11 +2171,11 @@ def render_practice_sidebar():
                         
                         # 復習カードを優先度順で追加（全ての復習対象問題）
                         for q_id, priority_score, days_overdue in priority_cards:
-                            grouped_queue.append([q_id])
+                            all_question_ids.append(q_id)
                             
                         # デバッグ情報：復習問題追加後
                         if st.session_state.get("debug_mode", False):
-                            st.write(f"🔍 復習問題追加後のキュー数: {len(grouped_queue)}")
+                            st.write(f"🔍 復習問題追加後の問題ID数: {len(all_question_ids)}")
 
                         # 新規カードの追加
                         recent_ids = list(st.session_state.get("result_log", {}).keys())[-15:]
@@ -2204,15 +2204,21 @@ def render_practice_sidebar():
                         if st.session_state.get("debug_mode", False):
                             st.write(f"🔍 新規問題数: {len(pick_ids)}")
 
+                        # 新規問題を追加
                         for qid in pick_ids:
-                            grouped_queue.append([qid])
+                            all_question_ids.append(qid)
                             if qid not in st.session_state.cards:
                                 st.session_state.cards[qid] = {}
 
+                        # 連問の適切なグループ化を実行
+                        from utils import CardSelectionUtils
+                        grouped_queue = CardSelectionUtils.group_consecutive_questions(all_question_ids, ALL_QUESTIONS_DICT)
+
                         # デバッグ情報：最終キュー数
                         if st.session_state.get("debug_mode", False):
-                            st.write(f"🔍 最終的なキュー数: {len(grouped_queue)}")
+                            st.write(f"🔍 グループ化後のキュー数: {len(grouped_queue)}")
                             st.write(f"🔍 復習問題: {len(priority_cards)}, 新規問題: {len(pick_ids)}")
+                            st.write(f"🔍 グループ化前問題ID数: {len(all_question_ids)}")
 
                         # 復習問題と新規問題を混合してシャッフル（完全ランダム出題順序）
                         import random
