@@ -2159,6 +2159,9 @@ def render_practice_sidebar():
                     st.session_state["is_review_session"] = True
 
                     with st.spinner("学習セッションを準備中..."):
+                        # 必要なユーティリティをインポート
+                        from utils import CardSelectionUtils
+                        
                         # SM-2アルゴリズムベースの復習カード選択
                         all_question_ids = []
                         
@@ -2211,7 +2214,6 @@ def render_practice_sidebar():
                                 st.session_state.cards[qid] = {}
 
                         # 連問の適切なグループ化を実行
-                        from utils import CardSelectionUtils
                         grouped_queue = CardSelectionUtils.group_consecutive_questions(all_question_ids, ALL_QUESTIONS_DICT)
 
                         # デバッグ情報：最終キュー数
