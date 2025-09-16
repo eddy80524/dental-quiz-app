@@ -14,7 +14,7 @@ from typing import Dict, Any, List, Optional
 from firestore_db import fetch_ranking_data, get_user_profile_for_ranking, get_user_profiles_bulk
 
 def _render_weekly_active_ranking(ranking_data: pd.DataFrame, user_profile: dict):
-    st.subheader("🏆 週間アクティブランキング")
+    st.subheader("🏆 週間ランキング")
     st.caption("この一週間で最もアクティブに学習したユーザーのランキングです。")
 
     if ranking_data.empty:

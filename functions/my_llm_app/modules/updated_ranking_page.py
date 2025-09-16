@@ -122,7 +122,7 @@ class UpdatedRankingSystem:
 
 def render_updated_weekly_ranking(user_profile: dict):
     """更新された週間ランキング表示（Cloud Functions連携版）"""
-    st.subheader("🏆 週間アクティブランキング")
+    st.subheader("🏆 週間ランキング")
     st.caption("この一週間で最もアクティブに学習したユーザーのランキングです。")
     
     ranking_system = UpdatedRankingSystem()

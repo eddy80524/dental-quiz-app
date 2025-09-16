@@ -41,7 +41,7 @@ def _convert_rankings_to_dataframe(rankings: List) -> pd.DataFrame:
 
 def _render_optimized_weekly_ranking(ranking_system: OptimizedWeeklyRankingSystem, user_profile: dict):
     """最適化された週間ランキング表示"""
-    st.subheader("🏆 週間アクティブランキング（最適化版）")
+    st.subheader("🏆 週間ランキング（最適化版）")
     st.caption("統計データベースから高速取得された今週のランキングです。")
     
     try:
