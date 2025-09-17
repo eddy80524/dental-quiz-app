@@ -7,6 +7,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 from firestore_db import get_firestore_manager
+from modules.search_page import inject_search_page_styles, get_japan_today
 
 
 class UpdatedRankingSystem:
@@ -120,13 +121,40 @@ class UpdatedRankingSystem:
             return None
 
 
-def render_updated_weekly_ranking(user_profile: dict):
+def _fetch_ranking_status() -> Optional[Dict[str, Any]]:
+    try:
+        status_doc = get_firestore_manager().db.collection("ranking_status").document("daily").get()
+        if status_doc.exists:
+            return status_doc.to_dict()
+    except Exception:
+        return None
+    return None
+
+
+def _format_processing_time(seconds: float) -> str:
+    if seconds is None:
+        return "--"
+    try:
+        value = float(seconds)
+    except (TypeError, ValueError):
+        return "--"
+    if value >= 90:
+        return f"{value/60:.1f}分"
+    return f"{value:.1f}秒"
+
+
+def render_updated_weekly_ranking(
+    user_profile: dict,
+    rankings: Optional[List[Dict[str, Any]]] = None,
+    ranking_system: Optional[UpdatedRankingSystem] = None
+):
     """更新された週間ランキング表示（Cloud Functions連携版）"""
     st.subheader("🏆 週間ランキング")
     st.caption("この一週間で最もアクティブに学習したユーザーのランキングです。")
-    
-    ranking_system = UpdatedRankingSystem()
-    rankings = ranking_system.get_weekly_ranking(50)
+
+    ranking_system = ranking_system or UpdatedRankingSystem()
+    if rankings is None:
+        rankings = ranking_system.get_weekly_ranking(50)
     
     if not rankings:
         st.info("今週のランキングデータがありません。")
@@ -183,13 +211,18 @@ def render_updated_weekly_ranking(user_profile: dict):
         )
 
 
-def render_updated_total_ranking(user_profile: dict):
+def render_updated_total_ranking(
+    user_profile: dict,
+    rankings: Optional[List[Dict[str, Any]]] = None,
+    ranking_system: Optional[UpdatedRankingSystem] = None
+):
     """更新された総合ランキング表示（Cloud Functions連携版）"""
     st.subheader("🏅 総合ランキング")
     st.caption("累積学習ポイントによる総合ランキングです。")
     
-    ranking_system = UpdatedRankingSystem()
-    rankings = ranking_system.get_total_ranking(50)
+    ranking_system = ranking_system or UpdatedRankingSystem()
+    if rankings is None:
+        rankings = ranking_system.get_total_ranking(50)
     
     if not rankings:
         st.info("総合ランキングデータがありません。")
@@ -244,13 +277,18 @@ def render_updated_total_ranking(user_profile: dict):
         )
 
 
-def render_updated_mastery_ranking(user_profile: dict):
+def render_updated_mastery_ranking(
+    user_profile: dict,
+    rankings: Optional[List[Dict[str, Any]]] = None,
+    ranking_system: Optional[UpdatedRankingSystem] = None
+):
     """更新された習熟度ランキング表示（Cloud Functions連携版）"""
     st.subheader("🎓 習熟度ランキング")
     st.caption("SM2アルゴリズムによる習熟度スコアランキングです。")
     
-    ranking_system = UpdatedRankingSystem()
-    rankings = ranking_system.get_mastery_ranking(50)
+    ranking_system = ranking_system or UpdatedRankingSystem()
+    if rankings is None:
+        rankings = ranking_system.get_mastery_ranking(50)
     
     if not rankings:
         st.info("習熟度ランキングデータがありません。")
@@ -310,49 +348,84 @@ def render_updated_mastery_ranking(user_profile: dict):
 
 def render_updated_ranking_page():
     """更新されたランキングページ（Cloud Functions連携版）"""
-    st.title("📊 学習ランキング")
-    st.markdown("---")
-    
-    # ユーザープロフィール取得
+    inject_search_page_styles()
+
+    today_label = get_japan_today().strftime("%Y/%m/%d (%a)")
     user_profile = st.session_state.get("user_profile", {})
-    
-    # Cloud Functionsからの自動更新に完全依存
-    # ranking_calculator の呼び出しを削除（Cloud Function側で処理）
-    
-    # タブで切り替え
+
+    ranking_system = UpdatedRankingSystem()
+    weekly_rankings = ranking_system.get_weekly_ranking(50)
+    total_rankings = ranking_system.get_total_ranking(50)
+    mastery_rankings = ranking_system.get_mastery_ranking(50)
+    status_data = _fetch_ranking_status()
+
+    chips: List[str] = []
+    if status_data:
+        last_updated = status_data.get("updated_at_jst", "未更新")
+        total_users = status_data.get("total_users")
+        processing_time = _format_processing_time(status_data.get("processing_time_seconds"))
+        chips.append(f"<span class='ios-chip'>最終更新 {last_updated}</span>")
+        if total_users:
+            chips.append(f"<span class='ios-chip'>対象 {int(total_users)}人</span>")
+        chips.append(f"<span class='ios-chip'>処理 {processing_time}</span>")
+    else:
+        chips.append("<span class='ios-chip'>更新ステータス取得不可</span>")
+
+    chips.append(f"<span class='ios-chip'>週間参加 {len(weekly_rankings)}人</span>")
+
+    st.markdown(
+        f"""
+        <div class="ios-hero">
+            <span class="ios-hero__badge">ランキング</span>
+            <div class="ios-hero__title">学習ランキングハイライト</div>
+            <div class="ios-hero__subtitle">Cloud Functionsで毎朝更新されるランキングから、最新の学習アクティビティを素早く確認できます。今日 ({today_label}) の順位チェックとモチベーションづくりに活用してください。</div>
+            <div class="ios-hero__chips">{''.join(chips)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    participant_counts = {
+        "weekly": len(weekly_rankings),
+        "total": len(total_rankings),
+        "mastery": len(mastery_rankings),
+    }
+
+    top_weekly = weekly_rankings[0]["weekly_points"] if weekly_rankings else 0
+    top_total = total_rankings[0]["total_points"] if total_rankings else 0
+    top_mastery = mastery_rankings[0]["mastery_score"] if mastery_rankings else 0.0
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        delta_text = f"トップ {top_weekly} pt" if weekly_rankings else "データなし"
+        st.metric("週間参加人数", f"{participant_counts['weekly']} 人", delta=delta_text)
+    with col2:
+        delta_text = f"トップ {top_total} pt" if total_rankings else "データなし"
+        st.metric("総合参加人数", f"{participant_counts['total']} 人", delta=delta_text)
+    with col3:
+        delta_text = f"トップ {top_mastery:.1f}" if mastery_rankings else "データなし"
+        st.metric("習熟度参加人数", f"{participant_counts['mastery']} 人", delta=delta_text)
+
+    st.markdown("---")
+
     tab1, tab2, tab3 = st.tabs(["📈 週間ランキング", "🏅 総合ランキング", "🎓 習熟度ランキング"])
-    
+
     with tab1:
-        render_updated_weekly_ranking(user_profile)
-    
+        render_updated_weekly_ranking(user_profile, weekly_rankings, ranking_system)
+
     with tab2:
-        render_updated_total_ranking(user_profile)
-    
+        render_updated_total_ranking(user_profile, total_rankings, ranking_system)
+
     with tab3:
-        render_updated_mastery_ranking(user_profile)
-    
-    # ランキング更新情報
+        render_updated_mastery_ranking(user_profile, mastery_rankings, ranking_system)
+
     st.markdown("---")
     st.info("📅 **ランキング更新スケジュール**: 毎朝3時（JST）にCloud Functionsで全ユーザーのランキングが自動更新されます。")
-    
-    # 最終更新ステータス（Cloud Functionsからの情報）
-    try:
-        db = get_firestore_manager().db
-        status_doc = db.collection("ranking_status").document("daily").get()
-        if status_doc.exists:
-            status_data = status_doc.to_dict()
-            last_updated = status_data.get("updated_at_jst", "未更新")
-            total_users = status_data.get("total_users", 0)
-            processing_time = status_data.get("processing_time_seconds", 0)
-            
-            # 処理時間を人間が読みやすい形式に変換
-            if processing_time > 60:
-                time_str = f"{processing_time/60:.1f}分"
-            else:
-                time_str = f"{processing_time:.1f}秒"
-            
-            st.caption(f"最終更新: {last_updated} | 対象ユーザー: {total_users}人 | 処理時間: {time_str}")
-        else:
-            st.caption("更新ステータス: 未初期化")
-    except Exception:
+
+    if status_data:
+        last_updated = status_data.get("updated_at_jst", "未更新")
+        total_users = status_data.get("total_users", 0)
+        processing_time = _format_processing_time(status_data.get("processing_time_seconds"))
+        st.caption(f"最終更新: {last_updated} | 対象ユーザー: {int(total_users)}人 | 処理時間: {processing_time}")
+    else:
         st.caption("更新ステータス: 取得エラー")
