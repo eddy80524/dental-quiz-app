@@ -152,6 +152,68 @@ def inject_image_quality_css():
     """, unsafe_allow_html=True)
 
 
+def _normalize_target_label(label: Optional[str]) -> str:
+    """analysis_targetなどの表記ゆれを統一"""
+    if not label:
+        return "国試"
+    normalized = label.replace("問題", "")
+    if normalized in ("学士", "学士試験"):
+        return "学士試験"
+    if normalized in ("国試", "国試対策", "国試トラッカー"):
+        return "国試"
+    return normalized
+
+
+def _get_review_plan_for_target(target_label: Optional[str]) -> Optional[Dict[str, Any]]:
+    plan_registry = st.session_state.get('review_plan_registry')
+    if not isinstance(plan_registry, dict):
+        return None
+    normalized = _normalize_target_label(target_label)
+    return plan_registry.get(normalized)
+
+
+def _apply_review_plan_limit(priority_cards: List[tuple], target_date: datetime.date, target_label: Optional[str] = None) -> List[tuple]:
+    if not priority_cards:
+        return priority_cards
+
+    plan = _get_review_plan_for_target(target_label or st.session_state.get('analysis_target'))
+    if not plan:
+        return priority_cards
+
+    plan_days = plan.get('days') or []
+    selected_day = None
+    for day in plan_days:
+        day_date = day.get('date')
+        if isinstance(day_date, datetime.date) and day_date == target_date:
+            selected_day = day
+            break
+        if isinstance(day_date, str) and day_date == target_date.isoformat():
+            selected_day = day
+            break
+
+    if not selected_day:
+        return priority_cards
+
+    limit_candidates = []
+    day_count = selected_day.get('count')
+    if isinstance(day_count, int) and day_count > 0:
+        limit_candidates.append(day_count)
+
+    plan_daily_limit = plan.get('daily_limit')
+    if isinstance(plan_daily_limit, int) and plan_daily_limit > 0:
+        limit_candidates.append(plan_daily_limit)
+
+    global_limit = st.session_state.get('daily_review_limit')
+    if isinstance(global_limit, int) and global_limit > 0:
+        limit_candidates.append(global_limit)
+
+    if not limit_candidates:
+        return priority_cards
+
+    final_limit = min(limit_candidates)
+    return priority_cards[:final_limit]
+
+
 def _calculate_legacy_stats_full(cards: Dict, today: str, new_cards_per_day: int) -> Tuple[int, int, int]:
     """従来のロジックを使用してカード統計を計算（完全版・Streamlit Cloud対応強化）"""
     
@@ -1037,7 +1099,45 @@ def render_practice_page(auth_manager=None):
     if not uid:
         st.error("ユーザーIDが見つかりません。")
         return
-    
+
+    from modules.search_page import inject_search_page_styles as inject_ios_styles
+
+    inject_ios_styles()
+    today_date = get_japan_today()
+    today_label = today_date.strftime("%Y/%m/%d (%a)")
+    current_target_label = _normalize_target_label(st.session_state.get('analysis_target', '国試'))
+    plan_for_target = _get_review_plan_for_target(current_target_label)
+    plan_today = None
+    if plan_for_target and plan_for_target.get('days'):
+        for day in plan_for_target['days']:
+            day_date = day.get('date')
+            if isinstance(day_date, datetime.date) and day_date == today_date:
+                plan_today = day
+                break
+            if isinstance(day_date, str) and day_date == today_date.isoformat():
+                plan_today = day
+                break
+
+    hero_chips = []
+    if plan_today and isinstance(plan_today.get('count'), int):
+        hero_chips.append(f"<span class='ios-chip'>復習 {plan_today['count']}枚</span>")
+    daily_limit = st.session_state.get('daily_review_limit')
+    if isinstance(daily_limit, int):
+        hero_chips.append(f"<span class='ios-chip'>上限 {daily_limit}枚</span>")
+    hero_chips.append(f"<span class='ios-chip'>対象 {current_target_label}</span>")
+
+    st.markdown(
+        f"""
+        <div class="ios-hero" style="margin-top: 0;">
+            <span class="ios-hero__badge">学習ナビゲーター</span>
+            <div class="ios-hero__title">今日の演習を最適化</div>
+            <div class="ios-hero__subtitle">検索・進捗ページで設定した復習上限と演習データを連携し、今日 ({today_label}) の学習量をバランスよく配分します。</div>
+            <div class="ios-hero__chips">{''.join(hero_chips)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
     # セッション継続チェック（最初の一回のみ実行）
     if not st.session_state.get("session_continuity_checked", False):
         st.session_state["session_continuity_checked"] = True
@@ -1771,6 +1871,8 @@ def render_practice_sidebar():
             st.session_state.firestore_manager = FirestoreManager()
         firestore_manager = st.session_state.firestore_manager
         
+        current_target_label = _normalize_target_label(st.session_state.get('analysis_target', '国試'))
+
         # 継続可能なセッションがあるかチェック（サイドバー版）
         if hasattr(firestore_manager, 'has_resumable_session') and firestore_manager.has_resumable_session(uid):
             st.markdown("### 🔄 セッション復元")
@@ -1935,6 +2037,7 @@ def render_practice_sidebar():
                 
                 # 今日の復習対象カードを優先度付きで取得
                 today_priority_cards = get_review_priority_cards(cards, today)
+                today_priority_cards = _apply_review_plan_limit(today_priority_cards, today, current_target_label)
                 review_count = len(today_priority_cards)
                 
                 # 今日の復習統計
@@ -2167,6 +2270,7 @@ def render_practice_sidebar():
                         
                         # 今日の復習対象カードを優先度順で取得
                         priority_cards = get_review_priority_cards(cards, today)
+                        priority_cards = _apply_review_plan_limit(priority_cards, today, current_target_label)
                         
                         # デバッグ情報を表示
                         if st.session_state.get("debug_mode", False):
@@ -2512,6 +2616,8 @@ def render_practice_sidebar():
             # 今日の復習状況のみ表示（日本時間）
             today = get_japan_today()
             today_priority_cards = get_review_priority_cards(cards, today)
+            plan_target = _normalize_target_label(target_exam if 'target_exam' in locals() else current_target_label)
+            today_priority_cards = _apply_review_plan_limit(today_priority_cards, today, plan_target)
             today_count = len(today_priority_cards)
             overdue_count = len([card for card in today_priority_cards if card[2] > 0])
             

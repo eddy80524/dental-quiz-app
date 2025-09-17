@@ -14,6 +14,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 import datetime
+import math
 import pytz
 from typing import Dict, List, Any, Optional
 import time
@@ -150,6 +151,167 @@ def update_session_evaluation_log(question_id: str, quality: int, timestamp: dat
 
 # レベル順序定義（0-5レベルシステム）
 LEVEL_ORDER = ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "レベル5", "習得済み"]
+
+
+def inject_search_page_styles():
+    """iOSライクな柔らかなUIスタイルを常時適用"""
+    st.markdown(
+        """
+        <style>
+        :root {
+            --ios-bg-start: #f5f7ff;
+            --ios-bg-end: #eef1ff;
+            --ios-card-bg: rgba(255, 255, 255, 0.92);
+            --ios-card-border: rgba(255, 255, 255, 0.55);
+            --ios-accent: #5b7fff;
+            --ios-accent-soft: rgba(91, 127, 255, 0.18);
+        }
+
+        div[data-testid="stAppViewContainer"] {
+            background: linear-gradient(180deg, var(--ios-bg-start) 0%, var(--ios-bg-end) 100%);
+        }
+
+        section[data-testid="stSidebar"] {
+            background: rgba(255, 255, 255, 0.85) !important;
+            backdrop-filter: blur(14px);
+        }
+
+        .block-container {
+            padding-top: 1.2rem;
+            padding-bottom: 3rem;
+        }
+
+        .ios-hero {
+            border-radius: 28px;
+            padding: 30px;
+            margin-bottom: 1.2rem;
+            background: linear-gradient(135deg, #5b7fff 0%, #7f9bff 45%, #a2b7ff 100%);
+            color: #ffffff;
+            box-shadow: 0 20px 40px rgba(91, 127, 255, 0.25);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .ios-hero::after {
+            content: "";
+            position: absolute;
+            top: -40%;
+            right: -30%;
+            width: 55%;
+            height: 120%;
+            background: rgba(255, 255, 255, 0.18);
+            filter: blur(0px);
+            transform: rotate(25deg);
+        }
+
+        .ios-hero__badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.3);
+            font-size: 0.85rem;
+            font-weight: 500;
+            letter-spacing: 0.02em;
+        }
+
+        .ios-hero__title {
+            font-size: 2rem;
+            font-weight: 700;
+            margin: 12px 0 6px;
+        }
+
+        .ios-hero__subtitle {
+            font-size: 1rem;
+            opacity: 0.92;
+            max-width: 520px;
+            line-height: 1.7;
+        }
+
+        .ios-section-title {
+            font-size: 1.08rem;
+            font-weight: 600;
+            color: #1c1c1e;
+            margin-bottom: 0.4rem;
+            letter-spacing: 0.01em;
+        }
+
+        .ios-hero__chips {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 18px;
+        }
+
+        .ios-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 6px 14px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.3);
+            color: #ffffff;
+            font-size: 0.82rem;
+            font-weight: 500;
+            letter-spacing: 0.01em;
+        }
+
+        div[data-testid="stMetric"] {
+            border-radius: 20px;
+            padding: 16px 18px;
+            background: var(--ios-card-bg);
+            border: 1px solid var(--ios-card-border);
+            box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
+        }
+
+        div[data-testid="stMetric"] > div:nth-child(1) {
+            color: #636366;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+
+        div[data-testid="stMetricValue"] {
+            color: #1c1c1e;
+            font-size: 1.6rem;
+            font-weight: 600;
+        }
+
+        div[data-testid="stMetricDelta"] {
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+
+        div[data-testid="stSlider"] {
+            padding: 14px 18px 10px;
+            border-radius: 20px;
+            background: var(--ios-card-bg);
+            border: 1px solid var(--ios-card-border);
+            box-shadow: 0 12px 32px rgba(15, 23, 42, 0.07);
+        }
+
+        div[data-testid="stSlider"] label {
+            font-weight: 600;
+            color: #1c1c1e;
+        }
+
+        div[data-testid="stSlider"] span {
+            color: #636366;
+        }
+
+        .stDataFrame {
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 12px 32px rgba(15, 23, 42, 0.07);
+        }
+
+        .stCaption {
+            color: #3a3a3c;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 @st.cache_data(ttl=600, show_spinner=False)  # 10分間キャッシュ、スピナー非表示
 def calculate_total_questions():
@@ -400,6 +562,203 @@ def get_review_priority_cards(cards: dict, target_date: datetime.date = None) ->
     priority_cards.sort(key=lambda x: x[1], reverse=True)
     
     return priority_cards
+
+
+def _extract_card_review_metadata(
+    q_id: str,
+    card: Dict[str, Any],
+    today: Optional[datetime.date] = None
+) -> Optional[Dict[str, Any]]:
+    """レビュー計画作成用にカードのメタ情報を抽出"""
+    if not isinstance(card, dict):
+        return None
+
+    history = card.get('history')
+    if not history:
+        return None
+
+    latest = history[-1]
+    if not isinstance(latest, dict):
+        return None
+
+    timestamp = latest.get('timestamp')
+    interval = latest.get('interval', 0)
+    quality = latest.get('quality', 0)
+    ef = latest.get('EF', 2.5)
+
+    if not timestamp:
+        return None
+
+    try:
+        last_study_date = get_japan_datetime_from_timestamp(timestamp).date()
+    except Exception:
+        return None
+
+    try:
+        interval_days = int(interval) if interval is not None else 0
+    except (ValueError, TypeError):
+        interval_days = 0
+
+    next_review_date = last_study_date + datetime.timedelta(days=max(interval_days, 0))
+
+    today = today or get_japan_today()
+    level = calculate_card_level(card)
+    is_mature = level in {"レベル5", "習得済み"} or interval_days >= 45
+
+    return {
+        'id': q_id,
+        'level': level,
+        'interval': interval_days,
+        'quality': quality if isinstance(quality, (int, float)) else 0,
+        'ef': float(ef) if isinstance(ef, (int, float)) else 2.5,
+        'next_review_date': next_review_date,
+        'last_study_date': last_study_date,
+        'is_mature': is_mature,
+        'today': today
+    }
+
+
+def build_balanced_review_plan(
+    cards: Dict[str, Any],
+    daily_target: int = 120,
+    horizon_days: int = 7,
+    hisshu_set: Optional[set] = None,
+    mature_daily_quota_factor: float = 0.25
+) -> Dict[str, Any]:
+    """膨らみがちな復習量を平準化するレビュー計画を生成"""
+    if daily_target <= 0:
+        daily_target = 1
+
+    today = get_japan_today()
+    hisshu_set = hisshu_set or set()
+
+    backlog_non_mature: List[Dict[str, Any]] = []
+    backlog_mature: List[Dict[str, Any]] = []
+    future_non_mature: Dict[datetime.date, List[Dict[str, Any]]] = defaultdict(list)
+    future_mature: Dict[datetime.date, List[Dict[str, Any]]] = defaultdict(list)
+
+    considered_total = 0
+
+    for q_id, card in cards.items():
+        metadata = _extract_card_review_metadata(q_id, card, today)
+        if not metadata:
+            continue
+
+        considered_total += 1
+        entry = {
+            'id': q_id,
+            'due_date': metadata['next_review_date'],
+            'quality': metadata['quality'],
+            'ef': metadata['ef'],
+            'level': metadata['level'],
+            'is_mature': metadata['is_mature'],
+            'is_hisshu': q_id in hisshu_set
+        }
+
+        if metadata['next_review_date'] <= today:
+            if metadata['is_mature']:
+                backlog_mature.append(entry)
+            else:
+                backlog_non_mature.append(entry)
+        else:
+            target_map = future_mature if metadata['is_mature'] else future_non_mature
+            target_map[metadata['next_review_date']].append(entry)
+
+    backlog_non_mature.sort(key=lambda x: (x['due_date'], x['quality'], x['ef']))
+    backlog_mature.sort(key=lambda x: (x['due_date'], x['quality'], x['ef']))
+
+    initial_backlog = len(backlog_non_mature) + len(backlog_mature)
+
+    non_mature_dates = sorted(future_non_mature.keys())
+    mature_dates = sorted(future_mature.keys())
+    non_idx = 0
+    mature_idx = 0
+
+    days: List[Dict[str, Any]] = []
+    served_total = 0
+
+    for offset in range(max(horizon_days, 0)):
+        current_date = today + datetime.timedelta(days=offset)
+
+        while non_idx < len(non_mature_dates) and non_mature_dates[non_idx] <= current_date:
+            due_date = non_mature_dates[non_idx]
+            backlog_non_mature.extend(future_non_mature.pop(due_date, []))
+            non_idx += 1
+        while mature_idx < len(mature_dates) and mature_dates[mature_idx] <= current_date:
+            due_date = mature_dates[mature_idx]
+            backlog_mature.extend(future_mature.pop(due_date, []))
+            mature_idx += 1
+
+        backlog_non_mature.sort(key=lambda x: (x['due_date'], x['quality'], x['ef']))
+        backlog_mature.sort(key=lambda x: (x['due_date'], x['quality'], x['ef']))
+
+        assigned: List[Dict[str, Any]] = []
+        hisshu_count = 0
+        mature_count = 0
+
+        take_non = min(len(backlog_non_mature), daily_target)
+        if take_non > 0:
+            assigned.extend(backlog_non_mature[:take_non])
+            hisshu_count += sum(1 for item in backlog_non_mature[:take_non] if item['is_hisshu'])
+            mature_count += sum(1 for item in backlog_non_mature[:take_non] if item['is_mature'])
+            backlog_non_mature = backlog_non_mature[take_non:]
+
+        remaining_slots = daily_target - len(assigned)
+        mature_quota = max(2, int(daily_target * mature_daily_quota_factor))
+
+        if remaining_slots > 0 and backlog_mature:
+            take_mature = min(remaining_slots, len(backlog_mature))
+            if len(assigned) > 0 and take_mature > mature_quota:
+                take_mature = mature_quota
+
+            if take_mature > 0:
+                assigned.extend(backlog_mature[:take_mature])
+                hisshu_count += sum(1 for item in backlog_mature[:take_mature] if item['is_hisshu'])
+                mature_count += take_mature
+                backlog_mature = backlog_mature[take_mature:]
+
+        # それでも枠が余り、未成熟カードが無い場合は成熟カードで埋める
+        remaining_slots = daily_target - len(assigned)
+        if remaining_slots > 0 and not backlog_non_mature and backlog_mature:
+            take_additional = min(remaining_slots, len(backlog_mature))
+            assigned.extend(backlog_mature[:take_additional])
+            hisshu_count += sum(1 for item in backlog_mature[:take_additional] if item['is_hisshu'])
+            mature_count += take_additional
+            backlog_mature = backlog_mature[take_additional:]
+
+        served_total += len(assigned)
+        overdue_served = sum(1 for item in assigned if item['due_date'] < current_date)
+        due_today_served = sum(1 for item in assigned if item['due_date'] == current_date)
+
+        days.append({
+            'date': current_date,
+            'count': len(assigned),
+            'overdue_served': overdue_served,
+            'due_today_served': due_today_served,
+            'hisshu_count': hisshu_count,
+            'mature_count': mature_count,
+            'card_examples': [item['id'] for item in assigned[:10]],
+            'remaining_backlog': len(backlog_non_mature) + len(backlog_mature)
+        })
+
+    remaining_future = sum(len(v) for v in future_non_mature.values()) + sum(len(v) for v in future_mature.values())
+    backlog_after_horizon = len(backlog_non_mature) + len(backlog_mature)
+
+    outstanding = backlog_after_horizon + remaining_future
+    projected_clear_days = horizon_days + math.ceil(outstanding / daily_target) if outstanding > 0 else horizon_days
+
+    return {
+        'today': today,
+        'daily_target': daily_target,
+        'considered_total': considered_total,
+        'served_total': served_total,
+        'overdue_total': initial_backlog,
+        'backlog_start': initial_backlog,
+        'backlog_after_horizon': backlog_after_horizon,
+        'remaining_future': remaining_future,
+        'projected_clear_days': projected_clear_days,
+        'days': days
+    }
 
 def check_gakushi_permission(uid: str) -> bool:
     """学士試験へのアクセス権限をチェック（キャッシュ対応）"""
@@ -683,10 +1042,47 @@ def render_search_page():
     analysis_target = st.session_state.get("analysis_target", "国試")
     level_filter = st.session_state.get("level_filter", LEVEL_ORDER)
     subject_filter = st.session_state.get("subject_filter", [])
-    
+
+    inject_search_page_styles()
+
+    today_date = get_japan_today()
+    today_label = today_date.strftime("%Y/%m/%d (%a)")
+    daily_limit = st.session_state.get('daily_review_limit')
+    plan_registry = st.session_state.get('review_plan_registry', {})
+    active_plan = plan_registry.get(analysis_target)
+    today_plan = None
+    if active_plan and active_plan.get('days'):
+        for day in active_plan['days']:
+            day_date = day.get('date')
+            if isinstance(day_date, datetime.date) and day_date == today_date:
+                today_plan = day
+                break
+            if isinstance(day_date, str) and day_date == today_date.isoformat():
+                today_plan = day
+                break
+
+    chip_html = []
+    if isinstance(daily_limit, int):
+        chip_html.append(f"<span class='ios-chip'>復習上限 {daily_limit}枚</span>")
+    chip_html.append(f"<span class='ios-chip'>対象 {analysis_target}</span>")
+    if today_plan and isinstance(today_plan.get('count'), int):
+        chip_html.append(f"<span class='ios-chip'>今日の復習 {today_plan['count']}枚</span>")
+
+    st.markdown(
+        f"""
+        <div class="ios-hero">
+            <span class="ios-hero__badge">進捗ビュー</span>
+            <div class="ios-hero__title">学習ダッシュボード</div>
+            <div class="ios-hero__subtitle">検索・進捗ページでは、演習データをもとに復習量の偏りや達成状況を確認できます。今日 ({today_label}) の指標をチェックして、次の一手を決めましょう。</div>
+            <div class="ios-hero__chips">{''.join(chip_html)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
     # 権限チェック
     has_gakushi_permission = st.session_state.get('has_gakushi_permission', False)
-    
+
     # 最適化されたデータ準備
     base_df = prepare_data_for_display(uid, cards, analysis_target)
     
@@ -786,6 +1182,114 @@ def render_overview_tab_perfect(filtered_df: pd.DataFrame, base_df: pd.DataFrame
     if filtered_df.empty:
         st.warning("選択された条件に一致する問題がありません。")
     else:
+        cards_state = st.session_state.get('cards', {})
+        relevant_ids = [q_id for q_id in filtered_df['id'].tolist() if q_id]
+        target_cards = {q_id: cards_state[q_id] for q_id in relevant_ids if q_id in cards_state}
+
+        hisshu_set = GAKUSHI_HISSHU_Q_NUMBERS_SET if analysis_target == "学士試験" else HISSHU_Q_NUMBERS_SET
+
+        min_limit = 30
+        max_limit = 400
+        default_limit = st.session_state.get('daily_review_limit', 120)
+        if default_limit < min_limit:
+            default_limit = min_limit
+        elif default_limit > max_limit:
+            default_limit = max_limit
+
+        st.markdown('<div class="ios-section-title">📅 デイリーレビュープランナー</div>', unsafe_allow_html=True)
+        daily_limit = st.slider(
+            "1日の復習上限",
+            min_value=min_limit,
+            max_value=max_limit,
+            value=default_limit,
+            step=10,
+            help="毎日の復習上限を設定すると、遅延カードを数日間に分散して消化できます。"
+        )
+        st.session_state['daily_review_limit'] = daily_limit
+
+        review_plan = build_balanced_review_plan(
+            target_cards,
+            daily_target=daily_limit,
+            horizon_days=7,
+            hisshu_set=hisshu_set
+        )
+
+        plan_days_storage = []
+        for day in review_plan.get('days', []):
+            plan_days_storage.append({
+                'date': day.get('date'),
+                'count': day.get('count', 0),
+                'overdue_served': day.get('overdue_served', 0),
+                'hisshu_count': day.get('hisshu_count', 0),
+                'mature_count': day.get('mature_count', 0),
+                'remaining_backlog': day.get('remaining_backlog', 0)
+            })
+
+        plan_registry = dict(st.session_state.get('review_plan_registry', {}))
+        plan_registry[analysis_target] = {
+            'generated_on': review_plan.get('today'),
+            'days': plan_days_storage,
+            'daily_limit': daily_limit,
+            'overdue_total': review_plan.get('overdue_total', 0),
+            'served_total': review_plan.get('served_total', 0),
+            'considered_total': review_plan.get('considered_total', 0),
+            'backlog_after_horizon': review_plan.get('backlog_after_horizon', 0),
+            'remaining_future': review_plan.get('remaining_future', 0)
+        }
+        st.session_state['review_plan_registry'] = plan_registry
+
+        today_plan_entry = None
+        today_date = review_plan.get('today')
+        for day in plan_days_storage:
+            day_date = day.get('date')
+            if isinstance(day_date, datetime.date) and day_date == today_date:
+                today_plan_entry = day
+                break
+            if isinstance(day_date, str) and today_date and isinstance(today_date, datetime.date) and day_date == today_date.isoformat():
+                today_plan_entry = day
+                break
+
+        today_summary_registry = dict(st.session_state.get('review_plan_today_summary', {}))
+        if today_plan_entry:
+            today_summary_registry[analysis_target] = today_plan_entry
+        else:
+            today_summary_registry.pop(analysis_target, None)
+        st.session_state['review_plan_today_summary'] = today_summary_registry
+
+        if review_plan['considered_total'] == 0:
+            st.info("対象の復習カードがまだありません。演習を進めるとここに計画が表示されます。")
+        else:
+            served_ratio = (review_plan['served_total'] / review_plan['considered_total'] * 100) if review_plan['considered_total'] else 0
+            backlog_after = review_plan['backlog_after_horizon'] + review_plan['remaining_future']
+
+            col_plan_a, col_plan_b, col_plan_c = st.columns(3)
+            with col_plan_a:
+                st.metric("今日までの未消化復習", f"{review_plan['overdue_total']} 問")
+            with col_plan_b:
+                st.metric("7日間の処理見込み", f"{review_plan['served_total']} / {review_plan['considered_total']} 問", help=f"約{served_ratio:.1f}%を今週中に解消できます。")
+            with col_plan_c:
+                st.metric("完了までの目安", f"約{review_plan['projected_clear_days']}日")
+
+            if review_plan['days']:
+                plan_rows = []
+                for day in review_plan['days']:
+                    plan_rows.append({
+                        '日付': day['date'].strftime('%m/%d (%a)'),
+                        '予定復習数': day['count'],
+                        '遅延解消数': day['overdue_served'],
+                        '必修カード': day['hisshu_count'],
+                        '成熟カード': day['mature_count'],
+                        '処理後残数': day['remaining_backlog']
+                    })
+
+                plan_df = pd.DataFrame(plan_rows)
+                st.dataframe(plan_df, hide_index=True, use_container_width=True)
+
+            if backlog_after > 0:
+                st.caption(f"7日後も残るカード: {backlog_after} 問。上限を一時的に+{max(20, daily_limit//2)}するか、演習ペースを抑えて調整してください。")
+
+        st.markdown("---")
+
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("##### カード習熟度分布（全体）")
