@@ -29,7 +29,7 @@ def get_japan_now() -> datetime.datetime:
 
 # Streamlit設定 - サイドバーを自動展開
 st.set_page_config(
-    page_title="歯科国家試験AI対策アプリ",
+    page_title="国家試験AI対策アプリ",
     page_icon="🦷",
     layout="wide",
     initial_sidebar_state="expanded"  # サイドバーを展開状態で開始

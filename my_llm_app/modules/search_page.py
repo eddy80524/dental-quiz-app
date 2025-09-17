@@ -761,34 +761,7 @@ def render_search_page():
                 delta=f"前週比 {accuracy_delta_text}"
             )
         
-        # 進捗更新ボタン
-        st.divider()
-        col_refresh, col_debug = st.columns([1, 3])
-        with col_refresh:
-            if st.button("🔄 進捗データを更新", help="最新の学習記録を反映します"):
-                # 学習ログを強制更新
-                if HAS_USER_DATA_EXTRACTOR and uid and uid != "guest":
-                    try:
-                        extractor = UserDataExtractor()
-                        evaluation_logs = extractor.extract_self_evaluation_logs(uid)
-                        if evaluation_logs:
-                            st.session_state['evaluation_logs'] = evaluation_logs
-                            st.session_state['evaluation_logs_initialized'] = True
-                            st.success("進捗データを更新しました！")
-                            st.rerun()
-                        else:
-                            st.info("更新する学習記録が見つかりません。")
-                    except Exception as e:
-                        st.error(f"進捗データの更新に失敗しました: {e}")
-                else:
-                    st.info("現在のセッションログから進捗を計算しています。")
-        
-        with col_debug:
-            if st.checkbox("デバッグ情報を表示", key="debug_mode_checkbox"):
-                st.session_state["debug_mode"] = True
-                st.rerun()
-            else:
-                st.session_state["debug_mode"] = False
+
     
     # タブコンテナ - 4つのタブ（元UIを完全復元）
     tab1, tab2, tab3, tab4 = st.tabs(["概要", "グラフ分析", "問題リスト", "キーワード検索"])
