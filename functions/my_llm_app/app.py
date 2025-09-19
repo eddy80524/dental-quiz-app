@@ -692,7 +692,7 @@ class DentalApp:
     def _render_signup_tab(self):
         """新規登録タブの描画"""
         # 新規登録の一時停止フラグ（必要に応じて True に変更）
-        SIGNUP_TEMPORARILY_DISABLED = False  # ← ★この行が重要です
+        SIGNUP_TEMPORARILY_DISABLED = True  # ← ★この行が重要です
 
         if SIGNUP_TEMPORARILY_DISABLED:
             st.warning("🚧 新規登録は一時的に停止中です")
