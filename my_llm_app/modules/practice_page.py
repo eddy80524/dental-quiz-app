@@ -13,6 +13,7 @@ import streamlit as st
 import datetime
 import time
 import random
+import re
 import pytz
 import sys
 import os
@@ -518,6 +519,76 @@ class AnswerModeComponent:
     """解答、結果表示、自己評価のUIをすべて管理する統合コンポーネント"""
 
     @staticmethod
+    def _normalize_question_text(text: Optional[str]) -> str:
+        """改行や空白を除去したテキストを返す"""
+        if not text:
+            return ""
+        return re.sub(r'\s+', '', text)
+
+    @staticmethod
+    def _get_input_mode(question: Dict[str, Any]) -> str:
+        """選択肢方式か入力方式かを判定"""
+        choices = question.get('choices') or []
+        question_text = question.get('question', '') or ''
+
+        # 並べ替え系の問題は入力方式を優先
+        if QuestionUtils.is_ordering_question(question):
+            return 'text'
+
+        if not choices:
+            return 'text'
+
+        normalized_text = AnswerModeComponent._normalize_question_text(question_text)
+        selection_pattern = re.compile(r'([一二三四五六七八九十]|[0-9０-９])+つ選べ')
+
+        if selection_pattern.search(normalized_text):
+            return 'choices'
+
+        return 'text'
+
+    @staticmethod
+    def _get_text_input_placeholder(question: Dict[str, Any]) -> str:
+        """入力欄のプレースホルダーを決定"""
+        question_text = question.get('question', '') or ''
+        answer = (question.get('answer', '') or '').strip()
+
+        if QuestionUtils.is_ordering_question(question):
+            return '例: ABDCE （順番通りに入力）'
+
+        numeric_pattern = re.compile(r'^[-+]?\d+(?:\.\d+)?$')
+        translation_table = str.maketrans({
+            '０': '0', '１': '1', '２': '2', '３': '3', '４': '4',
+            '５': '5', '６': '6', '７': '7', '８': '8', '９': '9',
+            '．': '.', '－': '-', '＋': '+'
+        })
+        normalized_answer = answer.translate(translation_table)
+
+        if numeric_pattern.match(answer) or numeric_pattern.match(normalized_answer):
+            return '数値を入力（例: 60）'
+
+        return '解答を入力（例: ABC）'
+
+    @staticmethod
+    def _render_text_answer_field(question: Dict[str, Any], qid: str, group_id: str, is_checked: bool) -> str:
+        """入力形式の回答欄を描画し、入力値を返す"""
+        raw_choices = question.get('choices') or []
+        if raw_choices:
+            st.markdown("**選択肢**")
+            for idx, choice_text in enumerate(raw_choices):
+                label = QuestionComponent.get_choice_label(idx)
+                st.markdown(f"- {label}. {choice_text}")
+
+        text_key = f"text_answer_{qid}_{group_id}"
+        placeholder = AnswerModeComponent._get_text_input_placeholder(question)
+        st.text_input(
+            "解答を入力",
+            key=text_key,
+            placeholder=placeholder,
+            disabled=is_checked
+        )
+        return st.session_state.get(text_key, '')
+
+    @staticmethod
     def render(questions: List[Dict], group_id: str, case_data: Dict = None) -> Dict[str, Any]:
         user_selections = {}
         action_result = {}
@@ -543,26 +614,37 @@ class AnswerModeComponent:
                 st.markdown(f"#### {qid}")
                 st.markdown(question.get('question', ''))
                 
-                # 選択肢のシャッフルとマッピング情報の保存
-                shuffled_choices, label_mapping = st.session_state.setdefault(
-                    f"shuffled_mapping_{qid}_{group_id}", 
-                    QuestionComponent.shuffle_choices_with_mapping(question.get('choices', []))
-                )
-                st.session_state[f"label_mapping_{qid}_{group_id}"] = label_mapping
+                input_mode = AnswerModeComponent._get_input_mode(question)
 
-                # 選択肢の描画とユーザー選択の取得
-                selected_labels = []
-                for choice_index, choice_text in enumerate(shuffled_choices):
-                    label = QuestionComponent.get_choice_label(choice_index)
-                    is_selected = st.checkbox(
-                        f"{label}. {choice_text}",
-                        key=f"choice_{qid}_{choice_index}_{group_id}",
-                        disabled=is_checked
+                if input_mode == 'choices':
+                    # 選択肢のシャッフルとマッピング情報の保存
+                    shuffled_choices, label_mapping = st.session_state.setdefault(
+                        f"shuffled_mapping_{qid}_{group_id}", 
+                        QuestionComponent.shuffle_choices_with_mapping(question.get('choices', []))
                     )
-                    if is_selected:
-                        selected_labels.append(label)
-                user_selections[qid] = selected_labels
-                
+                    st.session_state[f"label_mapping_{qid}_{group_id}"] = label_mapping
+
+                    # 選択肢の描画とユーザー選択の取得
+                    selected_labels = []
+                    for choice_index, choice_text in enumerate(shuffled_choices):
+                        label = QuestionComponent.get_choice_label(choice_index)
+                        is_selected = st.checkbox(
+                            f"{label}. {choice_text}",
+                            key=f"choice_{qid}_{choice_index}_{group_id}",
+                            disabled=is_checked
+                        )
+                        if is_selected:
+                            selected_labels.append(label)
+                    user_selections[qid] = selected_labels
+                else:
+                    # 入力形式の問題
+                    st.session_state.pop(f"shuffled_mapping_{qid}_{group_id}", None)
+                    st.session_state.pop(f"label_mapping_{qid}_{group_id}", None)
+                    user_input = AnswerModeComponent._render_text_answer_field(
+                        question, qid, group_id, is_checked
+                    )
+                    user_selections[qid] = user_input
+
                 if q_index < len(questions) - 1:
                     st.markdown("---")
 
@@ -730,26 +812,36 @@ class AnswerModeComponent:
                 st.markdown(f"#### {qid}")
                 st.markdown(question.get('question', ''))
                 
-                # 選択肢のシャッフルとマッピング情報の保存
-                shuffled_choices, label_mapping = st.session_state.setdefault(
-                    f"shuffled_mapping_{qid}_{group_id}", 
-                    QuestionComponent.shuffle_choices_with_mapping(question.get('choices', []))
-                )
-                st.session_state[f"label_mapping_{qid}_{group_id}"] = label_mapping
+                input_mode = AnswerModeComponent._get_input_mode(question)
 
-                # 選択肢の描画とユーザー選択の取得
-                selected_labels = []
-                for choice_index, choice_text in enumerate(shuffled_choices):
-                    label = QuestionComponent.get_choice_label(choice_index)
-                    is_selected = st.checkbox(
-                        f"{label}. {choice_text}",
-                        key=f"choice_{qid}_{choice_index}_{group_id}",
-                        disabled=is_checked
+                if input_mode == 'choices':
+                    # 選択肢のシャッフルとマッピング情報の保存
+                    shuffled_choices, label_mapping = st.session_state.setdefault(
+                        f"shuffled_mapping_{qid}_{group_id}", 
+                        QuestionComponent.shuffle_choices_with_mapping(question.get('choices', []))
                     )
-                    if is_selected:
-                        selected_labels.append(label)
-                user_selections[qid] = selected_labels
-                
+                    st.session_state[f"label_mapping_{qid}_{group_id}"] = label_mapping
+
+                    # 選択肢の描画とユーザー選択の取得
+                    selected_labels = []
+                    for choice_index, choice_text in enumerate(shuffled_choices):
+                        label = QuestionComponent.get_choice_label(choice_index)
+                        is_selected = st.checkbox(
+                            f"{label}. {choice_text}",
+                            key=f"choice_{qid}_{choice_index}_{group_id}",
+                            disabled=is_checked
+                        )
+                        if is_selected:
+                            selected_labels.append(label)
+                    user_selections[qid] = selected_labels
+                else:
+                    st.session_state.pop(f"shuffled_mapping_{qid}_{group_id}", None)
+                    st.session_state.pop(f"label_mapping_{qid}_{group_id}", None)
+                    user_input = AnswerModeComponent._render_text_answer_field(
+                        question, qid, group_id, is_checked
+                    )
+                    user_selections[qid] = user_input
+
                 # 問題間の区切り線
                 if q_index < len(questions) - 1:
                     st.markdown("---")
@@ -938,32 +1030,6 @@ class AnswerModeComponent:
                             )
         
         return action_result
-
-    @staticmethod
-    def _is_ordering_question(question_text: str, choices: List[str] = None) -> bool:
-        """並び替え問題の判定"""
-        # 明確な並び替えキーワードがある場合のみ並び替え問題と判定
-        strict_ordering_keywords = ['順番', '順序', '配列', '並び替え']
-        
-        # 明確な並び替えキーワードがある場合
-        if any(keyword in question_text for keyword in strict_ordering_keywords):
-            return True
-        
-        # 「手順」キーワードがある場合は選択肢もチェック
-        if '手順' in question_text and choices:
-            # 選択肢が単語の組み合わせ（例：「ア→イ→ウ」）の場合のみ並び替え問題
-            # 通常の文章選択肢の場合は並び替え問題ではない
-            choice_pattern_count = 0
-            for choice in choices:
-                # 矢印やカンマで区切られた短い記号パターンを検出
-                if ('→' in choice or ',' in choice) and len(choice) < 20:
-                    choice_pattern_count += 1
-            
-            # 選択肢の大部分が順序パターンの場合のみ並び替え問題
-            return choice_pattern_count >= len(choices) * 0.8
-        
-        return False
-
 
 class PracticeSession:
     """練習セッションを管理するクラス"""
@@ -1491,6 +1557,7 @@ def _process_group_answer_improved(q_objects: List[Dict], user_selections: Dict,
         qid = question.get('number', '')
         user_answer = user_selections.get(qid, '')
         correct_answer = question.get('answer', '')
+        manual_input_used = not isinstance(user_answer, list)
         
         # ラベルマッピングを取得（シャッフルされた選択肢の場合）
         mapping_key = f"label_mapping_{qid}_{group_id}"
@@ -1506,9 +1573,18 @@ def _process_group_answer_improved(q_objects: List[Dict], user_selections: Dict,
             # テキスト入力の場合（並び替え問題など）
             mapped_chars = [label_mapping.get(char, char) for char in user_answer.upper()]
             user_answer_str = "".join(mapped_chars)
-        # 正誤判定（複数正解対応）
+        # 正誤判定（複数正解・順序・数値対応）
         from utils import QuestionUtils
-        is_correct = QuestionUtils.check_answer(user_answer_str, correct_answer)
+        order_sensitive = QuestionUtils.requires_order_sensitive_check(
+            question,
+            manual_input_used=manual_input_used,
+            user_answer=user_answer_str
+        )
+        is_correct = QuestionUtils.check_answer(
+            user_answer_str,
+            correct_answer,
+            order_sensitive=order_sensitive
+        )
         
         # デバッグ情報（複数正解対応判定）
         if st.session_state.get("debug_mode", False):

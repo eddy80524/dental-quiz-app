@@ -20,10 +20,12 @@ import tempfile
 import base64
 import hashlib
 import requests
+import unicodedata
 from typing import Dict, Any, List, Optional, Union
 from collections import Counter, defaultdict
 import pytz
 import streamlit.components.v1 as components
+from decimal import Decimal, InvalidOperation
 
 # 日本時間のタイムゾーン設定
 JST = pytz.timezone('Asia/Tokyo')
@@ -352,56 +354,116 @@ class QuestionUtils:
         return False
 
     @staticmethod
-    def check_answer(user_choice: str, correct_answer: str) -> bool:
-        """
-        複数正解に対応した解答判定（複数選択問題対応）
-        
-        Args:
-            user_choice: ユーザーの選択 (例: "A", "AD", "ABC", "AC")
-            correct_answer: 正解 (例: "A", "A/D", "AD/AC/CD", "ABC/ABD/ACD/BCD", "AC", "B／E")
-        
-        Returns:
-            bool: 正解かどうか
-        """
+    def _normalize_answer_string(value: Optional[str]) -> str:
+        """全角・空白を補正して比較用文字列を生成"""
+        if not value:
+            return ""
+        normalized = unicodedata.normalize('NFKC', value)
+        normalized = normalized.replace('／', '/').replace('・', '')
+        normalized = normalized.replace(',', '').replace('、', '')
+        normalized = normalized.replace('　', ' ').strip()
+        normalized = re.sub(r'\s+', '', normalized)
+        return normalized.upper()
+
+    @staticmethod
+    def _try_parse_decimal(value: str) -> Optional[Decimal]:
+        """Decimalへの変換が可能であれば値を返す"""
+        if not value:
+            return None
+        try:
+            clean_value = value.replace(',', '')
+            return Decimal(clean_value)
+        except (InvalidOperation, AttributeError):
+            return None
+
+    @staticmethod
+    def is_ordering_question(question: Dict[str, Any]) -> bool:
+        """並べ替え系の問題かどうかを判定"""
+        if not isinstance(question, dict):
+            return False
+
+        question_text = QuestionUtils._normalize_answer_string(question.get('question', ''))
+        choices = question.get('choices') or []
+
+        ordering_keywords = ['順番', '順序', '配列', '並べ', '並び替え', '並び換え']
+        if any(keyword in question_text for keyword in ordering_keywords):
+            return True
+
+        if '手順' in question_text and choices:
+            pattern_hits = 0
+            arrow_symbols = ('→', '⇒', '>', '->')
+            for choice in choices:
+                normalized_choice = QuestionUtils._normalize_answer_string(choice)
+                if any(symbol in choice for symbol in arrow_symbols) and len(normalized_choice) < 40:
+                    pattern_hits += 1
+            return pattern_hits >= max(1, int(len(choices) * 0.6))
+
+        return False
+
+    @staticmethod
+    def requires_order_sensitive_check(question: Dict[str, Any], manual_input_used: bool,
+                                       user_answer: Optional[str] = None) -> bool:
+        """並び順を厳密に評価すべきかを判定"""
+        if not manual_input_used:
+            return False
+
+        if QuestionUtils.is_ordering_question(question):
+            return True
+
+        normalized_answer = QuestionUtils._normalize_answer_string((question or {}).get('answer', ''))
+        has_multiple_arrangements = '/' in normalized_answer and any(
+            len(ans.strip()) > 1 for ans in normalized_answer.split('/')
+        )
+        if has_multiple_arrangements and user_answer:
+            normalized_user = QuestionUtils._normalize_answer_string(user_answer)
+            return len(normalized_user) > 1
+
+        return False
+
+    @staticmethod
+    def check_answer(user_choice: str, correct_answer: str, order_sensitive: bool = False) -> bool:
+        """複数解・順序問題・数値入力に対応した解答判定"""
         if not user_choice or not correct_answer:
             return False
-        
-        user_choice = user_choice.strip()
-        correct_answer = correct_answer.strip()
-        
-        # デバッグ出力（開発時のみ）
+
+        normalized_user = QuestionUtils._normalize_answer_string(user_choice)
+        normalized_correct = QuestionUtils._normalize_answer_string(correct_answer)
+
+        user_decimal = QuestionUtils._try_parse_decimal(normalized_user)
+        correct_decimal = QuestionUtils._try_parse_decimal(normalized_correct)
+        if user_decimal is not None and correct_decimal is not None:
+            return user_decimal == correct_decimal
+
         import streamlit as st
-        if st.session_state.get("debug_mode", False):
-            st.write(f"判定デバッグ - ユーザー: '{user_choice}', 正解: '{correct_answer}'")
-        
-        # 全角スラッシュを半角に統一
-        normalized_correct = correct_answer.replace('／', '/')
-        
-        # 複数正解の場合（/区切り）- どれか一つでも正解なら正解
+        if st.session_state.get('debug_mode', False):
+            st.write(f"判定デバッグ - ユーザー: '{normalized_user}', 正解: '{normalized_correct}' (順序厳格: {order_sensitive})")
+
         if '/' in normalized_correct:
-            valid_answers = [ans.strip() for ans in normalized_correct.split('/')]
-            is_match = user_choice in valid_answers
-            if st.session_state.get("debug_mode", False):
-                st.write(f"複数正解判定 - 選択肢: {valid_answers}, ユーザー選択: '{user_choice}', 結果: {is_match}")
+            valid_answers = [QuestionUtils._normalize_answer_string(ans) for ans in normalized_correct.split('/')]
+            if order_sensitive:
+                is_match = normalized_user in valid_answers
+            else:
+                sorted_user = ''.join(sorted(normalized_user))
+                sorted_valid = {''.join(sorted(ans)) for ans in valid_answers}
+                is_match = sorted_user in sorted_valid
+            if st.session_state.get('debug_mode', False):
+                st.write(f"複数正解判定 - 選択肢: {valid_answers}, ユーザー: '{normalized_user}', 結果: {is_match}")
             return is_match
-        
-        # 複数選択問題の場合（正答が「AC」「BD」など複数文字）
-        # ユーザーの回答と正答を文字レベルで比較
-        if len(normalized_correct) > 1 and len(user_choice) > 1:
-            # 文字を昇順にソートして比較（順序に依存しない）
-            user_sorted = ''.join(sorted(user_choice.upper()))
-            correct_sorted = ''.join(sorted(normalized_correct.upper()))
-            is_match = user_sorted == correct_sorted
-            if st.session_state.get("debug_mode", False):
-                st.write(f"複数選択判定 - ユーザーソート: '{user_sorted}', 正解ソート: '{correct_sorted}', 結果: {is_match}")
+
+        if len(normalized_correct) > 1 and len(normalized_user) > 1 and normalized_correct.isalpha() and normalized_user.isalpha():
+            if order_sensitive:
+                is_match = normalized_user == normalized_correct
+            else:
+                is_match = ''.join(sorted(normalized_user)) == ''.join(sorted(normalized_correct))
+            if st.session_state.get('debug_mode', False):
+                st.write(f"複数選択判定 - ユーザー: '{normalized_user}', 正解: '{normalized_correct}', 結果: {is_match}")
             return is_match
-        
-        # 単一正解の場合
-        is_match = user_choice.upper() == normalized_correct.upper()
-        if st.session_state.get("debug_mode", False):
+
+        is_match = normalized_user == normalized_correct
+        if st.session_state.get('debug_mode', False):
             st.write(f"単一正解判定 - 結果: {is_match}")
         return is_match
-    
+
     @staticmethod
     def format_answer_display(correct_answer: str) -> str:
         """
