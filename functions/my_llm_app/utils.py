@@ -268,6 +268,11 @@ class QuestionUtils:
         question_text = QuestionUtils._normalize_answer_string(question.get('question', ''))
         choices = question.get('choices') or []
 
+        # 「〜はどれか」「〜を選べ」など選択問題の表現がある場合は並べ替え問題ではない
+        choice_patterns = ['はどれか', 'を選べ', 'はどれ', 'を答え', 'を回答']
+        if any(pattern in question_text for pattern in choice_patterns):
+            return False
+
         ordering_keywords = ['順番', '順序', '配列', '並べ', '並び替え', '並び換え']
         if any(keyword in question_text for keyword in ordering_keywords):
             return True
