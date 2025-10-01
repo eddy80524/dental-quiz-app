@@ -378,7 +378,7 @@
         "気管支収縮",
         "末梢血管拡張"
       ],
-      "answer": "BC",
+      "answer": "BCD",
       "subject": "薬理学",
       "image_paths": []
     },
@@ -406,7 +406,7 @@
         "細胞の配列不正",
         "細胞の大小不同"
       ],
-      "answer": "ABD",
+      "answer": "ACD",
       "subject": "口腔病理学",
       "image_paths": []
     },
@@ -506,7 +506,7 @@
         "付加型シリコーンゴム印象材",
         "ポリカルボキシレートセメント"
       ],
-      "answer": "BD",
+      "answer": "BC",
       "subject": "歯科理工学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-A-36a.jpg"
@@ -707,7 +707,7 @@
         "気管支の拡張"
       ],
       "answer": "CD",
-      "subject": "歯科保存学",
+      "subject": "歯科麻酔学",
       "image_paths": []
     },
     {
@@ -764,7 +764,7 @@
         "アバットメントスクリューが緩みにくい。",
         "回転防止機構がインプラント体内側に存在する。"
       ],
-      "answer": "BE",
+      "answer": "AC",
       "subject": "口腔インプラント",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-A-54a.jpg"
@@ -808,7 +808,7 @@
         "O’LearyのPCR",
         "プロービングデプス"
       ],
-      "answer": "BDE",
+      "answer": "BCE",
       "subject": "歯周病学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-A-57a.jpg",
@@ -897,7 +897,7 @@
         "義歯の軽量化を図ることができる。",
         "顎欠損側に強い咬合接触を付与できる。"
       ],
-      "answer": "BD",
+      "answer": "AD",
       "subject": "欠損歯列補綴咬合学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-A-63a.jpg",
@@ -1063,7 +1063,7 @@
         "ろう義歯試適",
         "チェックバイト採得"
       ],
-      "answer": "D",
+      "answer": "C",
       "subject": "高齢者歯科学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-A-73a.jpg",
@@ -1080,7 +1080,7 @@
         "（オ）ー（ア）",
         "（オ）ー（イ）"
       ],
-      "answer": "B",
+      "answer": "D",
       "subject": "有歯補綴咬合学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-A-74a.jpg",
@@ -1114,7 +1114,7 @@
         "リングクラスプ　——　舌側のファーゾーン",
         "Roach クラスプ　——　頬側のニアゾーン"
       ],
-      "answer": "DE",
+      "answer": "CE",
       "subject": "欠損歯列補綴咬合学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-A-76a.jpg",
@@ -1133,7 +1133,7 @@
         "ディギャッシング",
         "シェードテイキング"
       ],
-      "answer": "CE",
+      "answer": "BC",
       "subject": "有歯補綴咬合学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-A-77a.jpg",
@@ -1236,7 +1236,7 @@
         "歯根尖切除法",
         "ヘミセクション"
       ],
-      "answer": "CD",
+      "answer": "CE",
       "subject": "口腔治療学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-A-83a.jpg",
@@ -1254,7 +1254,7 @@
         "填塞圧の付与",
         "窩洞の汚染防止"
       ],
-      "answer": "AC",
+      "answer": "AE",
       "subject": "歯科保存学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-A-84a.jpg",
@@ -1323,7 +1323,7 @@
         "ポストダムの付与"
       ],
       "answer": "AD",
-      "subject": "歯科矯正学",
+      "subject": "高齢者歯科学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-A-88a.jpg",
         "gakushi/2025/1-2/G25-1-2-A-88b.jpg"
@@ -1357,7 +1357,7 @@
         "上顎作業用模型の咬合器装着",
         "レジンテーブルへの切歯路の印記"
       ],
-      "answer": "DCABE",
+      "answer": "CBAED",
       "subject": "有歯補綴咬合学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-A-90a.jpg"
@@ -1401,7 +1401,7 @@
         "乳頭状過形成",
         "フラビーガム"
       ],
-      "answer": "C",
+      "answer": "A",
       "subject": "欠損歯列補綴咬合学",
       "image_paths": []
     },
@@ -1599,7 +1599,7 @@
         "知覚鈍麻",
         "粘膜肥厚"
       ],
-      "answer": "D",
+      "answer": "E",
       "subject": "口腔外科学1",
       "image_paths": []
     },
@@ -1683,7 +1683,7 @@
         "口腔粘膜下繊維症",
         "メトトレキサート関連リンパ増殖性疾患"
       ],
-      "answer": "C",
+      "answer": "B",
       "subject": "口腔外科学1",
       "image_paths": []
     },
@@ -1741,7 +1741,7 @@
         "切開に用いたメス",
         "血液が付着したガーゼ"
       ],
-      "answer": "D",
+      "answer": "CD",
       "subject": "口腔外科学1",
       "image_paths": []
     },
@@ -1811,7 +1811,7 @@
         "PMMA",
         "EGDMA"
       ],
-      "answer": "C",
+      "answer": "E",
       "subject": "欠損歯列補綴咬合学",
       "image_paths": []
     },
@@ -1853,7 +1853,7 @@
         "臓器軟化",
         "巨人様化"
       ],
-      "answer": "C",
+      "answer": "CD",
       "subject": "法医学教室",
       "image_paths": []
     },
@@ -1910,7 +1910,7 @@
         "歯周ポケット掻爬術 —— 長い上皮性付着の獲得"
       ],
       "answer": "CE",
-      "subject": "口腔病理学",
+      "subject": "歯周病学",
       "image_paths": []
     },
     {
@@ -1967,7 +1967,7 @@
         "社会福祉士",
         "理学療法士"
       ],
-      "answer": "D",
+      "answer": "E",
       "subject": "高齢者歯科学",
       "image_paths": []
     },
@@ -2198,7 +2198,7 @@
         "タマネギの皮状 ――― 歯原性粘液腫",
         "テニスラケット状 ――― エナメル上皮腫"
       ],
-      "answer": "B",
+      "answer": "C",
       "subject": "歯科放射線学",
       "image_paths": []
     },
@@ -2268,7 +2268,7 @@
         "合着時の支台装置被表面処理に MDP を用いる。",
         "メインファイバーはブリッジの基底面側寄りに配置する。"
       ],
-      "answer": "A",
+      "answer": "E",
       "subject": "有歯補綴咬合学",
       "image_paths": []
     },
@@ -2283,7 +2283,7 @@
         "5～6歳"
       ],
       "answer": "A",
-      "subject": "有歯補綴咬合学",
+      "subject": "口腔外科学2",
       "image_paths": []
     },
     {
@@ -2363,8 +2363,8 @@
         "下顎乳犬歯舌側は床縁を歯から1〜2mm 離す。",
         "萌出に慣れてきたら第一大臼歯遠心舌側隅角を覆うように床後縁を延長する。"
       ],
-      "answer": "C",
-      "subject": "高齢者歯科学",
+      "answer": "A",
+      "subject": "小児歯科学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-B-70a.jpg"
       ]
@@ -2584,7 +2584,7 @@
         "インプラント体長径"
       ],
       "answer": "BD",
-      "subject": "口腔治療学",
+      "subject": "口腔インプラント",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-B-83a.jpg"
       ]
@@ -2615,8 +2615,8 @@
         "アトロピン硫酸塩水和物",
         "ダントロレンナトリウム水和物"
       ],
-      "answer": "C",
-      "subject": "歯科保存学",
+      "answer": "E",
+      "subject": "歯科麻酔学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-B-85a.jpg"
       ]
@@ -2631,8 +2631,8 @@
         "下顎骨骨折",
         "てんかん発作"
       ],
-      "answer": "D",
-      "subject": "口腔病理学",
+      "answer": "C",
+      "subject": "小児歯科学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-B-86a.jpg",
         "gakushi/2025/1-2/G25-1-2-B-86b.jpg"
@@ -2717,8 +2717,8 @@
         "下顎第一大臼歯近心傾斜",
         "上顎第二小臼歯の先天性欠如"
       ],
-      "answer": "AC",
-      "subject": "口腔解剖学",
+      "answer": "B",
+      "subject": "歯科矯正学",
       "image_paths": []
     },
     {
@@ -2731,8 +2731,8 @@
         "同一人数にそろえた専門職種",
         "職種間のシームレスな（切れ目のない）連携"
       ],
-      "answer": "C",
-      "subject": "欠損歯列補綴咬合学",
+      "answer": "E",
+      "subject": "口腔衛生学",
       "image_paths": []
     },
     {
@@ -2745,8 +2745,8 @@
         "末梢血管抵抗の増強",
         "口渇中枢の感受性低下"
       ],
-      "answer": "C",
-      "subject": "口腔外科学1",
+      "answer": "E",
+      "subject": "高齢者歯科学",
       "image_paths": []
     },
     {
@@ -2759,8 +2759,8 @@
         "健康保険法",
         "地域保健法"
       ],
-      "answer": "AE",
-      "subject": "歯科理工学",
+      "answer": "A",
+      "subject": "口腔衛生学",
       "image_paths": []
     },
     {
@@ -2773,8 +2773,8 @@
         "ポリジオキサノン",
         "ポリグリコール酸"
       ],
-      "answer": "B",
-      "subject": "歯科矯正学",
+      "answer": "DE",
+      "subject": "口腔外科学2",
       "image_paths": []
     },
     {
@@ -2787,8 +2787,8 @@
         "一人座り",
         "つかまり立ち"
       ],
-      "answer": "C",
-      "subject": "口腔衛生学",
+      "answer": "B",
+      "subject": "小児歯科学",
       "image_paths": []
     },
     {
@@ -2801,8 +2801,8 @@
         "60度",
         "75度"
       ],
-      "answer": "AC",
-      "subject": "生化学",
+      "answer": "A",
+      "subject": "口腔治療学",
       "image_paths": []
     },
     {
@@ -2815,8 +2815,8 @@
         "口蓋扁桃",
         "上皮小体"
       ],
-      "answer": "B",
-      "subject": "内科学",
+      "answer": "C",
+      "subject": "解剖学",
       "image_paths": []
     },
     {
@@ -2830,7 +2830,7 @@
         "キーアンドキーウェイ ― キーアンドキーウェイ"
       ],
       "answer": "C",
-      "subject": "薬理学",
+      "subject": "有歯補綴咬合学",
       "image_paths": []
     },
     {
@@ -2857,8 +2857,8 @@
         "注意欠陥多動障害",
         "自閉症スペクトラム障害"
       ],
-      "answer": "E",
-      "subject": "歯科保存学",
+      "answer": "DE",
+      "subject": "障がい者歯科",
       "image_paths": []
     },
     {
@@ -2871,8 +2871,8 @@
         "ブロックアウトライン",
         "クラスプアウトライン"
       ],
-      "answer": "A",
-      "subject": "生理学",
+      "answer": "CD",
+      "subject": "欠損歯列補綴咬合学",
       "image_paths": []
     },
     {
@@ -2885,8 +2885,8 @@
         "自己免疫疾患",
         "パラファンクション"
       ],
-      "answer": "C",
-      "subject": "歯科保存学",
+      "answer": "BD",
+      "subject": "口腔インプラント",
       "image_paths": []
     },
     {
@@ -2899,8 +2899,8 @@
         "静脈内",
         "動脈内"
       ],
-      "answer": "BD",
-      "subject": "有歯補綴咬合学",
+      "answer": "D",
+      "subject": "歯科麻酔学",
       "image_paths": []
     },
     {
@@ -2913,8 +2913,8 @@
         "フィルム撮影にする。",
         "短矩絞りを使用する。"
       ],
-      "answer": "D",
-      "subject": "歯科麻酔学",
+      "answer": "E",
+      "subject": "歯科放射線学",
       "image_paths": []
     },
     {
@@ -2927,8 +2927,8 @@
         "接触性皮膚炎",
         "全身性エリテマトーデス"
       ],
-      "answer": "C",
-      "subject": "口腔病理学",
+      "answer": "D",
+      "subject": "細菌学",
       "image_paths": []
     },
     {
@@ -2941,8 +2941,8 @@
         "Peutz-Jeghers症候群",
         "Plummer-Vinson症候群"
       ],
-      "answer": "E",
-      "subject": "高齢者歯科学",
+      "answer": "B",
+      "subject": "口腔外科学2",
       "image_paths": []
     },
     {
@@ -2955,8 +2955,8 @@
         "研究計画書",
         "医療安全管理指針"
       ],
-      "answer": "D",
-      "subject": "欠損歯列補綴咬合学",
+      "answer": "E",
+      "subject": "倫理学",
       "image_paths": []
     },
     {
@@ -2970,7 +2970,7 @@
         "（オ）"
       ],
       "answer": "D",
-      "subject": "口腔外科学1",
+      "subject": "歯科保存学",
       "image_paths": []
     },
     {
@@ -2983,8 +2983,8 @@
         "顎舌骨筋",
         "外側翼突筋"
       ],
-      "answer": "E",
-      "subject": "口腔治療学",
+      "answer": "D",
+      "subject": "口腔外科学1",
       "image_paths": []
     },
     {
@@ -2997,8 +2997,8 @@
         "カドミウム",
         "六価クロム"
       ],
-      "answer": "C",
-      "subject": "高齢者歯科学",
+      "answer": "D",
+      "subject": "口腔衛生学",
       "image_paths": []
     },
     {
@@ -3011,8 +3011,8 @@
         "大口蓋管 —— 下行口蓋動脈",
         "錐体鼓室裂 —— 中硬膜動脈"
       ],
-      "answer": "B",
-      "subject": "有歯補綴咬合学",
+      "answer": "D",
+      "subject": "解剖学",
       "image_paths": []
     },
     {
@@ -3025,8 +3025,8 @@
         "合金の溶融不足",
         "埋没材の通気性不足"
       ],
-      "answer": "AD",
-      "subject": "歯科保存学",
+      "answer": "AC",
+      "subject": "歯科理工学",
       "image_paths": []
     },
     {
@@ -3039,8 +3039,8 @@
         "歯科医薬に関する広告",
         "インフォームドコンセント"
       ],
-      "answer": "D",
-      "subject": "小児歯科学",
+      "answer": "A",
+      "subject": "口腔衛生学",
       "image_paths": []
     },
     {
@@ -3053,8 +3053,8 @@
         "エタノール",
         "コレステロール"
       ],
-      "answer": "AC",
-      "subject": "口腔衛生学",
+      "answer": "A",
+      "subject": "生化学",
       "image_paths": []
     },
     {
@@ -3067,8 +3067,8 @@
         "アムホテリシンB",
         "クロラムフェニコール"
       ],
-      "answer": "D",
-      "subject": "歯科麻酔学",
+      "answer": "A",
+      "subject": "細菌学",
       "image_paths": []
     },
     {
@@ -3081,8 +3081,8 @@
         "補綴物内の空隙",
         "ジルコニア結晶粒の大きさ"
       ],
-      "answer": "C",
-      "subject": "歯科矯正学",
+      "answer": "CD",
+      "subject": "歯科理工学",
       "image_paths": []
     },
     {
@@ -3095,8 +3095,8 @@
         "高齢者の虐待防止",
         "特定健康診査・特定保健指導の実施"
       ],
-      "answer": "B",
-      "subject": "歯科放射線学",
+      "answer": "CE",
+      "subject": "口腔衛生学",
       "image_paths": []
     },
     {
@@ -3109,8 +3109,8 @@
         "腺様嚢胞癌",
         "扁平上皮癌"
       ],
-      "answer": "AE",
-      "subject": "有歯補綴咬合学",
+      "answer": "B",
+      "subject": "口腔病理学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-C-29a.jpg"
       ]
@@ -3125,8 +3125,8 @@
         "プロピトカイン塩酸塩 ――― 電位依存性 Na⁺ チャネル",
         "ジクロフェナクナトリウム ――― シクロオキシゲナーゼ"
       ],
-      "answer": "AB",
-      "subject": "歯科保存学",
+      "answer": "DE",
+      "subject": "薬理学",
       "image_paths": []
     },
     {
@@ -3139,8 +3139,8 @@
         "リン酸三カルシウム",
         "ハイドロキシアパタイト"
       ],
-      "answer": "BD",
-      "subject": "歯科矯正学",
+      "answer": "E",
+      "subject": "歯科理工学",
       "image_paths": []
     },
     {
@@ -3154,7 +3154,7 @@
         "アルドステロン"
       ],
       "answer": "CE",
-      "subject": "口腔衛生学",
+      "subject": "生理学",
       "image_paths": []
     },
     {
@@ -3167,8 +3167,8 @@
         "（エ）",
         "（オ）"
       ],
-      "answer": "AD",
-      "subject": "高齢者歯科学",
+      "answer": "A",
+      "subject": "口腔衛生学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-C-33a.jpg"
       ]
@@ -3183,8 +3183,8 @@
         "犬歯結節",
         "中心結節"
       ],
-      "answer": "BE",
-      "subject": "有歯補綴咬合学",
+      "answer": "A",
+      "subject": "口腔解剖学",
       "image_paths": []
     },
     {
@@ -3197,8 +3197,8 @@
         "学校給食の献立作成",
         "学校保健計画の立案"
       ],
-      "answer": "AD",
-      "subject": "高齢者歯科学",
+      "answer": "AE",
+      "subject": "口腔衛生学",
       "image_paths": []
     },
     {
@@ -3211,8 +3211,8 @@
         "Vibrio parahaemolyticus",
         "Yersinia enterocolitica"
       ],
-      "answer": "D",
-      "subject": "口腔衛生学",
+      "answer": "A",
+      "subject": "細菌学",
       "image_paths": []
     },
     {
@@ -3226,7 +3226,7 @@
         "（オ）"
       ],
       "answer": "E",
-      "subject": "歯科放射線学",
+      "subject": "生化学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-C-37a.jpg"
       ]
@@ -3241,8 +3241,8 @@
         "約6割",
         "約8割"
       ],
-      "answer": "AD",
-      "subject": "高齢者歯科学",
+      "answer": "D",
+      "subject": "口腔衛生学",
       "image_paths": []
     },
     {
@@ -3255,8 +3255,8 @@
         "切削荷重は100～500 gfである。",
         "回転速度は300,000～500,000 rpmである。"
       ],
-      "answer": "BD",
-      "subject": "歯科矯正学",
+      "answer": "BE",
+      "subject": "歯科理工学",
       "image_paths": []
     },
     {
@@ -3269,8 +3269,8 @@
         "プロトスタイリッド",
         "遠心トリゴニード隆線"
       ],
-      "answer": "E",
-      "subject": "歯科麻酔学",
+      "answer": "AE",
+      "subject": "口腔解剖学",
       "image_paths": []
     },
     {
@@ -3283,8 +3283,8 @@
         "サルブタモール硫酸塩 — β2受容体",
         "ジフェニヒドラミン塩酸塩 — H2受容体"
       ],
-      "answer": "AE",
-      "subject": "歯科放射線学",
+      "answer": "A",
+      "subject": "薬理学",
       "image_paths": []
     },
     {
@@ -3297,8 +3297,8 @@
         "ニッケルクロム合金",
         "金銀パラジウム合金"
       ],
-      "answer": "AE",
-      "subject": "小児歯科学",
+      "answer": "CD",
+      "subject": "歯科理工学",
       "image_paths": []
     },
     {
@@ -3311,8 +3311,8 @@
         "小腸",
         "子宮"
       ],
-      "answer": "AD",
-      "subject": "有歯補綴咬合学",
+      "answer": "B",
+      "subject": "口腔病理学",
       "image_paths": []
     },
     {
@@ -3325,8 +3325,8 @@
         "トリプシン",
         "クレアチニン"
       ],
-      "answer": "AB",
-      "subject": "口腔衛生学",
+      "answer": "A",
+      "subject": "生理学",
       "image_paths": []
     },
     {
@@ -3340,7 +3340,7 @@
         "翼突下顎ヒダ"
       ],
       "answer": "E",
-      "subject": "小児歯科学",
+      "subject": "解剖学",
       "image_paths": []
     },
     {
@@ -3353,8 +3353,8 @@
         "象牙細管内に結晶がみられない。",
         "コラーゲン線維の横紋が消失している。"
       ],
-      "answer": "B",
-      "subject": "口腔外科学2",
+      "answer": "A",
+      "subject": "歯科保存学",
       "image_paths": []
     },
     {
@@ -3367,8 +3367,8 @@
         "生理学的根尖孔の拡大が起こる。",
         "根尖部に大きいテーパーが付与される。"
       ],
-      "answer": "E",
-      "subject": "欠損歯列補綴咬合学",
+      "answer": "CE",
+      "subject": "口腔治療学",
       "image_paths": []
     },
     {
@@ -3381,8 +3381,8 @@
         "セメント質の新生",
         "接合上皮の根尖側移動"
       ],
-      "answer": "B",
-      "subject": "口腔外科学1",
+      "answer": "D",
+      "subject": "歯周病学",
       "image_paths": []
     },
     {
@@ -3395,8 +3395,8 @@
         "エナメル質の白濁",
         "咬合面象牙質の露出"
       ],
-      "answer": "CE",
-      "subject": "口腔外科学2",
+      "answer": "BCE",
+      "subject": "歯科保存学",
       "image_paths": []
     },
     {
@@ -3409,8 +3409,8 @@
         "60度",
         "70度"
       ],
-      "answer": "C",
-      "subject": "歯科矯正学",
+      "answer": "E",
+      "subject": "歯周病学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-C-50a.jpg"
       ]
@@ -3425,8 +3425,8 @@
         "アタッチメントへの側方力が大きい。",
         "インプラント体に平行性が必要である。"
       ],
-      "answer": "DE",
-      "subject": "小児歯科学",
+      "answer": "AD",
+      "subject": "口腔インプラント",
       "image_paths": []
     },
     {
@@ -3439,8 +3439,8 @@
         "有機溶媒に溶解する。",
         "オートクレーブで滅菌を行う。"
       ],
-      "answer": "DE",
-      "subject": "口腔外科学2",
+      "answer": "BCD",
+      "subject": "口腔治療学",
       "image_paths": []
     },
     {
@@ -3454,7 +3454,7 @@
         "タロドント —— 下顎中切歯"
       ],
       "answer": "AC",
-      "subject": "口腔解剖学",
+      "subject": "小児歯科学",
       "image_paths": []
     },
     {
@@ -3467,8 +3467,8 @@
         "歯槽骨に吸収が認められるが、歯周プローブは貫通しない。",
         "歯周プローブは貫通するが、分岐部は歯肉で覆われている。"
       ],
-      "answer": "BCE",
-      "subject": "歯科矯正学",
+      "answer": "A",
+      "subject": "歯周病学",
       "image_paths": []
     },
     {
@@ -3481,8 +3481,8 @@
         "軟化象牙質を残存し、最終修復を完了する。",
         "初回の齲蝕除去時に軟化象牙質を完全に除去しない。"
       ],
-      "answer": "B",
-      "subject": "口腔外科学2",
+      "answer": "E",
+      "subject": "歯科保存学",
       "image_paths": []
     },
     {
@@ -3495,8 +3495,8 @@
         "アナフィラキシーショック",
         "特発性血小板減少性紫斑病"
       ],
-      "answer": "AD",
-      "subject": "歯科矯正学",
+      "answer": "BC",
+      "subject": "内科学",
       "image_paths": []
     },
     {
@@ -3509,8 +3509,8 @@
         "形態的に不潔域ができやすい。",
         "歯質の厚みが永久歯の1/2である。"
       ],
-      "answer": "E",
-      "subject": "歯科理工学",
+      "answer": "ACDE",
+      "subject": "小児歯科学",
       "image_paths": []
     },
     {
@@ -3523,8 +3523,8 @@
         "キレート作用",
         "有機質溶解作用"
       ],
-      "answer": "A",
-      "subject": "小児歯科学",
+      "answer": "AE",
+      "subject": "口腔治療学",
       "image_paths": []
     },
     {
@@ -3537,8 +3537,8 @@
         "TN4",
         "TN5"
       ],
-      "answer": "B",
-      "subject": "歯科麻酔学",
+      "answer": "D",
+      "subject": "歯周病学",
       "image_paths": []
     },
     {
@@ -3551,8 +3551,8 @@
         "失見当識",
         "記銘力障害"
       ],
-      "answer": "ACDE",
-      "subject": "口腔外科学1",
+      "answer": "DE",
+      "subject": "内科学",
       "image_paths": []
     },
     {
@@ -3565,8 +3565,8 @@
         "軟化象牙質の量",
         "黒褐色の齲蝕象牙質量"
       ],
-      "answer": "D",
-      "subject": "小児歯科学",
+      "answer": "AD",
+      "subject": "歯科保存学",
       "image_paths": []
     },
     {
@@ -3579,8 +3579,8 @@
         "下顎舌側咬頭内斜面",
         "下顎頬側咬頭内斜面"
       ],
-      "answer": "BC",
-      "subject": "口腔外科学2",
+      "answer": "C",
+      "subject": "歯周病学",
       "image_paths": []
     },
     {
@@ -3593,8 +3593,8 @@
         "歯冠崩壊が著しい歯",
         "歯根吸収が1/2以上進行している歯"
       ],
-      "answer": "C",
-      "subject": "歯科理工学",
+      "answer": "A",
+      "subject": "小児歯科学",
       "image_paths": []
     },
     {
@@ -3607,8 +3607,8 @@
         "4壁性骨欠損",
         "ヘミセプター状骨欠損"
       ],
-      "answer": "CE",
-      "subject": "欠損歯列補綴咬合学",
+      "answer": "BC",
+      "subject": "歯周病学",
       "image_paths": []
     },
     {
@@ -3621,8 +3621,8 @@
         "歯根膜内注射法",
         "大口蓋孔伝達麻酔"
       ],
-      "answer": "BDE",
-      "subject": "口腔外科学2",
+      "answer": "BD",
+      "subject": "口腔治療学",
       "image_paths": []
     },
     {
@@ -3635,8 +3635,8 @@
         "扁平上皮癌",
         "腺様嚢胞癌"
       ],
-      "answer": "D",
-      "subject": "歯科矯正学",
+      "answer": "E",
+      "subject": "口腔外科学2",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-C-66a.jpg",
         "gakushi/2025/1-2/G25-1-2-C-66b.jpg"
@@ -3652,8 +3652,8 @@
         "上顎模型を再装着して下顎歯列を再排列する。",
         "上顎模型を再装着して上顎歯列を再排列する。"
       ],
-      "answer": "BC",
-      "subject": "歯科麻酔学",
+      "answer": "B",
+      "subject": "高齢者歯科学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-C-67a.jpg"
       ]
@@ -3668,8 +3668,8 @@
         "FGF-2製剤の応用",
         "歯肉弁の根尖側への移動"
       ],
-      "answer": "E",
-      "subject": "口腔外科学2",
+      "answer": "D",
+      "subject": "歯周病学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-C-68a.jpg",
         "gakushi/2025/1-2/G25-1-2-C-68b.jpg",
@@ -3687,8 +3687,8 @@
         "クラウンを圧接して数分後に開始する。",
         "クラウンの浮き上がりに注意しながら行う。"
       ],
-      "answer": "AE",
-      "subject": "小児歯科学",
+      "answer": "BE",
+      "subject": "有歯補綴咬合学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-C-69a.jpg"
       ]
@@ -3703,8 +3703,8 @@
         "IIIb型",
         "IV型"
       ],
-      "answer": "CE",
-      "subject": "小児歯科学",
+      "answer": "B",
+      "subject": "口腔外科学2",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-C-70a.jpg"
       ]
@@ -3719,8 +3719,8 @@
         "支台装置数の不足",
         "常温重合レジンの劣化"
       ],
-      "answer": "B",
-      "subject": "歯科麻酔学",
+      "answer": "AB",
+      "subject": "欠損歯列補綴咬合学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-C-71a.jpg",
         "gakushi/2025/1-2/G25-1-2-C-71b.jpg"
@@ -3736,8 +3736,8 @@
         "EDTA溶液による頻回洗浄",
         "垂直加圧充填法による根管充填"
       ],
-      "answer": "C",
-      "subject": "歯科矯正学",
+      "answer": "ACE",
+      "subject": "口腔治療学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-C-72a.jpg"
       ]
@@ -3752,8 +3752,8 @@
         "エーウーオーアーイ",
         "オーウーエーイーア"
       ],
-      "answer": "D",
-      "subject": "歯科麻酔学",
+      "answer": "C",
+      "subject": "口腔外科学1",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-C-73a.jpg"
       ]
@@ -3769,7 +3769,7 @@
         "減少 ― 不変"
       ],
       "answer": "B",
-      "subject": "歯科放射線学",
+      "subject": "歯周病学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-C-74a.jpg",
         "gakushi/2025/1-2/G25-1-2-C-74b.jpg"
@@ -3785,8 +3785,8 @@
         "「しっかりかめるように金属の入れ歯を作ります」",
         "「歯の長さが短いので、骨を削って歯ぐきを下げます」"
       ],
-      "answer": "B",
-      "subject": "口腔インプラント",
+      "answer": "C",
+      "subject": "欠損歯列補綴咬合学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-C-75a.jpg",
         "gakushi/2025/1-2/G25-1-2-C-75b.jpg",
@@ -3803,8 +3803,8 @@
         "局所薬物配送システム",
         "スケーリング・ルートプレーニング"
       ],
-      "answer": "CD",
-      "subject": "歯科矯正学",
+      "answer": "DE",
+      "subject": "歯周病学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-C-76a.jpg",
         "gakushi/2025/1-2/G25-1-2-C-76b.jpg",
@@ -3821,8 +3821,8 @@
         "フルオロウラシル",
         "アレンドロン酸ナトリウム水和物"
       ],
-      "answer": "DE",
-      "subject": "小児歯科学",
+      "answer": "AE",
+      "subject": "口腔外科学1",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-C-77a.jpg",
         "gakushi/2025/1-2/G25-1-2-C-77b.jpg",
@@ -3840,8 +3840,8 @@
         "上顎骨",
         "下顎骨関節突起"
       ],
-      "answer": "C",
-      "subject": "歯科麻酔学",
+      "answer": "AD",
+      "subject": "口腔外科学1",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-C-78a.jpg",
         "gakushi/2025/1-2/G25-1-2-C-78b.jpg",
@@ -3859,8 +3859,8 @@
         "下顎右側歯列のスキャニング",
         "（イ）の歯列のスキャニング"
       ],
-      "answer": "BDE",
-      "subject": "歯科矯正学",
+      "answer": "A",
+      "subject": "有歯補綴咬合学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-C-79a.jpg"
       ]
@@ -3875,8 +3875,8 @@
         "習慣性の偏心咬合位",
         "不安定なタッピング運動"
       ],
-      "answer": "C",
-      "subject": "小児歯科学",
+      "answer": "CD",
+      "subject": "高齢者歯科学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-C-80a.jpg"
       ]
@@ -3891,8 +3891,8 @@
         "抗菌薬処方",
         "専門的口腔衛生管理"
       ],
-      "answer": "A",
-      "subject": "歯科麻酔学",
+      "answer": "CE",
+      "subject": "口腔外科学2",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-C-81a.jpg",
         "gakushi/2025/1-2/G25-1-2-C-81b.jpg"
@@ -3908,8 +3908,8 @@
         "口腔潜在的悪性疾患である。",
         "薬物アレルギーが関係している。"
       ],
-      "answer": "ABE",
-      "subject": "歯科矯正学",
+      "answer": "AC",
+      "subject": "口腔外科学1",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-C-82a.jpg",
         "gakushi/2025/1-2/G25-1-2-C-82b.jpg",
@@ -3927,8 +3927,8 @@
         "迷走神経",
         "舌下神経"
       ],
-      "answer": "D",
-      "subject": "口腔インプラント",
+      "answer": "CD",
+      "subject": "高齢者歯科学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-C-83a.jpg"
       ]
@@ -3943,8 +3943,8 @@
         "デンティンブリッジの形成",
         "硬組織による根尖部の封鎖"
       ],
-      "answer": "AD",
-      "subject": "歯科矯正学",
+      "answer": "AC",
+      "subject": "口腔治療学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-C-84a.jpg"
       ]
@@ -3959,8 +3959,8 @@
         "可動性粘膜の増大",
         "プロービングデプスの減少"
       ],
-      "answer": "A",
-      "subject": "歯科麻酔学",
+      "answer": "ABE",
+      "subject": "歯周病学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-C-85a.jpg",
         "gakushi/2025/1-2/G25-1-2-C-85b.jpg",
@@ -3978,8 +3978,8 @@
         "歯原性粘液腫",
         "エナメル上皮腫"
       ],
-      "answer": "A",
-      "subject": "小児歯科学",
+      "answer": "D",
+      "subject": "口腔外科学2",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-C-86a.jpg",
         "gakushi/2025/1-2/G25-1-2-C-86b.jpg",
@@ -3997,8 +3997,8 @@
         "加熱重合レジンの重合",
         "義歯粘膜面の一層削除"
       ],
-      "answer": "BC",
-      "subject": "歯科放射線学",
+      "answer": "CE",
+      "subject": "欠損歯列補綴咬合学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-C-87a.jpg",
         "gakushi/2025/1-2/G25-1-2-C-87b.jpg",
@@ -4016,8 +4016,8 @@
         "支台歯の軸面や基底結節部に機械的保持形態を付与する。",
         "初診時の歯冠形態よりポンティックの唇舌径を小さくする。"
       ],
-      "answer": "AB",
-      "subject": "歯科理工学",
+      "answer": "DE",
+      "subject": "有歯補綴咬合学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-C-88a.jpg",
         "gakushi/2025/1-2/G25-1-2-C-88b.jpg",
@@ -4035,8 +4035,8 @@
         "4C┴C4+4┬4",
         "5C┴C5+5┬5"
       ],
-      "answer": "B",
-      "subject": "歯科放射線学",
+      "answer": "A",
+      "subject": "歯科矯正学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-C-89a.jpg",
         "gakushi/2025/1-2/G25-1-2-C-89b.jpg",
@@ -4056,8 +4056,8 @@
         "歯内疾患由来型病変 ――― 歯内治療のみに実施",
         "歯内疾患由来型病変 ――― 歯周治療後、歯周治療を実施"
       ],
-      "answer": "E",
-      "subject": "小児歯科学",
+      "answer": "D",
+      "subject": "口腔治療学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-C-90a.jpg",
         "gakushi/2025/1-2/G25-1-2-C-90b.jpg"
@@ -4173,7 +4173,7 @@
         "血管壁の脆弱化",
         "疑固因子の産生障害"
       ],
-      "answer": "C",
+      "answer": "B",
       "subject": "内科学",
       "image_paths": []
     },
@@ -4188,7 +4188,7 @@
         "消化管からの吸収率の低下"
       ],
       "answer": "C",
-      "subject": "病理学",
+      "subject": "薬理学",
       "image_paths": []
     },
     {
@@ -4262,7 +4262,7 @@
         "オベイト型"
       ],
       "answer": "BD",
-      "subject": "有病補綴咬合学",
+      "subject": "有歯補綴咬合学",
       "image_paths": []
     },
     {
@@ -4373,8 +4373,8 @@
         "Ir",
         "Sn"
       ],
-      "answer": "AD",
-      "subject": "有病補綴咬合学",
+      "answer": "BC",
+      "subject": "有歯補綴咬合学",
       "image_paths": []
     },
     {
@@ -4457,7 +4457,7 @@
         "副腎皮質ステロイド薬剤",
         "テトラサイクリン系抗菌薬"
       ],
-      "answer": "D",
+      "answer": "B",
       "subject": "歯科放射線学",
       "image_paths": []
     },
@@ -4472,7 +4472,7 @@
         "顆路をチェックバイト法で調節できる。"
       ],
       "answer": "AE",
-      "subject": "有病補綴咬合学",
+      "subject": "有歯補綴咬合学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-D-29a.jpg"
       ]
@@ -4544,7 +4544,7 @@
         "咀嚼困難"
       ],
       "answer": "BE",
-      "subject": "有病補綴咬合学",
+      "subject": "有歯補綴咬合学",
       "image_paths": []
     },
     {
@@ -4644,7 +4644,7 @@
         "一次的脱毛",
         "造血能低下"
       ],
-      "answer": "E",
+      "answer": "AE",
       "subject": "歯科放射線学",
       "image_paths": []
     },
@@ -4672,8 +4672,8 @@
         "支台歯への保持形態の付与",
         "適切なエマージェンスプロファイルの付与"
       ],
-      "answer": "AD",
-      "subject": "有病補綴咬合学",
+      "answer": "CD",
+      "subject": "有歯補綴咬合学",
       "image_paths": []
     },
     {
@@ -4731,7 +4731,7 @@
         "着脱の誘導",
         "咬合力の伝達"
       ],
-      "answer": "E",
+      "answer": "CE",
       "subject": "欠損歯列補綴咬合学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-D-47a.jpg",
@@ -4790,8 +4790,8 @@
         "歯根の彎曲が強い場合でも歯根分割は行わない。",
         "連続した2歯を抜去する場合は近心位の歯から行う。"
       ],
-      "answer": "DE",
-      "subject": "口腔衛生学",
+      "answer": "BC",
+      "subject": "小児歯科学",
       "image_paths": []
     },
     {
@@ -4818,8 +4818,8 @@
         "Dダイマー",
         "コリンエステラーゼ"
       ],
-      "answer": "A",
-      "subject": "内科学",
+      "answer": "AC",
+      "subject": "口腔外科学1",
       "image_paths": []
     },
     {
@@ -4878,7 +4878,7 @@
         "バイオネーター"
       ],
       "answer": "E",
-      "subject": "歯科理工学",
+      "subject": "歯科矯正学",
       "image_paths": []
     },
     {
@@ -4906,7 +4906,7 @@
         "交叉咬合"
       ],
       "answer": "B",
-      "subject": "歯科麻酔学",
+      "subject": "歯科矯正学",
       "image_paths": []
     },
     {
@@ -5025,7 +5025,7 @@
         "唾液腺シンチグラフィ",
         "歯科用コーンビームCT"
       ],
-      "answer": "E",
+      "answer": "BC",
       "subject": "歯科放射線学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-D-67a.jpg"
@@ -5160,7 +5160,7 @@
         "クローズドトレー法での印象採得"
       ],
       "answer": "B",
-      "subject": "歯科インプラント",
+      "subject": "口腔インプラント",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-D-75a.jpg"
       ]
@@ -5194,7 +5194,7 @@
         "レジン系シーラント",
         "フッ化ジアンミン銀塗布"
       ],
-      "answer": "C",
+      "answer": "BC",
       "subject": "小児歯科学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-D-77a.jpg"
@@ -5296,7 +5296,7 @@
         "4mm以上の既存骨の高さが必要である。"
       ],
       "answer": "D",
-      "subject": "歯科インプラント",
+      "subject": "口腔インプラント",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-D-83a.jpg",
         "gakushi/2025/1-2/G25-1-2-D-83b.jpg"
@@ -5380,7 +5380,7 @@
         "上顎中切歯の唇側移動"
       ],
       "answer": "AB",
-      "subject": "歯科理工学",
+      "subject": "歯科矯正学",
       "image_paths": [
         "gakushi/2025/1-2/G25-1-2-D-88a.jpg",
         "gakushi/2025/1-2/G25-1-2-D-88b.jpg",
