@@ -1117,7 +1117,6 @@
       "answer": "CE",
       "subject": "欠損歯列補綴咬合学",
       "image_paths": [
-        "gakushi/2025/1-2/G25-1-2-A-76a.jpg",
         "gakushi/2025/1-2/G25-1-2-A-76b.jpg",
         "gakushi/2025/1-2/G25-1-2-A-76c.jpg",
         "gakushi/2025/1-2/G25-1-2-A-76d.jpg"
@@ -1154,6 +1153,7 @@
       "answer": "BC",
       "subject": "歯周病学",
       "image_paths": [
+        "gakushi/2025/1-2/G25-1-2-A-76a.jpg",
         "gakushi/2025/1-2/G25-1-2-A-78a.jpg",
         "gakushi/2025/1-2/G25-1-2-A-78b.jpg"
       ]
