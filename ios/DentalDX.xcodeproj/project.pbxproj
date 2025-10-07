@@ -1,0 +1,456 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+	A1000100269350B900A1 /* DentalDxPocApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000101269350B900A1 /* DentalDxPocApp.swift */; };
+	A1000102269350B900A1 /* AppData.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000103269350B900A1 /* AppData.swift */; };
+	A1000104269350B900A1 /* LoadingState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000105269350B900A1 /* LoadingState.swift */; };
+	A1000106269350B900A1 /* Question.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000107269350B900A1 /* Question.swift */; };
+	A1000108269350B900A1 /* QuestionNumber.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000109269350B900A1 /* QuestionNumber.swift */; };
+	A100010A269350B900A1 /* QuestionStudyState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100010B269350B900A1 /* QuestionStudyState.swift */; };
+	A100010C269350B900A1 /* QuestionCase.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100010D269350B900A1 /* QuestionCase.swift */; };
+	A100010E269350B900A1 /* ReviewLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100010F269350B900A1 /* ReviewLog.swift */; };
+	A1000110269350B900A1 /* DailyStudySummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000111269350B900A1 /* DailyStudySummary.swift */; };
+	A1000112269350B900A1 /* StudySessionLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000113269350B900A1 /* StudySessionLog.swift */; };
+	A1000114269350B900A1 /* StudySet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000115269350B900A1 /* StudySet.swift */; };
+	A1000116269350B900A1 /* SearchFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000117269350B900A1 /* SearchFilter.swift */; };
+	A1000118269350B900A1 /* UserProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000119269350B900A1 /* UserProfile.swift */; };
+	A100011A269350B900A1 /* MasterDataLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100011B269350B900A1 /* MasterDataLoader.swift */; };
+	A100011C269350B900A1 /* StudySetBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100011D269350B900A1 /* StudySetBuilder.swift */; };
+	A100011E269350BA00A1 /* UserDataService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100011F269350BA00A1 /* UserDataService.swift */; };
+	A1000120269350BA00A1 /* SM2Service.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000121269350BA00A1 /* SM2Service.swift */; };
+	A1000122269350BA00A1 /* LocalJSONService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000123269350BA00A1 /* LocalJSONService.swift */; };
+	A1000124269350BA00A1 /* ProgressService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000125269350BA00A1 /* ProgressService.swift */; };
+	A1000126269350BA00A1 /* APIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000127269350BA00A1 /* APIService.swift */; };
+	A1000128269350BA00A1 /* TodayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000129269350BA00A1 /* TodayView.swift */; };
+	A100012A269350BA00A1 /* DiscoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100012B269350BA00A1 /* DiscoverView.swift */; };
+	A100012C269350BA00A1 /* StudyRecordsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100012D269350BA00A1 /* StudyRecordsView.swift */; };
+	A100012E269350BA00A1 /* SearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100012F269350BA00A1 /* SearchView.swift */; };
+	A1000130269350BA00A1 /* AccountView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000131269350BA00A1 /* AccountView.swift */; };
+	A1000132269350BA00A1 /* RootTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000133269350BA00A1 /* RootTabView.swift */; };
+	A1000136269350BA00A1 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1000135269350BA00A1 /* Assets.xcassets */; };
+	A1000138269350BA00A1 /* data in Resources */ = {isa = PBXBuildFile; fileRef = A1000137269350BA00A1 /* data */; };
+	A100013A269350BA00A1 /* Charts.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000139269350BA00A1 /* Charts.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+	A1000101269350B900A1 /* DentalDxPocApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/DentalDxPocApp.swift; sourceTree = "<group>"; };
+	A1000103269350B900A1 /* AppData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Core/AppData.swift; sourceTree = "<group>"; };
+	A1000105269350B900A1 /* LoadingState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Core/LoadingState.swift; sourceTree = "<group>"; };
+	A1000107269350B900A1 /* Question.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Question.swift; sourceTree = "<group>"; };
+	A1000109269350B900A1 /* QuestionNumber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/QuestionNumber.swift; sourceTree = "<group>"; };
+	A100010B269350B900A1 /* QuestionStudyState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/QuestionStudyState.swift; sourceTree = "<group>"; };
+	A100010D269350B900A1 /* QuestionCase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/QuestionCase.swift; sourceTree = "<group>"; };
+	A100010F269350B900A1 /* ReviewLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/ReviewLog.swift; sourceTree = "<group>"; };
+	A1000111269350B900A1 /* DailyStudySummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/DailyStudySummary.swift; sourceTree = "<group>"; };
+	A1000113269350B900A1 /* StudySessionLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/StudySessionLog.swift; sourceTree = "<group>"; };
+	A1000115269350B900A1 /* StudySet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/StudySet.swift; sourceTree = "<group>"; };
+	A1000117269350B900A1 /* SearchFilter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/SearchFilter.swift; sourceTree = "<group>"; };
+	A1000119269350B900A1 /* UserProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/UserProfile.swift; sourceTree = "<group>"; };
+	A100011B269350B900A1 /* MasterDataLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/MasterDataLoader.swift; sourceTree = "<group>"; };
+	A100011D269350B900A1 /* StudySetBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/StudySetBuilder.swift; sourceTree = "<group>"; };
+	A100011F269350BA00A1 /* UserDataService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/UserDataService.swift; sourceTree = "<group>"; };
+	A1000121269350BA00A1 /* SM2Service.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/SM2Service.swift; sourceTree = "<group>"; };
+	A1000123269350BA00A1 /* LocalJSONService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/LocalJSONService.swift; sourceTree = "<group>"; };
+	A1000125269350BA00A1 /* ProgressService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/ProgressService.swift; sourceTree = "<group>"; };
+	A1000127269350BA00A1 /* APIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/APIService.swift; sourceTree = "<group>"; };
+	A1000129269350BA00A1 /* TodayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/TodayView.swift; sourceTree = "<group>"; };
+	A100012B269350BA00A1 /* DiscoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/DiscoverView.swift; sourceTree = "<group>"; };
+	A100012D269350BA00A1 /* StudyRecordsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/StudyRecordsView.swift; sourceTree = "<group>"; };
+	A100012F269350BA00A1 /* SearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/SearchView.swift; sourceTree = "<group>"; };
+	A1000131269350BA00A1 /* AccountView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/AccountView.swift; sourceTree = "<group>"; };
+	A1000133269350BA00A1 /* RootTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/RootTabView.swift; sourceTree = "<group>"; };
+	A1000135269350BA00A1 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Resources/Assets.xcassets; sourceTree = "<group>"; };
+	A1000137269350BA00A1 /* data */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Resources/data; sourceTree = "<group>"; };
+	A1000139269350BA00A1 /* Charts.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Charts.framework; path = System/Library/Frameworks/Charts.framework; sourceTree = SDKROOT; };
+	A100013C269350BA00A1 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Support/Info.plist; sourceTree = "<group>"; };
+	A100013E269350BA00A1 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+	A1000004269350B600A1 /* Frameworks */ = {
+		isa = PBXFrameworksBuildPhase;
+		buildActionMask = 2147483647;
+		files = (
+			A100013A269350BA00A1 /* Charts.framework in Frameworks */,
+		);
+		runOnlyForDeploymentPostprocessing = 0;
+	};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+	A1000000269350B600A1 = {
+		isa = PBXGroup;
+		children = (
+			A100013F269350BA00A1 /* Sources */,
+			A1000134269350BA00A1 /* Resources */,
+			A100013B269350BA00A1 /* Support */,
+			A1000137269350BA00A1 /* data */,
+			A1000139269350BA00A1 /* Charts.framework */,
+			A100013E269350BA00A1 /* README.md */,
+			A1000140269350BA00A1 /* Products */,
+		);
+		sourceTree = "<group>";
+	};
+	A100013F269350BA00A1 /* Sources */ = {
+		isa = PBXGroup;
+		children = (
+			A1000102269350B900A1 /* Core */,
+			A1000104269350B900A1 /* Models */,
+			A100011C269350B900A1 /* Services */,
+			A1000128269350BA00A1 /* Views */,
+			A1000101269350B900A1 /* DentalDxPocApp.swift */,
+		);
+		path = Sources;
+		sourceTree = "<group>";
+	};
+	A1000102269350B900A1 /* Core */ = {
+		isa = PBXGroup;
+		children = (
+			A1000103269350B900A1 /* AppData.swift */,
+			A1000105269350B900A1 /* LoadingState.swift */,
+		);
+		path = Core;
+		sourceTree = "<group>";
+	};
+	A1000104269350B900A1 /* Models */ = {
+		isa = PBXGroup;
+		children = (
+			A1000107269350B900A1 /* Question.swift */,
+			A1000109269350B900A1 /* QuestionNumber.swift */,
+			A100010B269350B900A1 /* QuestionStudyState.swift */,
+			A100010D269350B900A1 /* QuestionCase.swift */,
+			A100010F269350B900A1 /* ReviewLog.swift */,
+			A1000111269350B900A1 /* DailyStudySummary.swift */,
+			A1000113269350B900A1 /* StudySessionLog.swift */,
+			A1000115269350B900A1 /* StudySet.swift */,
+			A1000117269350B900A1 /* SearchFilter.swift */,
+			A1000119269350B900A1 /* UserProfile.swift */,
+		);
+		path = Models;
+		sourceTree = "<group>";
+	};
+	A100011C269350B900A1 /* Services */ = {
+		isa = PBXGroup;
+		children = (
+			A100011B269350B900A1 /* MasterDataLoader.swift */,
+			A100011D269350B900A1 /* StudySetBuilder.swift */,
+			A100011F269350BA00A1 /* UserDataService.swift */,
+			A1000121269350BA00A1 /* SM2Service.swift */,
+			A1000123269350BA00A1 /* LocalJSONService.swift */,
+			A1000125269350BA00A1 /* ProgressService.swift */,
+			A1000127269350BA00A1 /* APIService.swift */,
+		);
+		path = Services;
+		sourceTree = "<group>";
+	};
+	A1000128269350BA00A1 /* Views */ = {
+		isa = PBXGroup;
+		children = (
+			A1000129269350BA00A1 /* TodayView.swift */,
+			A100012B269350BA00A1 /* DiscoverView.swift */,
+			A100012D269350BA00A1 /* StudyRecordsView.swift */,
+			A100012F269350BA00A1 /* SearchView.swift */,
+			A1000131269350BA00A1 /* AccountView.swift */,
+			A1000133269350BA00A1 /* RootTabView.swift */,
+		);
+		path = Views;
+		sourceTree = "<group>";
+	};
+	A1000134269350BA00A1 /* Resources */ = {
+		isa = PBXGroup;
+		children = (
+			A1000135269350BA00A1 /* Assets.xcassets */,
+		);
+		path = Resources;
+		sourceTree = "<group>";
+	};
+	A100013B269350BA00A1 /* Support */ = {
+		isa = PBXGroup;
+		children = (
+			A100013C269350BA00A1 /* Info.plist */,
+		);
+		path = Support;
+		sourceTree = "<group>";
+	};
+	A1000140269350BA00A1 /* Products */ = {
+		isa = PBXGroup;
+		children = (
+			A100000A269350B600A1 /* DentalDX.app */,
+		);
+		name = Products;
+		sourceTree = "<group>";
+	};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+	A1000009269350B600A1 /* DentalDX */ = {
+		isa = PBXNativeTarget;
+		buildConfigurationList = A1000130269350BA00A1 /* Build configuration list for PBXNativeTarget "DentalDX" */;
+		buildPhases = (
+			A1000003269350B600A1 /* Sources */,
+			A1000004269350B600A1 /* Frameworks */,
+			A1000005269350B600A1 /* Resources */,
+		);
+		buildRules = (
+		);
+		dependencies = (
+		);
+		name = DentalDX;
+		productName = DentalDX;
+		productReference = A100000A269350B600A1 /* DentalDX.app */;
+		productType = "com.apple.product-type.application";
+	};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+	A1000001269350B600A1 /* Project object */ = {
+		isa = PBXProject;
+		attributes = {
+			BuildIndependentTargetsInParallel = 1;
+			LastSwiftUpdateCheck = 1500;
+			LastUpgradeCheck = 1500;
+			TargetAttributes = {
+				A1000009269350B600A1 = {
+					DevelopmentTeam = "";
+				};
+			};
+		};
+		buildConfigurationList = A1000002269350B600A1 /* Build configuration list for PBXProject "DentalDX" */;
+		compatibilityVersion = "Xcode 14.0";
+		developmentRegion = ja;
+		hasScannedForEncodings = 0;
+		knownRegions = (
+			ja,
+			en,
+		);
+		mainGroup = A1000000269350B600A1;
+		productRefGroup = A1000140269350BA00A1 /* Products */;
+		projectDirPath = "";
+		projectRoot = "";
+		targets = (
+			A1000009269350B600A1 /* DentalDX */,
+		);
+	};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+	A1000005269350B600A1 /* Resources */ = {
+		isa = PBXResourcesBuildPhase;
+		buildActionMask = 2147483647;
+		files = (
+			A1000138269350BA00A1 /* data in Resources */,
+			A1000136269350BA00A1 /* Assets.xcassets in Resources */,
+		);
+		runOnlyForDeploymentPostprocessing = 0;
+	};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+	A1000003269350B600A1 /* Sources */ = {
+		isa = PBXSourcesBuildPhase;
+		buildActionMask = 2147483647;
+		files = (
+			A1000132269350BA00A1 /* RootTabView.swift in Sources */,
+			A100012E269350BA00A1 /* SearchView.swift in Sources */,
+			A100012C269350BA00A1 /* StudyRecordsView.swift in Sources */,
+			A100012A269350BA00A1 /* DiscoverView.swift in Sources */,
+			A100011C269350B900A1 /* StudySetBuilder.swift in Sources */,
+			A1000126269350BA00A1 /* APIService.swift in Sources */,
+			A1000104269350B900A1 /* LoadingState.swift in Sources */,
+			A1000102269350B900A1 /* AppData.swift in Sources */,
+			A1000106269350B900A1 /* Question.swift in Sources */,
+			A100010C269350B900A1 /* QuestionCase.swift in Sources */,
+			A1000108269350B900A1 /* QuestionNumber.swift in Sources */,
+			A100011E269350BA00A1 /* UserDataService.swift in Sources */,
+			A1000128269350BA00A1 /* TodayView.swift in Sources */,
+			A1000120269350BA00A1 /* SM2Service.swift in Sources */,
+			A1000122269350BA00A1 /* LocalJSONService.swift in Sources */,
+			A1000124269350BA00A1 /* ProgressService.swift in Sources */,
+			A1000130269350BA00A1 /* AccountView.swift in Sources */,
+			A1000116269350B900A1 /* SearchFilter.swift in Sources */,
+			A100010E269350B900A1 /* ReviewLog.swift in Sources */,
+			A1000118269350B900A1 /* UserProfile.swift in Sources */,
+			A100010A269350B900A1 /* QuestionStudyState.swift in Sources */,
+			A1000110269350B900A1 /* DailyStudySummary.swift in Sources */,
+			A1000112269350B900A1 /* StudySessionLog.swift in Sources */,
+			A1000114269350B900A1 /* StudySet.swift in Sources */,
+			A100011A269350B900A1 /* MasterDataLoader.swift in Sources */,
+			A1000100269350B900A1 /* DentalDxPocApp.swift in Sources */,
+		);
+		runOnlyForDeploymentPostprocessing = 0;
+	};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+	A100012E269350BA00A2 /* Debug */ = {
+		isa = XCBuildConfiguration;
+		buildSettings = {
+			ALWAYS_SEARCH_USER_PATHS = NO;
+			CLANG_ANALYZER_NONNULL = YES;
+			CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+			CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+			CLANG_ENABLE_MODULES = YES;
+			CLANG_ENABLE_OBJC_ARC = YES;
+			CLANG_ENABLE_OBJC_WEAK = YES;
+			CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+			CLANG_WARN_BOOL_CONVERSION = YES;
+			CLANG_WARN_COMMA = YES;
+			CLANG_WARN_CONSTANT_CONVERSION = YES;
+			CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+			CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+			CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+			CLANG_WARN_EMPTY_BODY = YES;
+			CLANG_WARN_ENUM_CONVERSION = YES;
+			CLANG_WARN_INFINITE_RECURSION = YES;
+			CLANG_WARN_INT_CONVERSION = YES;
+			CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+			CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+			CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+			CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+			CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+			CLANG_WARN_STRICT_PROTOTYPES = YES;
+			CLANG_WARN_SUSPICIOUS_MOVE = YES;
+			CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+			CODE_SIGN_STYLE = Automatic;
+			COPY_PHASE_STRIP = NO;
+			DEBUG_INFORMATION_FORMAT = dwarf;
+			GCC_C_LANGUAGE_STANDARD = gnu11;
+			GCC_DYNAMIC_NO_PIC = NO;
+			GCC_NO_COMMON_BLOCKS = YES;
+			GCC_OPTIMIZATION_LEVEL = 0;
+			GCC_PREPROCESSOR_DEFINITIONS = (
+				"DEBUG=1",
+				"$(inherited)",
+			);
+			GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+			GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+			GCC_WARN_UNDECLARED_SELECTOR = YES;
+			GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+			GCC_WARN_UNUSED_FUNCTION = YES;
+			GCC_WARN_UNUSED_VARIABLE = YES;
+			IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+			MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+			ONLY_ACTIVE_ARCH = YES;
+			SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+			SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+		};
+		name = Debug;
+	};
+	A100012F269350BA00A2 /* Release */ = {
+		isa = XCBuildConfiguration;
+		buildSettings = {
+			ALWAYS_SEARCH_USER_PATHS = NO;
+			CLANG_ANALYZER_NONNULL = YES;
+			CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+			CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+			CLANG_ENABLE_MODULES = YES;
+			CLANG_ENABLE_OBJC_ARC = YES;
+			CLANG_ENABLE_OBJC_WEAK = YES;
+			CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+			CLANG_WARN_BOOL_CONVERSION = YES;
+			CLANG_WARN_COMMA = YES;
+			CLANG_WARN_CONSTANT_CONVERSION = YES;
+			CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+			CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+			CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+			CLANG_WARN_EMPTY_BODY = YES;
+			CLANG_WARN_ENUM_CONVERSION = YES;
+			CLANG_WARN_INFINITE_RECURSION = YES;
+			CLANG_WARN_INT_CONVERSION = YES;
+			CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+			CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+			CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+			CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+			CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+			CLANG_WARN_STRICT_PROTOTYPES = YES;
+			CLANG_WARN_SUSPICIOUS_MOVE = YES;
+			CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+			CODE_SIGN_STYLE = Automatic;
+			COPY_PHASE_STRIP = NO;
+			DEBUG_INFORMATION_FORMAT = dwarf;
+			ENABLE_NS_ASSERTIONS = NO;
+			GCC_C_LANGUAGE_STANDARD = gnu11;
+			GCC_NO_COMMON_BLOCKS = YES;
+			GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+			GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+			GCC_WARN_UNDECLARED_SELECTOR = YES;
+			GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+			GCC_WARN_UNUSED_FUNCTION = YES;
+			GCC_WARN_UNUSED_VARIABLE = YES;
+			IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+			MTL_ENABLE_DEBUG_INFO = NO;
+			SWIFT_COMPILATION_MODE = wholemodule;
+			SWIFT_OPTIMIZATION_LEVEL = "-O";
+		};
+		name = Release;
+	};
+	A1000131269350BA00A2 /* Debug */ = {
+		isa = XCBuildConfiguration;
+		buildSettings = {
+			ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+			CODE_SIGN_STYLE = Automatic;
+			DEVELOPMENT_TEAM = "";
+			INFOPLIST_FILE = Support/Info.plist;
+			IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+			LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+			PRODUCT_BUNDLE_IDENTIFIER = com.kokushi.dentaldx;
+			PRODUCT_NAME = "$(TARGET_NAME)";
+			SWIFT_EMIT_LOC_STRINGS = YES;
+			SWIFT_VERSION = 5.9;
+			TARGETED_DEVICE_FAMILY = "1,2";
+		};
+		name = Debug;
+	};
+	A1000132269350BA00A2 /* Release */ = {
+		isa = XCBuildConfiguration;
+		buildSettings = {
+			ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+			CODE_SIGN_STYLE = Automatic;
+			DEVELOPMENT_TEAM = "";
+			INFOPLIST_FILE = Support/Info.plist;
+			IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+			LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+			PRODUCT_BUNDLE_IDENTIFIER = com.kokushi.dentaldx;
+			PRODUCT_NAME = "$(TARGET_NAME)";
+			SWIFT_EMIT_LOC_STRINGS = YES;
+			SWIFT_VERSION = 5.9;
+			TARGETED_DEVICE_FAMILY = "1,2";
+		};
+		name = Release;
+	};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+	A1000002269350B600A1 /* Build configuration list for PBXProject "DentalDX" */ = {
+		isa = XCConfigurationList;
+		buildConfigurations = (
+			A100012E269350BA00A2 /* Debug */,
+			A100012F269350BA00A2 /* Release */,
+		);
+		defaultConfigurationIsVisible = 0;
+		defaultConfigurationName = Release;
+	};
+	A1000130269350BA00A1 /* Build configuration list for PBXNativeTarget "DentalDX" */ = {
+		isa = XCConfigurationList;
+		buildConfigurations = (
+			A1000131269350BA00A2 /* Debug */,
+			A1000132269350BA00A2 /* Release */,
+		);
+		defaultConfigurationIsVisible = 0;
+		defaultConfigurationName = Release;
+	};
+/* End XCConfigurationList section */
+
+/* Begin PBXFileReference additional */
+	A100000A269350B600A1 /* DentalDX.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DentalDX.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference additional */
+
+};
+	rootObject = A1000001269350B600A1 /* Project object */;
+}
