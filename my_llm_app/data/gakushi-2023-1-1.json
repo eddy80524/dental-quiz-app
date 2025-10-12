@@ -164,7 +164,7 @@
         "ノーマライゼーション",
         "ユニバーサルヘルスカバレッジ"
       ],
-      "answer": "C",
+      "answer": "E",
       "subject": "口腔衛生学",
       "image_paths": []
     },
@@ -237,7 +237,7 @@
         "内耳孔",
         "大口蓋孔"
       ],
-      "answer": "E",
+      "answer": "CE",
       "subject": "解剖学",
       "image_paths": []
     },
@@ -251,7 +251,7 @@
         "エーウ",
         "オーエ"
       ],
-      "answer": "A",
+      "answer": "E",
       "subject": "有歯補綴咬合学",
       "image_paths": [
         "gakushi/2023/1-1/G23-1-1-A-18a.jpg"
@@ -281,7 +281,7 @@
         "エッチング",
         "ブロットドライ"
       ],
-      "answer": "E",
+      "answer": "C",
       "subject": "歯科保存学",
       "image_paths": []
     },
@@ -309,7 +309,7 @@
         "道具の代用",
         "すり潰し機能"
       ],
-      "answer": "A",
+      "answer": "AE",
       "subject": "口腔解剖学",
       "image_paths": []
     },
@@ -353,7 +353,7 @@
         "ガッタパーチャポイント",
         "グラスアイオノマーセメント"
       ],
-      "answer": "D",
+      "answer": "BD",
       "subject": "歯科理工学",
       "image_paths": []
     },
@@ -421,7 +421,7 @@
       "choices": [
         "Ⅱ",
         "Ⅲ",
-        "Ⅴ",
+        "V",
         "Ⅵ",
         "Ⅶ"
       ],
@@ -615,11 +615,11 @@
       "number": "G23-1-1-A-44",
       "question": "疾病の有無とスクリーニング検査値の分布の関係を図に示す。\\nカットオフ値を低く設定したときの数値の変化の組合せで正しいのはどれか。1つ選べ。\\n感度　／　特異度",
       "choices": [
-        "上がる　／　上がる",
-        "上がる　／　下がる",
-        "下がる　／　上がる",
-        "下がる　／　下がる",
-        "変化なし　／　変化なし"
+        "上がる/上がる",
+        "上がる/下がる",
+        "下がる/上がる",
+        "下がる/下がる",
+        "変化なし/変化なし"
       ],
       "answer": "B",
       "subject": "生化学",
@@ -709,7 +709,7 @@
         "急性壊疽性歯髄炎",
         "急性一部性単純性歯髄炎"
       ],
-      "answer": "D",
+      "answer": "CD",
       "subject": "口腔治療学",
       "image_paths": []
     },
@@ -1476,7 +1476,7 @@
         "ヘモグロビン（Hb）",
         "血漿フィブリノゲン"
       ],
-      "answer": "A",
+      "answer": "AD",
       "subject": "生理学",
       "image_paths": []
     },
@@ -1518,7 +1518,7 @@
         "自己免疫性溶血性貧血",
         "全身性エリテマトーデス"
       ],
-      "answer": "B",
+      "answer": "E",
       "subject": "内科学",
       "image_paths": []
     },
@@ -1532,7 +1532,7 @@
         "微細運動から粗大運動へ一定方向に進む。",
         "新生児期は遺伝子より環境の影響が大きい。"
       ],
-      "answer": "A",
+      "answer": "AB",
       "subject": "小児歯科学",
       "image_paths": []
     },
@@ -1588,7 +1588,7 @@
         "原因歯の処置",
         "消炎鎮痛薬投与"
       ],
-      "answer": "D",
+      "answer": "CD",
       "subject": "口腔外科学1",
       "image_paths": []
     },
@@ -1602,7 +1602,7 @@
         "楔応力検査",
         "歯周ポケット検査"
       ],
-      "answer": "C",
+      "answer": "E",
       "subject": "生理学",
       "image_paths": [
         "gakushi/2023/1-1/G23-1-1-B-18a.jpg"
@@ -1662,7 +1662,7 @@
         "アクチンとミオシンの接触を可能にする。",
         "ミオシンの ATP アーゼ活性を活性化する。"
       ],
-      "answer": "E",
+      "answer": "D",
       "subject": "生物学",
       "image_paths": []
     },
@@ -1760,7 +1760,7 @@
         "関節リウマチ —— 抗 CCP 抗体",
         "Sjögren 症候群 —— 抗デスモグレイン 1 抗体"
       ],
-      "answer": "D",
+      "answer": "CD",
       "subject": "口腔外科学2",
       "image_paths": []
     },
@@ -1788,7 +1788,7 @@
         "15日後",
         "20日後"
       ],
-      "answer": "D",
+      "answer": "B",
       "subject": "口腔外科学1",
       "image_paths": []
     },
@@ -1816,7 +1816,7 @@
         "パ",
         "ラ"
       ],
-      "answer": "D",
+      "answer": "CD",
       "subject": "欠損歯列補綴咬合学",
       "image_paths": []
     },
@@ -1942,7 +1942,7 @@
         "4 mm",
         "5 mm"
       ],
-      "answer": "BE",
+      "answer": "B",
       "subject": "歯周病学",
       "image_paths": []
     },
@@ -2303,7 +2303,7 @@
         "感染根管治療",
         "抜 歯"
       ],
-      "answer": "CE",
+      "answer": "E",
       "subject": "障がい者歯科",
       "image_paths": [
         "gakushi/2023/1-1/G23-1-1-B-67a.jpg",
@@ -2320,7 +2320,7 @@
         "Herbst 装置",
         "Fränkel 装置"
       ],
-      "answer": "D",
+      "answer": "AE",
       "subject": "歯科矯正学",
       "image_paths": [
         "gakushi/2023/1-1/G23-1-1-B-68a.jpg",
@@ -2982,7 +2982,7 @@
         "下顎前方保持装置",
         "スタビリゼーションアプライアンス"
       ],
-      "answer": "A",
+      "answer": "D",
       "subject": "有歯補綴咬合学",
       "image_paths": []
     },
@@ -3010,7 +3010,7 @@
         "ブラジキニン",
         "43℃以上の温度"
       ],
-      "answer": "C",
+      "answer": "CE",
       "subject": "生理学",
       "image_paths": []
     },
@@ -3461,7 +3461,7 @@
         "歯肉溝滲出液量の増加",
         "歯肉へのメラニン色素沈着"
       ],
-      "answer": "E",
+      "answer": "CE",
       "subject": "歯周病学",
       "image_paths": []
     },
@@ -3503,7 +3503,7 @@
         "第VIII因子",
         "血小板数"
       ],
-      "answer": "BC",
+      "answer": "BD",
       "subject": "内科学",
       "image_paths": []
     },
@@ -3861,7 +3861,7 @@
         "水酸化カルシウム製剤",
         "マイクロエキスカベータ"
       ],
-      "answer": "ADEC",
+      "answer": "ACDE",
       "subject": "口腔治療学",
       "image_paths": [
         "gakushi/2023/1-1/G23-1-1-C-79a.jpg"
@@ -4274,7 +4274,7 @@
 "肺梗塞",
 "血栓症"
 ],
-"answer": "D",
+"answer": "BD",
 "subject": "病理学",
 "image_paths": []
 },
@@ -4316,7 +4316,7 @@
 "エ",
 "オ"
 ],
-"answer": "AC",
+"answer": "C",
 "subject": "歯科保存学",
 "image_paths": [
 "gakushi/2023/1-1/G23-1-1-D-19a.jpg"
@@ -5058,7 +5058,7 @@
 "滑車神経",
 "舌下神経"
 ],
-"answer": "BC",
+"answer": "B",
 "subject": "歯科麻酔学",
 "image_paths": [
 "gakushi/2023/1-1/G23-1-1-D-70a.jpg"
@@ -5109,7 +5109,7 @@
 "接着面積の増大",
 "齲蝕の進行抑制"
 ],
-"answer": "C",
+"answer": "D",
 "subject": "小児歯科学",
 "image_paths": [
 "gakushi/2023/1-1/G23-1-1-D-73a.jpg"
