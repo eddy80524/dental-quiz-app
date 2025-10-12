@@ -394,7 +394,7 @@
         "帯状疱疹",
         "流行性耳下腺炎"
       ],
-      "answer": "D",
+      "answer": "ADE",
       "subject": "内科学",
       "image_paths": []
     },
@@ -408,7 +408,7 @@
         "地球温暖化 -- 二酸化炭素",
         "オゾン層破壊 -- PCB"
       ],
-      "answer": "ED",
+      "answer": "CD",
       "subject": "口腔衛生学",
       "image_paths": [
         "gakushi/2023/2/G23-2-A-29a.jpg"
@@ -1532,7 +1532,7 @@
         "唾液流出速度",
         "フッ化物使用"
       ],
-      "answer": "C",
+      "answer": "DE",
       "subject": "口腔衛生学",
       "image_paths": []
     },
@@ -1644,7 +1644,7 @@
         "Kuttner腫瘍",
         "Warthin腫瘍"
       ],
-      "answer": "A",
+      "answer": "D",
       "subject": "口腔外科学1",
       "image_paths": []
     },
@@ -1761,7 +1761,7 @@
         "舌下神経",
         "迷走神経"
       ],
-      "answer": "C",
+      "answer": "CE",
       "subject": "高齢者歯科学",
       "image_paths": []
     },
@@ -3061,7 +3061,7 @@
         "エナメル質の厚さは相対的に薄い。",
         "歯頸部においてエナメル小柱はやや切縁方向〜水平方向に走行する。"
       ],
-      "answer": "CD",
+      "answer": "DE",
       "subject": "口腔解剖学",
       "image_paths": []
     },
@@ -3456,7 +3456,7 @@
         "ブリッジの合着",
         "治療用義歯の装着"
       ],
-      "answer": "D",
+      "answer": "AD",
       "subject": "歯周病学",
       "image_paths": []
     },
@@ -4154,7 +4154,7 @@
         "高い生体親和性",
         "大きな生体吸収性"
       ],
-      "answer": "D",
+      "answer": "AD",
       "subject": "歯科理工学",
       "image_paths": []
     },
@@ -4196,7 +4196,7 @@
         "カーボニックアンヒドラーゼII",
         "酒石酸抵抗性酸ホスファターゼ"
       ],
-      "answer": "B",
+      "answer": "C",
       "subject": "生化学",
       "image_paths": []
     },
@@ -4322,7 +4322,7 @@
         "水平顎堤破折",
         "急性化膿性根尖性歯周炎"
       ],
-      "answer": "C",
+      "answer": "B",
       "subject": "口腔治療学",
       "image_paths": []
     },
@@ -4478,7 +4478,7 @@
         "眼窩平面",
         "正中矢状平面"
       ],
-      "answer": "E",
+      "answer": "DE",
       "subject": "歯科矯正学",
       "image_paths": []
     },
@@ -4492,7 +4492,7 @@
         "歯冠歯根方向の変更",
         "骨様と組織付着の確保"
       ],
-      "answer": "E",
+      "answer": "BD",
       "subject": "有歯補綴咬合学",
       "image_paths": []
     },
