@@ -69,14 +69,6 @@ def get_natural_sort_key(q_dict):
         return (999, q_num_str)
 
 
-# 科目マッピング機能をインポート
-try:
-    from subject_mapping import get_standardized_subject
-except ImportError:
-    # フォールバック：subject_mappingが利用できない場合
-    def get_standardized_subject(subject):
-        return subject or "未分類"
-
 # Google Analytics設定
 try:
     # 実際のFirebase Analytics IDを設定
@@ -654,9 +646,9 @@ class QuestionUtils:
     
     @staticmethod
     def get_subject_of(q: Dict[str, Any]) -> str:
-        """問題の科目を取得（標準化済み）"""
+        """問題の科目名をそのまま取得"""
         original_subject = (q.get("subject") or "未分類").strip()
-        return get_standardized_subject(original_subject)
+        return original_subject if original_subject else "未分類"
     
     @staticmethod
     def make_subject_index(all_questions: List[Dict[str, Any]]):

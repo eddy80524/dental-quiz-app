@@ -16,7 +16,7 @@ import plotly.express as px
 import datetime
 import math
 import pytz
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 import time
 from functools import lru_cache
 from collections import defaultdict, Counter
@@ -1166,7 +1166,7 @@ def render_search_page():
         render_overview_tab_perfect(filtered_df, base_df, ALL_QUESTIONS, analysis_target)
     
     with tab2:
-        render_graph_analysis_tab_perfect(filtered_df)
+        render_graph_analysis_tab_perfect(filtered_df, base_df, analysis_target)
     
     with tab3:
         render_question_list_tab_perfect(filtered_df, analysis_target)
@@ -1328,14 +1328,15 @@ def render_overview_tab_perfect(filtered_df: pd.DataFrame, base_df: pd.DataFrame
             hisshu_retention_rate = (hisshu_correct_reviews / hisshu_total_reviews * 100) if hisshu_total_reviews > 0 else 0
             st.metric(label=hisshu_label, value=f"{hisshu_retention_rate:.1f}%", delta=f"{hisshu_correct_reviews} / {hisshu_total_reviews} 回")
 
-def render_graph_analysis_tab_perfect(filtered_df: pd.DataFrame):
+def render_graph_analysis_tab_perfect(filtered_df: pd.DataFrame, base_df: pd.DataFrame, analysis_target: str):
     """
     グラフ分析タブ - 学習データの可視化
     """
     st.subheader("学習データの可視化")
     if filtered_df.empty:
         st.warning("選択された条件に一致する問題がありません。")
-    else:
+
+    if not filtered_df.empty:
         st.markdown("##### 学習の記録")
         review_history = []
         for history_list in filtered_df["history"]:
@@ -1352,7 +1353,6 @@ def render_graph_analysis_tab_perfect(filtered_df: pd.DataFrame):
 
         if review_history:
             from collections import Counter
-            import pandas as pd  # ローカルスコープで確実にインポート
             review_counts = Counter(review_history)
             ninety_days_ago = get_japan_today() - datetime.timedelta(days=90)  # 日本時間ベース
             dates = [ninety_days_ago + datetime.timedelta(days=i) for i in range(91)]
@@ -1361,7 +1361,6 @@ def render_graph_analysis_tab_perfect(filtered_df: pd.DataFrame):
 
             # plotlyを使ってy軸の最小値を0に固定
             try:
-                import plotly.express as px
                 fig = px.bar(chart_df, x="Date", y="Reviews", 
                             title="日々の学習量（過去90日間）")
                 fig.update_layout(
@@ -1376,47 +1375,183 @@ def render_graph_analysis_tab_perfect(filtered_df: pd.DataFrame):
             st.info("選択された範囲にレビュー履歴がまだありません。")
 
         st.markdown("##### 学習レベル別分布")
-        if not filtered_df.empty:
-            level_counts = filtered_df['level'].value_counts()
+        level_counts = filtered_df['level'].value_counts()
 
-            # 色分け定義
-            level_colors_chart = {
-                "未学習": "#757575", "レベル0": "#FF9800", "レベル1": "#FFC107",
-                "レベル2": "#8BC34A", "レベル3": "#9C27B0", "レベル4": "#03A9F4",
-                "レベル5": "#1E88E5", "習得済み": "#4CAF50"
-            }
+        # 色分け定義
+        level_colors_chart = {
+            "未学習": "#757575", "レベル0": "#FF9800", "レベル1": "#FFC107",
+            "レベル2": "#8BC34A", "レベル3": "#9C27B0", "レベル4": "#03A9F4",
+            "レベル5": "#1E88E5", "習得済み": "#4CAF50"
+        }
 
-            try:
-                import plotly.express as px
-                import pandas as pd
+        try:
+            # レベル順に並べ替え
+            chart_data = []
+            for level in LEVEL_ORDER:
+                if level in level_counts.index:
+                    chart_data.append({"Level": level, "Count": level_counts[level]})
 
-                # レベル順に並べ替え
-                chart_data = []
-                colors = []
+            chart_df = pd.DataFrame(chart_data)
 
-                for level in LEVEL_ORDER:
-                    if level in level_counts.index:
-                        chart_data.append({"Level": level, "Count": level_counts[level]})
-                        colors.append(level_colors_chart.get(level, "#888888"))
+            fig = px.bar(chart_df, x="Level", y="Count", 
+                        title="学習レベル別問題数",
+                        color="Level",
+                        color_discrete_map=level_colors_chart)
+            fig.update_layout(
+                yaxis=dict(range=[0, None]),
+                showlegend=False,
+                xaxis_tickangle=-45
+            )
+            st.plotly_chart(fig, use_container_width=True)
 
-                chart_df = pd.DataFrame(chart_data)
+        except ImportError:
+            # plotlyが利用できない場合は基本的なbar_chart
+            st.bar_chart(level_counts)
+    else:
+        st.info("学習データがありません。")
 
-                fig = px.bar(chart_df, x="Level", y="Count", 
-                            title="学習レベル別問題数",
-                            color="Level",
-                            color_discrete_map=level_colors_chart)
-                fig.update_layout(
-                    yaxis=dict(range=[0, None]),
-                    showlegend=False,
-                    xaxis_tickangle=-45
-                )
-                st.plotly_chart(fig, use_container_width=True)
+    # --- 科目別の進捗状況と正答率（analysis_targetに応じて更新） ---
+    if base_df.empty:
+        st.info(f"{analysis_target}の科目データがまだ読み込まれていません。")
+        return
 
-            except ImportError:
-                # plotlyが利用できない場合は基本的なbar_chart
-                st.bar_chart(level_counts)
-        else:
-            st.info("学習データがありません。")
+    subject_filter = st.session_state.get("subject_filter", [])
+    subject_df = base_df.copy()
+    if subject_filter:
+        subject_df = subject_df[subject_df['subject'].isin(subject_filter)]
+
+    if subject_df.empty:
+        st.info("表示対象の科目がありません。サイドバーの科目フィルターを確認してください。")
+        return
+
+    subject_df = subject_df.copy()
+    subject_df['subject_display'] = subject_df['subject'].apply(
+        lambda s: s.strip() if isinstance(s, str) and s.strip() else "未分類"
+    )
+    subject_df['is_studied'] = subject_df['level'].fillna('未学習') != "未学習"
+
+    progress_summary = (
+        subject_df.groupby('subject_display')
+        .agg(
+            total_questions=('id', 'count'),
+            studied_questions=('is_studied', 'sum')
+        )
+        .reset_index()
+    )
+    if progress_summary.empty:
+        st.info("科目別の進捗データがありません。")
+    else:
+        progress_summary['studied_questions'] = progress_summary['studied_questions'].astype(int)
+        progress_summary['progress_pct'] = (
+            progress_summary['studied_questions'] / progress_summary['total_questions']
+        ) * 100
+        progress_summary['progress_text'] = progress_summary.apply(
+            lambda row: f"{row['progress_pct']:.1f}% ({int(row['studied_questions'])}/{int(row['total_questions'])}問)",
+            axis=1
+        )
+        progress_chart_df = progress_summary.sort_values('progress_pct', ascending=True)
+
+        try:
+            progress_fig = px.bar(
+                progress_chart_df,
+                x='progress_pct',
+                y='subject_display',
+                orientation='h',
+                text='progress_text',
+                color='progress_pct',
+                color_continuous_scale='Blues',
+                title=f"{analysis_target} 科目別進捗率（学習済み問題割合）"
+            )
+            x_max = max(105, float(progress_chart_df['progress_pct'].max()) + 5)
+            bar_count = len(progress_chart_df)
+            chart_height = max(420, 36 * bar_count + 140)
+            progress_fig.update_layout(
+                xaxis=dict(title='進捗率 (%)', range=[0, min(110, x_max)]),
+                yaxis=dict(title=None, automargin=True),
+                coloraxis_showscale=False,
+                height=chart_height,
+                margin=dict(l=240, r=60, t=80, b=60)
+            )
+            progress_fig.update_traces(textposition='outside', cliponaxis=False)
+            st.plotly_chart(progress_fig, use_container_width=True)
+        except ImportError:
+            st.bar_chart(progress_chart_df.set_index('subject_display')['progress_pct'])
+
+    def _count_history_attempts(history_list: Any) -> Tuple[int, int]:
+        attempts = 0
+        correct = 0
+        if isinstance(history_list, list):
+            for record in history_list:
+                if not isinstance(record, dict):
+                    continue
+                if 'is_correct' in record:
+                    attempts += 1
+                    if record.get('is_correct'):
+                        correct += 1
+                elif 'quality' in record:
+                    attempts += 1
+                    if record.get('quality', 0) >= 3:
+                        correct += 1
+        return attempts, correct
+
+    attempts_series = subject_df['history'].apply(_count_history_attempts)
+    subject_df['total_attempts'] = attempts_series.apply(lambda x: x[0])
+    subject_df['correct_attempts'] = attempts_series.apply(lambda x: x[1])
+
+    accuracy_summary = (
+        subject_df.groupby('subject_display')
+        .agg(
+            total_attempts=('total_attempts', 'sum'),
+            correct_attempts=('correct_attempts', 'sum')
+        )
+        .reset_index()
+    )
+
+    accuracy_summary['accuracy_pct'] = accuracy_summary.apply(
+        lambda row: (row['correct_attempts'] / row['total_attempts'] * 100) if row['total_attempts'] > 0 else None,
+        axis=1
+    )
+
+    accuracy_valid = accuracy_summary.dropna(subset=['accuracy_pct'])
+    if accuracy_valid.empty:
+        st.info("科目別の正答率を算出できる学習履歴がまだありません。")
+    else:
+        accuracy_valid['accuracy_text'] = accuracy_valid.apply(
+            lambda row: f"{row['accuracy_pct']:.1f}% ({int(row['correct_attempts'])}/{int(row['total_attempts'])}回)",
+            axis=1
+        )
+        accuracy_chart_df = accuracy_valid.sort_values('accuracy_pct', ascending=False)
+
+        try:
+            accuracy_fig = px.bar(
+                accuracy_chart_df,
+                x='accuracy_pct',
+                y='subject_display',
+                orientation='h',
+                text='accuracy_text',
+                color='accuracy_pct',
+                color_continuous_scale='Teal',
+                title=f"{analysis_target} 科目別平均正答率"
+            )
+            bar_count = len(accuracy_chart_df)
+            chart_height = max(420, 36 * bar_count + 140)
+            accuracy_fig.update_layout(
+                xaxis=dict(title='平均正答率 (%)', range=[0, 105]),
+                yaxis=dict(title=None, automargin=True),
+                coloraxis_showscale=False,
+                height=chart_height,
+                margin=dict(l=240, r=60, t=80, b=60)
+            )
+            accuracy_fig.update_traces(textposition='outside', cliponaxis=False)
+            st.plotly_chart(accuracy_fig, use_container_width=True)
+        except ImportError:
+            st.bar_chart(accuracy_chart_df.set_index('subject_display')['accuracy_pct'])
+
+    no_history_subjects = accuracy_summary[
+        accuracy_summary['total_attempts'] == 0
+    ]['subject_display'].tolist()
+    if no_history_subjects:
+        st.caption("学習履歴が未登録の科目: " + "、".join(no_history_subjects))
 
 def render_question_list_tab_perfect(filtered_df: pd.DataFrame, analysis_target: str = "国試"):
     """

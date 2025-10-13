@@ -747,7 +747,7 @@
 "エックス線検査"
 ],
 "answer": "AE",
-"subject": "口腔外科学",
+"subject": "口腔治療学",
 "image_paths": []
 },
 {
@@ -792,7 +792,7 @@
 "義歯未装着時も支台歯での咬合支持が確保できる。"
 ],
 "answer": "CD",
-"subject": "久損補列植機咬合学",
+"subject": "欠損歯列補綴咬合学",
 "image_paths": [
 "gakushi/2024/1-2/G24-1-2-A-56a.jpg",
 "gakushi/2024/1-2/G24-1-2-A-56b.jpg",
@@ -1008,7 +1008,7 @@
 "粘膜面への常温重合レジン添加"
 ],
 "answer": "AD",
-"subject": "久損補列植機咬合学",
+"subject": "欠損歯列補綴咬合学",
 "image_paths": [
 "gakushi/2024/1-2/G24-1-2-A-70a.jpg",
 "gakushi/2024/1-2/G24-1-2-A-70b.jpg"
@@ -1255,7 +1255,7 @@
 "支台装置での早期接触の確認"
 ],
 "answer": "DE",
-"subject": "久損補列植機咬合学",
+"subject": "欠損歯列補綴咬合学",
 "image_paths": [
 "gakushi/2024/1-2/G24-1-2-A-84a.jpg",
 "gakushi/2024/1-2/G24-1-2-A-84b.jpg"
@@ -1341,7 +1341,7 @@
 "「前歯と奥歯で均等に当たるように調整します」"
 ],
 "answer": "CE",
-"subject": "久損補列植機咬合学",
+"subject": "欠損歯列補綴咬合学",
 "image_paths": [
 "gakushi/2024/1-2/G24-1-2-A-89a.jpg",
 "gakushi/2024/1-2/G24-1-2-A-89b.jpg"
@@ -1531,7 +1531,7 @@
 "オ"
 ],
 "answer": "E",
-"subject": "矯正歯科学",
+"subject": "歯科矯正学",
 "image_paths": [
 "gakushi/2024/1-2/G24-1-2-B-12a.jpg"
 ]
@@ -1645,7 +1645,7 @@
 "タンニン・フッ化物合剤配合ポリカルボキシレートセメント"
 ],
 "answer": "B",
-"subject": "口腔微生物学",
+"subject": "歯科保存学",
 "image_paths": []
 },
 {
@@ -1673,7 +1673,7 @@
 "Christensen 現象"
 ],
 "answer": "A",
-"subject": "矯正歯科学",
+"subject": "歯科矯正学",
 "image_paths": []
 },
 {
@@ -1799,7 +1799,7 @@
 "矢状顆路傾斜角"
 ],
 "answer": "A",
-"subject": "矯正歯科学",
+"subject": "歯科矯正学",
 "image_paths": []
 },
 {
@@ -1883,7 +1883,7 @@
 "臼歯の大きさ —— レトロモラーパッドの位置"
 ],
 "answer": "AE",
-"subject": "矯正歯科学",
+"subject": "歯科矯正学",
 "image_paths": []
 },
 {
@@ -1939,7 +1939,7 @@
 "GOHAI（General Oral Health Assessment Index）"
 ],
 "answer": "B",
-"subject": "矯正歯科学",
+"subject": "歯科矯正学",
 "image_paths": []
 },
 {
@@ -4228,7 +4228,7 @@
 "医業等に係る広告制限"
 ],
 "answer": "E",
-"subject": "口腔微生学",
+"subject": "口腔衛生学",
 "image_paths": []
 },
 {
@@ -4382,7 +4382,7 @@
 "UNICEF"
 ],
 "answer": "C",
-"subject": "口腔微生学",
+"subject": "口腔衛生学",
 "image_paths": []
 },
 {
@@ -4571,7 +4571,7 @@
 "メチルメルカプタン"
 ],
 "answer": "A",
-"subject": "口腔微生学",
+"subject": "口腔衛生学",
 "image_paths": []
 },
 {
@@ -4613,7 +4613,7 @@
 "市町村保健センターの設置"
 ],
 "answer": "AB",
-"subject": "口腔微生学",
+"subject": "口腔衛生学",
 "image_paths": []
 },
 {

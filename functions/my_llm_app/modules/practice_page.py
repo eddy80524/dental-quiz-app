@@ -98,8 +98,6 @@ from utils import (
     HISSHU_Q_NUMBERS_SET, GAKUSHI_HISSHU_Q_NUMBERS_SET,
     get_natural_sort_key
 )
-from subject_mapping import get_standardized_subject
-
 # UserDataExtractor インポート
 from user_data_extractor import UserDataExtractor
 
@@ -1036,9 +1034,6 @@ def render_practice_page(auth_manager=None):
                             print(f"[DEBUG] セッション復元完了")
                             st.success("前回のセッション状態を復元しました！")
                             st.rerun()
-                        else:
-                            st.error("セッション復元に失敗しました。")
-                
                 with col2:
                     if st.button("🆕 新しいセッションを開始", key="start_new_session"):
                         # 古いセッション情報をクリア
@@ -3339,7 +3334,7 @@ def _start_free_learning(quiz_format: str, target_exam: str, question_order: str
                 selected_subject = st.session_state.get("free_subject", "")
                 if selected_subject:
                     available_questions = [q for q in available_questions 
-                                         if get_standardized_subject(q.get("subject", "")) == selected_subject]
+                                         if ((q.get("subject") or "").strip() or "未分類") == selected_subject]
                 pass
             elif quiz_format == "必修問題のみ":
                 # 必修問題のみ

@@ -73,10 +73,6 @@ def apply_performance_optimizations():
     """パフォーマンス最適化の無効化版"""
     pass
 
-# 科目マッピングのインポート
-from subject_mapping import get_standardized_subject, get_all_standardized_subjects, analyze_subject_mapping
-
-
 def apply_sidebar_button_styles():
     """
     サイドバーのボタンにシンプルなスタイリングを適用する関数

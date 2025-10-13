@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 """
 パフォーマンス最適化モジュール
@@ -10,7 +11,7 @@
 import streamlit as st
 import time
 import logging
-from typing import Dict, Any, List, Optional, Callable
+from typing import Dict, Any, List, Optional, Callable, Set
 from datetime import datetime, timedelta
 import functools
 import gc
@@ -27,15 +28,29 @@ class PerformanceOptimizer:
     @st.cache_data(ttl=300, show_spinner=False)  # 5分間キャッシュ
     def get_cached_subjects(uid: str, has_gakushi_permission: bool, analysis_target: str) -> List[str]:
         """科目データをキャッシュして取得（パフォーマンス最適化版）"""
-        from subject_mapping import get_all_standardized_subjects
         try:
-            # 基本科目を取得
-            all_subjects = get_all_standardized_subjects()
-            
-            # 権限に基づくフィルタリング
-            if analysis_target == "学士試験問題" and not has_gakushi_permission:
-                # 学士試験権限がない場合は国試科目のみ
-                return ["一般", "必修"]
+            from utils import ALL_QUESTIONS
+
+            kokushi_subjects: Set[str] = set()
+            gakushi_subjects: Set[str] = set()
+
+            for q in ALL_QUESTIONS:
+                subject = (q.get("subject") or "").strip()
+                if not subject or subject == "（未分類）":
+                    continue
+
+                number = q.get("number", "")
+                if number.startswith("G"):
+                    gakushi_subjects.add(subject)
+                else:
+                    kokushi_subjects.add(subject)
+
+            if analysis_target == "学士試験問題":
+                if not has_gakushi_permission:
+                    return ["権限なし"]
+                all_subjects = sorted(gakushi_subjects)
+            else:
+                all_subjects = sorted(kokushi_subjects)
             
             return all_subjects or ["一般"]
             

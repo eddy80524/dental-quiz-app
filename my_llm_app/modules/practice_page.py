@@ -99,8 +99,6 @@ from utils import (
     HISSHU_Q_NUMBERS_SET, GAKUSHI_HISSHU_Q_NUMBERS_SET,
     get_natural_sort_key
 )
-from subject_mapping import get_standardized_subject
-
 # UserDataExtractor インポート
 from user_data_extractor import UserDataExtractor
 
@@ -3790,7 +3788,7 @@ def _start_free_learning(quiz_format: str, target_exam: str, question_order: str
                 selected_subject = st.session_state.get("free_subject", "")
                 if selected_subject:
                     available_questions = [q for q in available_questions 
-                                         if get_standardized_subject(q.get("subject", "")) == selected_subject]
+                                         if ((q.get("subject") or "").strip() or "未分類") == selected_subject]
                 pass
             elif quiz_format == "必修問題のみ":
                 # 必修問題のみ
