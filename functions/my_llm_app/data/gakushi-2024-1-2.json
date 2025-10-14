@@ -1057,7 +1057,7 @@
 "リテーナー装着",
 "メタルマトリックス挿入"
 ],
-"answer": "BC",
+"answer": "C",
 "subject": "歯科保存学",
 "image_paths": [
 "gakushi/2024/1-2/G24-1-2-A-73a.jpg",
@@ -1374,7 +1374,7 @@
 "メタルインレーの除去",
 "コンポジットレジンの形態修正"
 ],
-"answer": "BD",
+"answer": "E",
 "subject": "歯科保存学",
 "image_paths": [
 "gakushi/2024/1-2/G24-1-2-B-1a.jpg"
@@ -1700,7 +1700,7 @@
 "TN4",
 "TN5"
 ],
-"answer": "B",
+"answer": "E",
 "subject": "歯周病学",
 "image_paths": []
 },
@@ -1770,7 +1770,7 @@
 "体格指数〈BMI〉が25.0以上",
 "1か月に10％以上の体重減少"
 ],
-"answer": "D",
+"answer": "E",
 "subject": "高齢者歯科学",
 "image_paths": []
 },
@@ -2804,7 +2804,7 @@
 "Go-Me",
 "ANS-PNS"
 ],
-"answer": "C",
+"answer": "A",
 "subject": "歯科矯正学",
 "image_paths": []
 },
@@ -2888,7 +2888,7 @@
 "頸動脈の触知",
 "AEDの電源オフ"
 ],
-"answer": "C",
+"answer": "A",
 "subject": "歯科麻酔学",
 "image_paths": []
 },
@@ -3056,7 +3056,7 @@
 "DMPT",
 "DMAEMA"
 ],
-"answer": "E",
+"answer": "D",
 "subject": "歯科理工学",
 "image_paths": [
 "gakushi/2024/1-2/G24-1-2-C-24a.jpg"
@@ -3086,7 +3086,7 @@
 "腎血漿流量（RPF）",
 "血清クレアチニン"
 ],
-"answer": "BC",
+"answer": "BE",
 "subject": "生理学",
 "image_paths": []
 },
@@ -3626,7 +3626,7 @@
 "乳臼歯の隣接面齲蝕",
 "乳中切歯の早期脱落"
 ],
-"answer": "D",
+"answer": "CD",
 "subject": "小児歯科学",
 "image_paths": []
 },
@@ -4213,7 +4213,7 @@
 "二酸化炭素",
 "クレアチニン"
 ],
-"answer": "A",
+"answer": "AD",
 "subject": "生化学",
 "image_paths": []
 },
@@ -4241,7 +4241,7 @@
 "走行の途中で分岐と合流が認められる。",
 "エナメル質の最深層と最表層では認められないことがある。"
 ],
-"answer": "C",
+"answer": "CE",
 "subject": "口腔解剖学",
 "image_paths": []
 },
@@ -4409,7 +4409,7 @@
 "関連教材の授業",
 "学校保健委員会"
 ],
-"answer": "E",
+"answer": "AD",
 "subject": "口腔病理学",
 "image_paths": []
 },
@@ -4437,7 +4437,7 @@
 "歯型と歯列模型との位置関係に誤差が生じにくい。",
 "適切なエマージェンスプロファイルを付与しやすい。"
 ],
-"answer": "C",
+"answer": "CE",
 "subject": "有歯補綴咬合学",
 "image_paths": [
 "gakushi/2024/1-2/G24-1-2-D-26a.jpg"
@@ -4822,7 +4822,7 @@
 "類表皮嚢胞",
 "鼻口蓋管嚢胞"
 ],
-"answer": "C",
+"answer": "E",
 "subject": "歯科矯正学",
 "image_paths": []
 },
@@ -4866,7 +4866,7 @@
 "歯の傾斜の改善",
 "鼻咽腔閉鎖不全の改善"
 ],
-"answer": "C",
+"answer": "E",
 "subject": "口腔外科学2",
 "image_paths": []
 },
