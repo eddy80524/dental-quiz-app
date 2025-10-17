@@ -59,6 +59,43 @@ def get_japan_datetime_from_timestamp(timestamp) -> datetime.datetime:
         return get_japan_now()
 
 
+def inject_choice_selectable_css():
+    """選択肢をコピー可能にするCSSを注入"""
+    st.markdown("""
+    <style>
+    /* 選択肢のチェックボックスのテキストを選択可能にする */
+    .stCheckbox > label > div[data-testid="stMarkdownContainer"] p,
+    .stCheckbox > label,
+    .stCheckbox label {
+        user-select: text !important;
+        -webkit-user-select: text !important;
+        -moz-user-select: text !important;
+        -ms-user-select: text !important;
+    }
+    
+    /* マークダウンのテキストも選択可能にする */
+    .stMarkdown > div,
+    .stMarkdown p,
+    .stMarkdown li {
+        user-select: text !important;
+        -webkit-user-select: text !important;
+        -moz-user-select: text !important;
+        -ms-user-select: text !important;
+    }
+    
+    /* 問題文などの既存のテキストも選択可能性を保持 */
+    .element-container,
+    .stText,
+    .stTextInput input {
+        user-select: text !important;
+        -webkit-user-select: text !important;
+        -moz-user-select: text !important;
+        -ms-user-select: text !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+
 # 必要な関数とクラスのインポート
 from llm import generate_dental_explanation
 try:
@@ -1146,6 +1183,9 @@ class PracticeSession:
 
 def render_practice_page(auth_manager=None):
     """練習ページのメイン描画関数（uid統一版）"""
+    # 選択肢をコピー可能にするCSSを注入
+    inject_choice_selectable_css()
+    
     practice_session = PracticeSession()
     
     # ユーザー認証チェック
