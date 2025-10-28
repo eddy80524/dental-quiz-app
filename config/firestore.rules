@@ -50,6 +50,28 @@ service cloud.firestore {
       allow write: if false; // システムによる更新のみ
     }
     
+    // 学習カードコレクション（最適化スキーマ）- uidベースのアクセス制御
+    match /study_cards/{cardId} {
+      // カードIDの形式: {uid}_{question_id}
+      allow read: if request.auth != null && 
+                     request.auth.uid == resource.data.uid;
+      allow create: if request.auth != null && 
+                       request.auth.uid == request.resource.data.uid;
+      allow update, delete: if request.auth != null && 
+                               request.auth.uid == resource.data.uid;
+    }
+    
+    // 問題メモコレクション - uidベースのアクセス制御
+    match /question_notes/{noteId} {
+      // メモIDの形式: {uid}_{question_id}
+      allow read: if request.auth != null && 
+                     request.auth.uid == resource.data.uid;
+      allow create: if request.auth != null && 
+                       request.auth.uid == request.resource.data.uid;
+      allow update, delete: if request.auth != null && 
+                               request.auth.uid == resource.data.uid;
+    }
+    
     // 公開マスターデータ（問題データ等）- 認証済みユーザーのみ読み取り可能
     match /master_data/{dataId} {
       allow read: if request.auth != null;

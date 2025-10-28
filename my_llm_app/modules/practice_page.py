@@ -813,6 +813,10 @@ class AnswerModeComponent:
 
         action_result['user_selections'] = user_selections
         
+        # メモセクションを自己評価後に表示
+        if is_checked:
+            AnswerModeComponent._render_notes_section(questions, group_id)
+        
         # 画像はフォームの外（常に最後）に表示
         for question in questions:
             all_images = (question.get('image_urls', []) or []) + (question.get('image_paths', []) or [])
@@ -1038,6 +1042,10 @@ class AnswerModeComponent:
 
         action_result['user_selections'] = user_selections
         
+        # メモセクションを自己評価後に表示
+        if is_checked:
+            AnswerModeComponent._render_notes_section(questions, group_id)
+        
         # 症例画像をフォームの外に表示（通常の問題画像と同じ扱い）
         if case_data and case_data.get('image_urls'):
             with st.expander("📸 症例画像を見る", expanded=is_checked):
@@ -1065,6 +1073,75 @@ class AnswerModeComponent:
                             )
         
         return action_result
+
+    @staticmethod
+    def _render_notes_section(questions: List[Dict], group_id: str) -> None:
+        """回答チェック後に表示するメモ入力セクション"""
+        st.markdown("---")
+        st.markdown("#### 📝 メモ・振り返り")
+
+        uid = st.session_state.get("uid")
+        if not uid:
+            st.info("ログインするとメモ機能が利用できます。")
+            return
+
+        from modules.notes_manager import NotesManager
+
+        for question in questions:
+            qid = question.get('number', '')
+
+            # 過去のメモを表示
+            existing_notes = NotesManager.get_question_notes(uid, qid)
+            if existing_notes:
+                with st.expander(f"📝 {qid}のメモ ({len(existing_notes)}件)", expanded=True):
+                    for i, note in enumerate(existing_notes):
+                        NotesManager.render_note_display(note)
+
+                        col1, col2 = st.columns([4, 1])
+                        with col2:
+                            if st.button("🗑️", key=f"del_note_{qid}_{i}_{group_id}"):
+                                if NotesManager.delete_note(uid, qid, i):
+                                    st.success("削除しました")
+                                    st.rerun()
+
+                        st.markdown("---")
+
+            # 新規メモ追加
+            st.markdown(f"##### ✍️ {qid}のメモを追加")
+
+            new_note_text = st.text_area(
+                f"{qid}のメモ（テキスト）",
+                key=f"note_input_{qid}_{group_id}",
+                placeholder="間違えた理由、覚えるべきポイント、気づきなどを記録...",
+                help="マークダウン記法が使えます（**太字**, - 箇条書き など）"
+            )
+
+            uploaded_images = st.file_uploader(
+                "画像を追加（複数可）",
+                type=["png", "jpg", "jpeg", "gif"],
+                accept_multiple_files=True,
+                key=f"image_upload_{qid}_{group_id}",
+                help="参考画像やスクリーンショットを添付できます"
+            )
+
+            if st.button(f"💾 メモを保存", key=f"save_note_{qid}_{group_id}"):
+                if new_note_text or uploaded_images:
+                    image_urls = []
+                    if uploaded_images:
+                        with st.spinner("画像をアップロード中..."):
+                            for img_file in uploaded_images:
+                                img_url = NotesManager.upload_image_to_firebase(uid, qid, img_file)
+                                if img_url:
+                                    image_urls.append(img_url)
+
+                    if NotesManager.add_note(uid, qid, new_note_text, images=image_urls):
+                        st.success(f"✅ メモを保存しました！（画像: {len(image_urls)}枚）")
+                        st.rerun()
+                    else:
+                        st.error("メモの保存に失敗しました")
+                else:
+                    st.warning("テキストまたは画像を入力してください")
+
 
 class PracticeSession:
     """練習セッションを管理するクラス"""
@@ -1331,8 +1408,8 @@ def _render_active_session(practice_session: PracticeSession, uid: str):
     # セッションタイプに応じた処理
     session_type = st.session_state.get("session_type", "")
     
-    # バランス学習、弱点強化、復習重視、新規重視は全ておまかせ演習として処理
-    if session_type in ["バランス学習", "弱点強化", "復習重視", "新規重視", "おまかせ演習", "自動学習", "おまかせ学習"]:
+    # バランス学習、弱点強化、復習重視、新規重視、メモから復習は全ておまかせ演習として処理
+    if session_type in ["バランス学習", "弱点強化", "復習重視", "新規重視", "おまかせ演習", "自動学習", "おまかせ学習", "メモから復習"]:
         _render_omakase_session(practice_session, uid)
     elif session_type.startswith("自由演習"):
         _render_free_learning_session(practice_session, uid)

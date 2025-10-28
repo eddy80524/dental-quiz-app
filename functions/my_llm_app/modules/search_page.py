@@ -710,8 +710,8 @@ def render_search_page():
                 delta=f"前週比 {accuracy_delta_text}"
             )
     
-    # タブコンテナ - 4つのタブ（元UIを完全復元）
-    tab1, tab2, tab3, tab4 = st.tabs(["概要", "グラフ分析", "問題リスト", "キーワード検索"])
+    # タブコンテナ - 5つのタブ（メモ一覧を追加）
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["概要", "グラフ分析", "問題リスト", "キーワード検索", "📝 メモ一覧"])
     
     with tab1:
         render_overview_tab_perfect(filtered_df, base_df, ALL_QUESTIONS, analysis_target)
@@ -724,6 +724,9 @@ def render_search_page():
     
     with tab4:
         render_keyword_search_tab_perfect(analysis_target)
+    
+    with tab5:
+        render_notes_tab()
 
 def render_overview_tab_perfect(filtered_df: pd.DataFrame, base_df: pd.DataFrame, all_questions: List, analysis_target: str):
     """
@@ -1250,6 +1253,111 @@ def render_keyword_search_tab_perfect(analysis_target: str):
                 st.warning(f"「{query}」に該当する問題が見つかりませんでした")
             else:
                 st.info("キーワードを入力して検索してください")
+
+
+def render_notes_tab():
+    """メモ一覧タブの描画"""
+    st.markdown("## 📝 学習メモ一覧")
+    
+    uid = st.session_state.get("uid")
+    if not uid:
+        st.warning("ログインしてください")
+        return
+    
+    from modules.notes_manager import NotesManager
+    from utils import ALL_QUESTIONS
+    
+    # 全メモを取得
+    all_notes = NotesManager.get_all_user_notes(uid)
+    
+    if not all_notes:
+        st.info("まだメモがありません。問題演習後にメモを追加してみましょう！")
+        return
+    
+    # フィルター
+    st.markdown("### 🔍 フィルター")
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        filter_type = st.selectbox(
+            "メモタイプ",
+            ["すべて", "画像付きのみ"],
+            key="note_filter_type"
+        )
+    
+    with col2:
+        sort_order = st.selectbox(
+            "並び順",
+            ["新しい順", "古い順", "問題番号順"],
+            key="note_sort_order"
+        )
+    
+    with col3:
+        search_keyword = st.text_input(
+            "🔎 キーワード検索",
+            placeholder="メモ内容や問題番号で検索...",
+            key="note_search"
+        )
+    
+    st.markdown("---")
+    st.markdown(f"### 📋 メモ一覧（{len(all_notes)}問）")
+    
+    for note_data in all_notes:
+        question_id = note_data.get("question_id")
+        notes = note_data.get("notes", [])
+        last_updated = note_data.get("last_updated", "")
+        
+        # フィルタリング
+        if filter_type == "画像付きのみ":
+            notes = [n for n in notes if n.get("images")]
+        
+        if search_keyword:
+            notes = [n for n in notes if search_keyword.lower() in n.get("content", "").lower()]
+        
+        if not notes:
+            continue
+        
+        # ALL_QUESTIONSリストから問題を検索
+        question = None
+        for q in ALL_QUESTIONS:
+            if q.get("number") == question_id:
+                question = q
+                break
+        
+        if question:
+            question_text = question.get("question", "問題文なし")[:100] + "..."
+            subject = question.get("subject", "未分類")
+        else:
+            question_text = "問題文が見つかりません"
+            subject = "未分類"
+        
+        with st.expander(f"**{question_id}** - {subject}", expanded=False):
+            st.markdown(f"📄 **問題**: {question_text}")
+            st.markdown(f"🕒 **最終更新**: {last_updated[:16] if last_updated else '不明'}")
+            
+            # キーをより具体的にして一意性を保証
+            if st.button(f"🎯 この問題を解く", key=f"notes_list_jump_to_{question_id}"):
+                st.session_state["current_q_group"] = [question_id]
+                st.session_state["session_choice_made"] = True
+                st.session_state["session_type"] = "メモから復習"
+                st.session_state["page"] = "練習"
+                st.rerun()
+            
+            st.markdown("---")
+            
+            for i, note in enumerate(notes):
+                NotesManager.render_note_display(note)
+                
+                col1, col2 = st.columns([4, 1])
+                with col2:
+                    # 削除ボタンのキーも具体的に
+                    if st.button("🗑️", key=f"notes_list_delete_{question_id}_{i}"):
+                        if NotesManager.delete_note(uid, question_id, i):
+                            st.success("削除しました")
+                            st.rerun()
+                
+                st.markdown("---")
+
 
 # メイン関数
 def main():

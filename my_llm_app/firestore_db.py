@@ -12,7 +12,6 @@ import streamlit as st
 import json
 import datetime
 import time
-import tempfile
 import os
 import collections.abc
 from typing import Dict, Any, Optional, List
@@ -33,52 +32,32 @@ class FirestoreManager:
     def _initialize_firebase(self):
         """Firebase初期化"""
         if not hasattr(st.session_state, 'firebase_initialized'):
-            # st.secrets がない/取得できない環境（ADC）でも動くようフォールバックを実装
-            temp_path = None
+            firebase_creds = self._load_service_account_config()
+
+            project_id = self._resolve_project_id(firebase_creds)
+            storage_bucket = self._resolve_storage_bucket(firebase_creds, project_id)
+            options = {}
+            if storage_bucket:
+                options["storageBucket"] = storage_bucket
+            if project_id:
+                options["projectId"] = project_id
+
+            creds = credentials.Certificate(firebase_creds)
+
             try:
-                firebase_creds = None
-                try:
-                    # Streamlit Cloud: st.secrets["firebase"] を使用
-                    firebase_creds = self._to_dict(st.secrets.get("firebase", {}))
-                    # 旧形式との互換性のため firebase_credentials もチェック
-                    if not firebase_creds:
-                        firebase_creds = self._to_dict(st.secrets.get("firebase_credentials", {}))
-                except Exception:
-                    firebase_creds = None
+                app = firebase_admin.get_app()
+            except ValueError:
+                app = firebase_admin.initialize_app(
+                    creds,
+                    options or None
+                )
 
-                if firebase_creds:
-                    # サービスアカウントJSONを一時ファイルに保存して初期化
-                    with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
-                        json.dump(firebase_creds, f)
-                        temp_path = f.name
-                    creds = credentials.Certificate(temp_path)
-                    storage_bucket = self._resolve_storage_bucket(firebase_creds)
-                    try:
-                        app = firebase_admin.get_app()
-                    except ValueError:
-                        app = firebase_admin.initialize_app(
-                            creds,
-                            {"storageBucket": storage_bucket}
-                        )
-                else:
-                    # ADC フォールバック（Cloud Run/Functions/GCE 等）
-                    try:
-                        app = firebase_admin.get_app()
-                    except ValueError:
-                        app = firebase_admin.initialize_app()  # Use Default Credentials
-
-                self.db = firestore.client(app=app)
-                try:
-                    self.bucket = storage.bucket(app=app)
-                except Exception:
-                    self.bucket = None
-                st.session_state.firebase_initialized = True
-            finally:
-                if temp_path:
-                    try:
-                        os.unlink(temp_path)
-                    except Exception:
-                        pass
+            self.db = firestore.client(app=app)
+            try:
+                self.bucket = storage.bucket(app=app)
+            except Exception:
+                self.bucket = None
+            st.session_state.firebase_initialized = True
         else:
             # 既に初期化済みの場合は既存のクライアントを取得
             self.db = firestore.client()
@@ -96,19 +75,94 @@ class FirestoreManager:
         else:
             return obj
     
-    def _resolve_storage_bucket(self, firebase_creds):
+    def _load_service_account_config(self) -> Dict[str, Any]:
+        """st.secrets からサービスアカウント情報を取得"""
+        firebase_config: Optional[Dict[str, Any]] = None
+        try:
+            firebase_config = self._to_dict(st.secrets.get("firebase", {}))
+            if not firebase_config:
+                firebase_config = self._to_dict(st.secrets.get("firebase_credentials", {}))
+        except Exception:
+            firebase_config = None
+
+        if not self._is_service_account(firebase_config):
+            raise RuntimeError(
+                "Firebase service account credentials are not configured. "
+                "Please set the full service account JSON under [firebase] in secrets.toml."
+            )
+
+        return firebase_config
+
+    def _resolve_project_id(self, firebase_creds):
+        """プロジェクトIDを多段階で解決"""
+        candidates: List[Optional[str]] = []
+
+        if firebase_creds:
+            candidates.extend([
+                firebase_creds.get("project_id"),
+                firebase_creds.get("projectId"),
+            ])
+
+        try:
+            candidates.append(st.secrets.get("firebase_project_id"))
+            candidates.append(st.secrets.get("project_id"))
+        except Exception:
+            pass
+
+        candidates.append(os.environ.get("FIREBASE_PROJECT_ID"))
+        candidates.append(os.environ.get("GOOGLE_CLOUD_PROJECT"))
+        candidates.append(os.environ.get("GCLOUD_PROJECT"))
+        candidates.append("dent-ai-4d8d8")
+
+        for candidate in candidates:
+            if candidate:
+                pid = str(candidate).strip()
+                if pid:
+                    return pid
+        return None
+
+    def _resolve_storage_bucket(self, firebase_creds, project_id):
         """バケット名を正規化"""
-        raw = st.secrets.get("firebase_storage_bucket") \
-              or firebase_creds.get("storage_bucket") \
-              or firebase_creds.get("storageBucket")
+        raw = None
+        try:
+            raw = st.secrets.get("firebase_storage_bucket")
+        except Exception:
+            raw = None
+
+        if not raw and firebase_creds:
+            raw = firebase_creds.get("storage_bucket") \
+                  or firebase_creds.get("storageBucket")
 
         if not raw:
-            pid = firebase_creds.get("project_id") or firebase_creds.get("projectId") or "dent-ai-4d8d8"
+            raw = os.environ.get("FIREBASE_STORAGE_BUCKET")
+
+        if not raw:
+            pid = project_id or (firebase_creds or {}).get("project_id") \
+                  or (firebase_creds or {}).get("projectId") \
+                  or "dent-ai-4d8d8"
             raw = f"{pid}.firebasestorage.app"
 
         b = str(raw).strip()
         b = b.replace("gs://", "").split("/")[0]
         return b
+
+    def _is_service_account(self, firebase_config: Optional[Dict[str, Any]]) -> bool:
+        """サービスアカウント形式かを判定"""
+        if not firebase_config or not isinstance(firebase_config, dict):
+            return False
+
+        required_fields = ["client_email", "private_key", "token_uri"]
+        for field in required_fields:
+            value = firebase_config.get(field)
+            if not value or not str(value).strip():
+                return False
+
+        # private_key の整形: 改行がエスケープされているケースに対応
+        private_key = firebase_config.get("private_key")
+        if isinstance(private_key, str) and "\\n" in private_key:
+            firebase_config["private_key"] = private_key.replace("\\n", "\n")
+
+        return True
     
     def load_user_profile(self, uid: str) -> Dict[str, Any]:
         """ユーザーの基本プロフィール情報のみを高速読み込み（uid統一版）"""
