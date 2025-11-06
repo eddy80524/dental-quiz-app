@@ -794,7 +794,8 @@ def load_master_data(version: str = "v2025-08-22-all-gakushi-files") -> tuple:
         'gakushi-2024-2.json', 
         'gakushi-2025-1-1.json',
         'gakushi-2025-1-2.json',
-        'gakushi-2025-1-3.json'
+        'gakushi-2025-1-3.json',
+        'gakushi-2025-2.json'
     ]
     target_files = [os.path.join(master_dir, f) for f in files_to_load]
 
