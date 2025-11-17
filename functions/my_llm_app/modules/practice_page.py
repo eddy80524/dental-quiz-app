@@ -134,6 +134,8 @@ from utils import (
     CardSelectionUtils, SM2Algorithm, AnalyticsUtils,
     ALL_EXAM_NUMBERS, ALL_EXAM_SESSIONS, ALL_SUBJECTS, CASES,
     HISSHU_Q_NUMBERS_SET, GAKUSHI_HISSHU_Q_NUMBERS_SET,
+    KOKUSHI_GENERAL_Q_NUMBERS_SET, KOKUSHI_CLINICAL_Q_NUMBERS_SET,
+    GAKUSHI_GENERAL_Q_NUMBERS_SET, GAKUSHI_CLINICAL_Q_NUMBERS_SET,
     get_natural_sort_key
 )
 # UserDataExtractor インポート
@@ -2576,7 +2578,7 @@ def render_practice_sidebar():
             # 以前の選択UIを復活
             uid = st.session_state.get("uid")
             has_gakushi_permission = st.session_state.get('has_gakushi_permission', False)
-            mode_choices = ["回数別", "科目別", "必修問題のみ", "キーワード検索"]
+            mode_choices = ["回数別", "科目別", "必修問題のみ", "一般問題のみ", "臨床実地のみ", "キーワード検索"]
             mode = st.radio("出題形式を選択", mode_choices, key="free_mode_radio")
 
             # 対象（国試/学士）セレクタ
@@ -2636,6 +2638,18 @@ def render_practice_sidebar():
                     questions_to_load = [q for q in ALL_QUESTIONS if q.get("number") in HISSHU_Q_NUMBERS_SET]
                 else:
                     questions_to_load = [q for q in ALL_QUESTIONS if q.get("number") in GAKUSHI_HISSHU_Q_NUMBERS_SET]
+
+            elif mode == "一般問題のみ":
+                if target_exam == "国試":
+                    questions_to_load = [q for q in ALL_QUESTIONS if q.get("number") in KOKUSHI_GENERAL_Q_NUMBERS_SET]
+                else:
+                    questions_to_load = [q for q in ALL_QUESTIONS if q.get("number") in GAKUSHI_GENERAL_Q_NUMBERS_SET]
+
+            elif mode == "臨床実地のみ":
+                if target_exam == "国試":
+                    questions_to_load = [q for q in ALL_QUESTIONS if q.get("number") in KOKUSHI_CLINICAL_Q_NUMBERS_SET]
+                else:
+                    questions_to_load = [q for q in ALL_QUESTIONS if q.get("number") in GAKUSHI_CLINICAL_Q_NUMBERS_SET]
 
             elif mode == "キーワード検索":
                 search_keyword = st.text_input("キーワード", placeholder="例: インプラント、根管治療", key="free_keyword")
@@ -3092,7 +3106,7 @@ def _render_free_learning_mode(has_gakushi_permission: bool):
         # 出題形式の選択
         quiz_format = st.radio(
             "出題形式",
-            ["回数別", "科目別", "必修問題のみ", "キーワード検索"],
+            ["回数別", "科目別", "必修問題のみ", "一般問題のみ", "臨床実地のみ", "キーワード検索"],
             key="free_quiz_format"
         )
         
@@ -3190,6 +3204,12 @@ def _render_detailed_conditions(quiz_format: str, target_exam: str):
             key="free_keyword",
             help="問題文に含まれるキーワードで検索します"
         )
+    
+    elif quiz_format == "一般問題のみ":
+        st.info("国試・学士ともに各領域/セットの21〜65番に該当する一般問題だけを出題します。")
+    
+    elif quiz_format == "臨床実地のみ":
+        st.info("国試・学士ともに各領域/セットの66〜90番に該当する臨床実地問題だけを出題します。")
 
 
 def _render_session_status():
@@ -3915,6 +3935,18 @@ def _start_free_learning(quiz_format: str, target_exam: str, question_order: str
                 elif target_exam == "学士試験":
                     hisshu_numbers = GAKUSHI_HISSHU_Q_NUMBERS_SET
                     available_questions = [q for q in available_questions if q.get("number") in hisshu_numbers]
+            elif quiz_format == "一般問題のみ":
+                if target_exam == "国試":
+                    general_set = KOKUSHI_GENERAL_Q_NUMBERS_SET
+                else:
+                    general_set = GAKUSHI_GENERAL_Q_NUMBERS_SET
+                available_questions = [q for q in available_questions if q.get("number") in general_set]
+            elif quiz_format == "臨床実地のみ":
+                if target_exam == "国試":
+                    clinical_set = KOKUSHI_CLINICAL_Q_NUMBERS_SET
+                else:
+                    clinical_set = GAKUSHI_CLINICAL_Q_NUMBERS_SET
+                available_questions = [q for q in available_questions if q.get("number") in clinical_set]
             elif quiz_format == "キーワード検索":
                 # キーワード検索の詳細条件は後で追加実装
                 # 現在は何もしない（全ての問題を対象とする）

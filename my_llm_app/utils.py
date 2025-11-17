@@ -346,6 +346,68 @@ class QuestionUtils:
         return False
 
     @staticmethod
+    def is_gakushi_general(q_num_str: str) -> bool:
+        """学士試験問題が一般問題かを判定"""
+        if QuestionUtils.is_gakushi_hisshu(q_num_str):
+            return False
+        match = re.match(r'^G\d{2}-[\d\-再]+-[A-D]-(\d+)$', q_num_str)
+        if match:
+            num = int(match.group(1))
+            return 21 <= num <= 65
+        return False
+
+    @staticmethod
+    def is_gakushi_clinical(q_num_str: str) -> bool:
+        """学士試験問題が臨床実地かを判定"""
+        if QuestionUtils.is_gakushi_hisshu(q_num_str):
+            return False
+        match = re.match(r'^G\d{2}-[\d\-再]+-[A-D]-(\d+)$', q_num_str)
+        if match:
+            num = int(match.group(1))
+            return 66 <= num <= 90
+        return False
+
+    @staticmethod
+    def is_kokushi_general(q_num_str: str) -> bool:
+        """国試問題が「一般問題」に該当するかを判定する"""
+        match = re.match(r'(\d+)([A-D])(\d+)', q_num_str)
+        if not match:
+            return False
+
+        kai, ryoiki, num = int(match.group(1)), match.group(2), int(match.group(3))
+        if QuestionUtils.is_hisshu(q_num_str):
+            return False
+
+        if kai >= 111:
+            return 21 <= num <= 65
+        if 101 <= kai <= 110:
+            if ryoiki == 'D':
+                return False
+            if ryoiki == 'C' and num > 35:
+                return False
+            return True
+        # 100回以前は領域Dを臨床実地とみなし、それ以外を一般扱い
+        return ryoiki != 'D'
+
+    @staticmethod
+    def is_kokushi_clinical(q_num_str: str) -> bool:
+        """国試問題が「臨床実地」に該当するかを判定する"""
+        match = re.match(r'(\d+)([A-D])(\d+)', q_num_str)
+        if not match:
+            return False
+
+        kai, ryoiki, num = int(match.group(1)), match.group(2), int(match.group(3))
+        if QuestionUtils.is_hisshu(q_num_str):
+            return False
+
+        if kai >= 111:
+            return 66 <= num <= 90
+        if 101 <= kai <= 110:
+            return ryoiki == 'D' or (ryoiki == 'C' and num > 35)
+        # 100回以前は領域Dを臨床実地扱い
+        return ryoiki == 'D'
+
+    @staticmethod
     def _normalize_answer_string(value: Optional[str]) -> str:
         """全角・空白を補正して比較用文字列を生成"""
         if not value:
@@ -987,10 +1049,25 @@ def get_derived_data(all_questions: List[Dict[str, Any]]):
     exam_sessions = sorted(list(set(re.match(r'(\d+[A-D])', q['number']).group(1) for q in all_questions if re.match(r'(\d+[A-D])', q['number']))))
     hisshu_numbers = {q['number'] for q in all_questions if QuestionUtils.is_hisshu(q['number'])}
     gakushi_hisshu_numbers = {q['number'] for q in all_questions if QuestionUtils.is_gakushi_hisshu(q['number'])}
+    kokushi_general_numbers = {q['number'] for q in all_questions if QuestionUtils.is_kokushi_general(q['number'])}
+    kokushi_clinical_numbers = {q['number'] for q in all_questions if QuestionUtils.is_kokushi_clinical(q['number'])}
+    gakushi_general_numbers = {q['number'] for q in all_questions if QuestionUtils.is_gakushi_general(q['number'])}
+    gakushi_clinical_numbers = {q['number'] for q in all_questions if QuestionUtils.is_gakushi_clinical(q['number'])}
     
     derived_time = time.time() - start
     
-    return questions_dict, subjects, exam_numbers, exam_sessions, hisshu_numbers, gakushi_hisshu_numbers
+    return (
+        questions_dict,
+        subjects,
+        exam_numbers,
+        exam_sessions,
+        hisshu_numbers,
+        gakushi_hisshu_numbers,
+        kokushi_general_numbers,
+        kokushi_clinical_numbers,
+        gakushi_general_numbers,
+        gakushi_clinical_numbers,
+    )
 
 
 def log_to_ga(event_name: str, user_id: str, params: Dict[str, Any]):
@@ -1052,7 +1129,18 @@ def get_theme_css() -> str:
 
 # 初期データ読み込み（モジュール読み込み時に実行）
 CASES, ALL_QUESTIONS = load_master_data()
-ALL_QUESTIONS_DICT, ALL_SUBJECTS, ALL_EXAM_NUMBERS, ALL_EXAM_SESSIONS, HISSHU_Q_NUMBERS_SET, GAKUSHI_HISSHU_Q_NUMBERS_SET = get_derived_data(ALL_QUESTIONS)
+(
+    ALL_QUESTIONS_DICT,
+    ALL_SUBJECTS,
+    ALL_EXAM_NUMBERS,
+    ALL_EXAM_SESSIONS,
+    HISSHU_Q_NUMBERS_SET,
+    GAKUSHI_HISSHU_Q_NUMBERS_SET,
+    KOKUSHI_GENERAL_Q_NUMBERS_SET,
+    KOKUSHI_CLINICAL_Q_NUMBERS_SET,
+    GAKUSHI_GENERAL_Q_NUMBERS_SET,
+    GAKUSHI_CLINICAL_Q_NUMBERS_SET,
+) = get_derived_data(ALL_QUESTIONS)
 
 
 # ===== PDF生成関連の関数群 =====
