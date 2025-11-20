@@ -33,12 +33,14 @@ class NotesManager:
     def upload_image_to_firebase(uid: str, question_id: str, image_file) -> Optional[str]:
         """画像をFirebase Storageにアップロード"""
         try:
-            from firebase_admin import storage
+            manager = get_firestore_manager()
+            if not manager or not manager.bucket:
+                print("[ERROR] Storage bucket not initialized")
+                return None
             
             print(f"📸 画像アップロード開始: {image_file.name}")
             
-            # バケット名を明示的に指定
-            bucket = storage.bucket("dent-ai-4d8d8.appspot.com")
+            bucket = manager.bucket
             
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             file_extension = image_file.name.split('.')[-1]
@@ -206,21 +208,24 @@ class NotesManager:
     
     @staticmethod
     def render_note_display(note: Dict) -> None:
-        """メモの表示（テキスト + 画像）"""
+        """メモの表示（テキスト + 画像）- ドキュメント風UI"""
         content = note.get("content", "")
         images = note.get("images", [])
         timestamp = note.get("timestamp", "")
         
-        st.markdown(f"**📅 {timestamp[:16]}**")
-        
-        if content:
-            st.markdown(f"> {content}")
-        
-        if images:
-            cols = st.columns(min(len(images), 3))
-            for i, img_url in enumerate(images):
-                with cols[i % 3]:
-                    try:
-                        st.image(img_url, use_container_width=True, caption=f"画像 {i+1}")
-                    except Exception as e:
-                        st.warning(f"画像の読み込みに失敗: {img_url}")
+        with st.container(border=True):
+            st.caption(f"📅 {timestamp[:16]}")
+            
+            if content:
+                st.markdown(content)
+            
+            if images:
+                if content:
+                    st.divider()
+                cols = st.columns(min(len(images), 3))
+                for i, img_url in enumerate(images):
+                    with cols[i % 3]:
+                        try:
+                            st.image(img_url, use_container_width=True)
+                        except Exception as e:
+                            st.warning(f"画像の読み込みに失敗: {img_url}")

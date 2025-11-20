@@ -2261,6 +2261,36 @@ def render_practice_sidebar():
                 if review_count > 0 and overdue_cards:
                     st.warning(f"⚠️ 期限切れの復習問題が {len(overdue_cards)}問 あります。優先的に学習することをお勧めします。")
 
+                st.markdown("#### ⚙️ 学習設定")
+                
+                # 1日の復習上限設定
+                current_limit = st.session_state.get('daily_review_limit', 120)
+                new_limit = st.slider(
+                    "1日の復習上限",
+                    min_value=30,
+                    max_value=400,
+                    value=current_limit,
+                    step=10,
+                    help="1日に出題される復習カードの上限数を設定します。未消化分は翌日以降に繰り越されます。"
+                )
+                if new_limit != current_limit:
+                    st.session_state['daily_review_limit'] = new_limit
+                    st.rerun()
+
+                # 1セットの問題数設定
+                current_session_limit = st.session_state.get('cards_per_session', 10)
+                new_session_limit = st.slider(
+                    "1セットの問題数",
+                    min_value=5,
+                    max_value=50,
+                    value=current_session_limit,
+                    step=5,
+                    help="1回の学習セッションで出題される問題数を設定します。"
+                )
+                if new_session_limit != current_session_limit:
+                    st.session_state['cards_per_session'] = new_session_limit
+
+
                 # 本日の学習完了数を計算（重複カウント防止強化版）
                 today_reviews_done = 0
                 today_new_done = 0
@@ -2595,9 +2625,31 @@ def render_practice_sidebar():
                     if selected_exam_num:
                         available_sections = sorted([s[-1] for s in ALL_EXAM_SESSIONS if s.startswith(selected_exam_num)])
                         selected_section_char = st.selectbox("領域", available_sections, key="free_section")
+                        
+                        # カテゴリ選択（必修・一般・臨実）
+                        category_options = ["全て", "必修", "一般", "臨床実地"]
+                        selected_category = st.selectbox("カテゴリ", category_options, key="free_category_sidebar")
+                        
                         if selected_section_char:
                             selected_session = f"{selected_exam_num}{selected_section_char}"
                             questions_to_load = [q for q in ALL_QUESTIONS if q.get("number", "").startswith(selected_session)]
+                            
+                            # カテゴリ絞り込み
+                            if selected_category != "全て":
+                                filtered_questions = []
+                                for q in questions_to_load:
+                                    number_str = q.get("number", "")
+                                    # 末尾の数字を抽出 (例: 117A1 -> 1)
+                                    match = re.search(r'(\d+)$', number_str)
+                                    if match:
+                                        num = int(match.group(1))
+                                        if selected_category == "必修" and 1 <= num <= 20:
+                                            filtered_questions.append(q)
+                                        elif selected_category == "一般" and 21 <= num <= 65:
+                                            filtered_questions.append(q)
+                                        elif selected_category == "臨床実地" and 66 <= num <= 90:
+                                            filtered_questions.append(q)
+                                questions_to_load = filtered_questions
                 else:
                     g_years, g_sessions_map, g_areas_map, _ = QuestionUtils.build_gakushi_indices(ALL_QUESTIONS)
                     if g_years:
@@ -2609,8 +2661,33 @@ def render_practice_sidebar():
                                 if g_session:
                                     areas = g_areas_map.get(g_year, {}).get(g_session, ["A", "B", "C", "D"])
                                     g_area = st.selectbox("領域", areas, key="free_g_area")
+                                    
+                                    # カテゴリ選択（必修・一般・臨実）
+                                    category_options = ["全て", "必修", "一般", "臨床実地"]
+                                    selected_category = st.selectbox("カテゴリ", category_options, key="free_g_category_sidebar")
+                                    
                                     if g_area:
                                         questions_to_load = QuestionUtils.filter_gakushi_by_year_session_area(ALL_QUESTIONS, g_year, g_session, g_area)
+                                        
+                                        # カテゴリ絞り込み
+                                        if selected_category != "全て":
+                                            filtered_questions = []
+                                            for q in questions_to_load:
+                                                number_str = q.get("number", "")
+                                                # 学士はハイフン区切りの最後が番号 (例: G25-1-1-A-1 -> 1)
+                                                try:
+                                                    parts = number_str.split('-')
+                                                    if parts:
+                                                        num = int(parts[-1])
+                                                        if selected_category == "必修" and 1 <= num <= 20:
+                                                            filtered_questions.append(q)
+                                                        elif selected_category == "一般" and 21 <= num <= 65:
+                                                            filtered_questions.append(q)
+                                                        elif selected_category == "臨床実地" and 66 <= num <= 90:
+                                                            filtered_questions.append(q)
+                                                except ValueError:
+                                                    continue
+                                            questions_to_load = filtered_questions
 
             elif mode == "科目別":
                 if target_exam == "国試":
@@ -3064,16 +3141,19 @@ def _render_auto_learning_mode():
         # 学習セッション設定
         st.markdown("#### 学習セッション設定")
         
+        # 1セットの問題数を取得
+        cards_per_session = st.session_state.get("cards_per_session", 10)
+        
         session_length = st.selectbox(
             "学習時間を選択",
             ["10分（約5問）", "20分（約10問）", "30分（約15問）", "カスタム"],
-            index=1,
+            index=3, # デフォルトをカスタムに設定し、設定値を反映
             help="AIが最適な問題を自動選択して出題します",
             label_visibility="collapsed"
         )
         
         if session_length == "カスタム":
-            custom_count = st.number_input("問題数", min_value=1, max_value=50, value=10)
+            custom_count = st.number_input("問題数", min_value=1, max_value=50, value=cards_per_session)
         else:
             custom_count = int(session_length.split("約")[1].split("問")[0])
         
@@ -3143,6 +3223,10 @@ def _render_detailed_conditions(quiz_format: str, target_exam: str):
             # 領域選択
             area_options = ["全領域", "A領域", "B領域", "C領域", "D領域"]
             selected_area = st.selectbox("領域", area_options, key="free_area")
+            
+            # カテゴリ選択（必修・一般・臨実）
+            category_options = ["全て", "必修", "一般", "臨床実地"]
+            selected_category = st.selectbox("カテゴリ", category_options, key="free_category")
         else:
             # 学士試験の年度・回数選択
             year_options = [f"{y}年度" for y in range(2022, 2026)]  # 2022-2025年度
@@ -3155,6 +3239,10 @@ def _render_detailed_conditions(quiz_format: str, target_exam: str):
             
             area_options = ["全領域", "A領域", "B領域"]
             selected_area = st.selectbox("領域", area_options, key="free_gakushi_area")
+            
+            # カテゴリ選択（必修・一般・臨実）
+            category_options = ["全て", "必修", "一般", "臨床実地"]
+            selected_category = st.selectbox("カテゴリ", category_options, key="free_gakushi_category")
     
     elif quiz_format == "科目別":
         # 科目選択（実際のJSONデータから科目を取得）
@@ -3748,7 +3836,8 @@ def _start_auto_learning():
 def _fallback_auto_learning():
     """フォールバック処理"""
     st.info("ローカル処理で問題を選択します")
-    new_cards_per_day = st.session_state.get("new_cards_per_day", 10)
+    # 1セットの問題数を取得
+    cards_per_session = st.session_state.get("cards_per_session", 10)
     
     # ランダムに問題を選択
     import random
@@ -3807,7 +3896,7 @@ def _fallback_auto_learning():
         unlearned_questions = available_questions
     
     selected_questions = random.sample(unlearned_questions, 
-                                     min(new_cards_per_day, len(unlearned_questions)))
+                                     min(cards_per_session, len(unlearned_questions)))
     
     # 選択された問題の年代別分布も記録
     selected_years = {}
@@ -3887,6 +3976,7 @@ def _start_free_learning(quiz_format: str, target_exam: str, question_order: str
                     if target_exam == "国試":
                         selected_kaisu = st.session_state.get("free_kaisu", "117回")
                         selected_area = st.session_state.get("free_area", "全領域")
+                        selected_category = st.session_state.get("free_category", "全て")
                         
                         # "117回" -> "117" に変換
                         kaisu_number = selected_kaisu.replace("回", "")
@@ -3901,11 +3991,29 @@ def _start_free_learning(quiz_format: str, target_exam: str, question_order: str
                             available_questions = [q for q in available_questions 
                                                  if area_letter in q.get("number", "")]
                         
+                        # カテゴリ絞り込み
+                        if selected_category != "全て":
+                            filtered_questions = []
+                            for q in available_questions:
+                                number_str = q.get("number", "")
+                                # 末尾の数字を抽出 (例: 117A1 -> 1)
+                                match = re.search(r'(\d+)$', number_str)
+                                if match:
+                                    num = int(match.group(1))
+                                    if selected_category == "必修" and 1 <= num <= 20:
+                                        filtered_questions.append(q)
+                                    elif selected_category == "一般" and 21 <= num <= 65:
+                                        filtered_questions.append(q)
+                                    elif selected_category == "臨床実地" and 66 <= num <= 90:
+                                        filtered_questions.append(q)
+                            available_questions = filtered_questions
+                        
                         
                     elif target_exam == "学士試験":
                         selected_year = st.session_state.get("free_gakushi_year", "2025年度")
                         selected_kaisu = st.session_state.get("free_gakushi_kaisu", "1-1")
                         selected_area = st.session_state.get("free_gakushi_area", "全領域")
+                        selected_category = st.session_state.get("free_gakushi_category", "全て")
                         
                         # "2025年度" -> "25" に変換
                         year_number = str(int(selected_year.replace("年度", "")) - 2000)
@@ -3919,6 +4027,26 @@ def _start_free_learning(quiz_format: str, target_exam: str, question_order: str
                             area_letter = selected_area.replace("領域", "")  # "A領域" -> "A"
                             available_questions = [q for q in available_questions 
                                                  if f"-{area_letter}-" in q.get("number", "")]
+                        
+                        # カテゴリ絞り込み
+                        if selected_category != "全て":
+                            filtered_questions = []
+                            for q in available_questions:
+                                number_str = q.get("number", "")
+                                # 学士はハイフン区切りの最後が番号 (例: G25-1-1-A-1 -> 1)
+                                try:
+                                    parts = number_str.split('-')
+                                    if parts:
+                                        num = int(parts[-1])
+                                        if selected_category == "必修" and 1 <= num <= 20:
+                                            filtered_questions.append(q)
+                                        elif selected_category == "一般" and 21 <= num <= 65:
+                                            filtered_questions.append(q)
+                                        elif selected_category == "臨床実地" and 66 <= num <= 90:
+                                            filtered_questions.append(q)
+                                except ValueError:
+                                    continue
+                            available_questions = filtered_questions
                         
             elif quiz_format == "科目別":
                 # 科目別の詳細条件を取得（標準化された科目名で比較）

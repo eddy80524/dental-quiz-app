@@ -21,6 +21,63 @@ from google.cloud.firestore_v1 import FieldFilter
 from google.cloud import firestore as gcp_firestore
 
 
+
+@st.cache_data(ttl=300)
+def cached_load_user_cards(uid: str) -> Dict[str, Any]:
+    """ユーザーのカードデータをキャッシュ付きで読み込み"""
+    if not uid:
+        return {}
+    
+    try:
+        # Firestoreクライアントを直接取得
+        # 注意: firestore.client() はシングルトン的に動作するため再取得コストは低い
+        db = firestore.client()
+        
+        # 最適化されたstudy_cardsコレクションから取得
+        cards_query = db.collection("study_cards").where("uid", "==", uid)
+        cards_docs = cards_query.get()
+        
+        cards = {}
+        for doc in cards_docs:
+            if doc.exists:
+                card_data = doc.to_dict()
+                
+                # datetimeオブジェクトをISO文字列に変換（キャッシュシリアライズ対応）
+                # 再帰的に変換するのはコストがかかるため、主要なフィールドのみ対応
+                if "metadata" in card_data:
+                    meta = card_data["metadata"]
+                    if isinstance(meta.get("created_at"), datetime.datetime):
+                        meta["created_at"] = meta["created_at"].isoformat()
+                    if isinstance(meta.get("updated_at"), datetime.datetime):
+                        meta["updated_at"] = meta["updated_at"].isoformat()
+                
+                if "history" in card_data and isinstance(card_data["history"], list):
+                    for h in card_data["history"]:
+                        if isinstance(h.get("timestamp"), datetime.datetime):
+                            h["timestamp"] = h["timestamp"].isoformat()
+                
+                question_id = card_data.get("question_id")
+                if not question_id:
+                    # フォールバック
+                    try:
+                        doc_id = str(doc.id)
+                        if "_" in doc_id:
+                            question_id = doc_id.split("_", 1)[1]
+                        else:
+                            question_id = doc_id
+                    except Exception:
+                        question_id = None
+                
+                if question_id:
+                    cards[question_id] = card_data
+        
+        return cards
+        
+    except Exception as e:
+        print(f"[ERROR] キャッシュ付きカード読み込みエラー: {e}")
+        return {}
+
+
 class FirestoreManager:
     """Firestoreデータベース操作を管理するクラス"""
     
@@ -317,40 +374,19 @@ class FirestoreManager:
             }
     
     def get_user_cards(self, uid: str) -> Dict[str, Any]:
-        """ユーザーの学習カードデータを取得（最適化後構造対応版）"""
-        start = time.time()
-        
-        if not uid:
-            return {}
-        
+        """ユーザーの学習カードデータを取得（キャッシュ対応版）"""
         try:
-            # 最適化後のstudy_cardsコレクションから取得
-            cards_query = self.db.collection("study_cards").where("uid", "==", uid)
-            cards_docs = cards_query.get(timeout=10)
+            # キャッシュされたデータを取得
+            raw_cards = cached_load_user_cards(uid)
             
             cards = {}
-            for doc in cards_docs:
-                if doc.exists:
-                    card_data = self._to_dict(doc.to_dict())
-                    question_id = card_data.get("question_id")
-                    if not question_id:
-                        # フォールバック: ドキュメントIDから推定（uid_questionId形式想定）
-                        try:
-                            doc_id = str(doc.id)
-                            if "_" in doc_id:
-                                question_id = doc_id.split("_", 1)[1]
-                            else:
-                                question_id = doc_id
-                        except Exception:
-                            question_id = None
-                    if question_id:
-                        # 最適化後のデータ構造を旧形式に変換
-                        converted_card = self._convert_optimized_card_to_legacy(card_data)
-                        cards[question_id] = converted_card
-            
-            # 学習データの統計を計算
-            learned_cards = len([card for card in cards.values() if card.get("level", -1) >= 0])
-            mastered_cards = len([card for card in cards.values() if card.get("level", -1) >= 5])
+            for question_id, card_data in raw_cards.items():
+                try:
+                    # 最適化後のデータ構造を旧形式に変換
+                    converted_card = self._convert_optimized_card_to_legacy(card_data)
+                    cards[question_id] = converted_card
+                except Exception as conv_error:
+                    continue
             
             return cards
             
@@ -649,9 +685,13 @@ class FirestoreManager:
             if optimized_data:
                 return optimized_data
             
-            # フォールバック：リアルタイム計算
-            print("[FALLBACK] 統計データが不完全なため、リアルタイム計算実行")
-            return self.fetch_ranking_data_realtime(limit)
+            # フォールバック：リアルタイム計算は重すぎるため廃止（空リストを返す）
+            print("[INFO] 統計データが不完全ですが、リアルタイム計算は負荷軽減のためスキップします")
+            return []
+            
+            # 旧フォールバックコード（無効化）
+            # print("[FALLBACK] 統計データが不完全なため、リアルタイム計算実行")
+            # return self.fetch_ranking_data_realtime(limit)
             
         except Exception as e:
             print(f"[ERROR] ランキングデータ取得エラー: {e}")

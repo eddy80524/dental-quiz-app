@@ -247,30 +247,50 @@ class AuthManager:
             return {"error": {"message": f"Network error: {str(e)}"}}
     
     def refresh_token(self, refresh_token: str) -> Optional[Dict[str, Any]]:
-        """リフレッシュトークンを使って新しいidTokenを取得"""
+        """リフレッシュトークンを使って新しいidTokenを取得（リトライ機能付き）"""
         if not self._ensure_api_key():
             return {"error": {"message": "Firebase API key not configured"}}
         
         payload = {"grant_type": "refresh_token", "refresh_token": refresh_token}
-        try:
-            response = self._get_http_session().post(
-                self.refresh_url, data=payload, timeout=3
-            )
-            result = response.json()
-            
-            if "id_token" in result:
-                # トークンを更新
-                try:
-                    st.session_state.update({
-                        "id_token": result["id_token"],
-                        "refresh_token": result["refresh_token"],
-                        "token_timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
-                    })
-                except Exception:
+        
+        # 最大3回リトライ
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = self._get_http_session().post(
+                    self.refresh_url, data=payload, timeout=5  # タイムアウトを少し延長
+                )
+                result = response.json()
+                
+                if "id_token" in result:
+                    # トークンを更新
+                    try:
+                        st.session_state.update({
+                            "id_token": result["id_token"],
+                            "refresh_token": result["refresh_token"],
+                            "token_timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                        })
+                    except Exception:
+                        pass
+                    return result
+                
+                # エラーレスポンスの場合でも、サーバーエラー系ならリトライ
+                if response.status_code >= 500:
+                    time.sleep(1 * (attempt + 1))
+                    continue
+                
+                # 400系エラー（無効なトークンなど）はリトライしない
+                break
+                
+            except requests.exceptions.RequestException:
+                # ネットワークエラーはリトライ
+                if attempt < max_retries - 1:
+                    time.sleep(1 * (attempt + 1))
+                else:
                     pass
-                return result
-        except Exception as e:
-            pass
+            except Exception:
+                break
+                
         return None
     
     def reset_password(self, email: str) -> Dict[str, Any]:

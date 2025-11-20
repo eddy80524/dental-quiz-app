@@ -334,72 +334,31 @@ class DentalApp:
         return sorted(list(subjects)) if subjects else ["一般"]
     
     def _load_user_data(self):
-        """ユーザーの演習データを読み込み（最適化されたスキーマ対応・Streamlit Cloud対応）"""
+        """ユーザーの演習データを読み込み（キャッシュ対応版）"""
         uid = st.session_state.get("uid")
         if not uid:
             return
         
-        # 既にデータが読み込まれている場合はスキップ（強化版）
+        # 既にデータが読み込まれている場合はスキップ
         if st.session_state.get("cards") and len(st.session_state.get("cards", {})) > 0:
             return
         
         try:
-            # Firestore接続の確認（Streamlit Cloud対応）
+            # Firestoreマネージャー経由で取得（内部でキャッシュ利用）
             firestore_manager = get_firestore_manager()
             if not firestore_manager:
-                print("[ERROR] _load_user_data: Firestoreマネージャーの取得に失敗")
                 st.session_state["cards"] = {}
                 return
                 
-            db = firestore_manager.db
-            if not db:
-                print("[ERROR] _load_user_data: Firestoreデータベース接続に失敗")
-                st.session_state["cards"] = {}
-                return
-            
-            # 最適化されたstudy_cardsコレクションからユーザーデータを読み込み
-            study_cards_ref = db.collection("study_cards")
-            user_cards_query = study_cards_ref.where("uid", "==", uid)
-            user_cards_docs = user_cards_query.get()
-            
-            # カードデータを変換（既存の形式に合わせる）
-            cards = {}
-            for doc in user_cards_docs:
-                try:
-                    card_data = doc.to_dict()
-                    question_id = doc.id.split('_')[-1] if '_' in doc.id else doc.id
-                    
-                    # 既存の形式に変換
-                    card = {
-                        "q_id": question_id,
-                        "uid": card_data.get("uid", uid),
-                        "history": card_data.get("history", []),
-                        "sm2_data": card_data.get("sm2_data", {}),
-                        "performance": card_data.get("performance", {}),
-                        "metadata": card_data.get("metadata", {})
-                    }
-                    
-                    # SM2データから既存の形式に変換
-                    sm2_data = card_data.get("sm2_data", {})
-                    if sm2_data:
-                        card.update({
-                            "n": sm2_data.get("n", 0),
-                            "EF": sm2_data.get("ef", 2.5),
-                            "interval": sm2_data.get("interval", 1),
-                            "next_review": sm2_data.get("next_review"),
-                            "last_review": sm2_data.get("last_review")
-                        })
-                    
-                    cards[question_id] = card
-                    
-                except Exception as card_error:
-                    print(f"[WARNING] カードデータ処理エラー ({doc.id}): {card_error}")
-                    continue
+            # キャッシュされたデータを取得
+            # get_user_cardsは内部でcached_load_user_cardsを呼び出すため高速
+            cards = firestore_manager.get_user_cards(uid)
             
             # セッション状態に保存
             st.session_state["cards"] = cards
             
         except Exception as e:
+            print(f"[ERROR] _load_user_data: {e}")
             st.session_state["cards"] = {}
     
     def _initialize_user_profile(self):
@@ -813,8 +772,8 @@ class DentalApp:
         st.success(f"👤 {name} としてログイン中")
         
         # ページ選択をラジオボタン形式に変更
-        page_options = ["練習", "検索・進捗", "ランキング"]
-        page_labels = ["📚 練習ページ", "📊 検索・進捗", "🏆 ランキング"]
+        page_options = ["練習", "検索・進捗", "ランキング", "学習メモ"]
+        page_labels = ["📚 練習ページ", "📊 検索・進捗", "🏆 ランキング", "📝 学習メモ"]
         
         current_page = st.session_state.get("page", "練習")
         current_index = 0
@@ -822,6 +781,8 @@ class DentalApp:
             current_index = 1
         elif current_page == "ランキング":
             current_index = 2
+        elif current_page == "学習メモ":
+            current_index = 3
         
         selected_page = st.selectbox(
             "ページを選択",
@@ -838,6 +799,8 @@ class DentalApp:
             new_page = "検索・進捗"
         elif selected_page == "🏆 ランキング":
             new_page = "ランキング"
+        elif selected_page == "📝 学習メモ":
+            new_page = "学習メモ"
         
         # ページが変更された場合はイベントを送信（簡素化版）
         if new_page and new_page != st.session_state.get("page"):
@@ -1479,6 +1442,9 @@ class DentalApp:
             # 遅延インポートで初回ロード高速化
             from modules.search_page import render_search_page
             render_search_page()
+        elif current_page == "学習メモ":
+            from modules.notes_page import render_notes_page
+            render_notes_page()
         else:
             render_practice_page(self.auth_manager)
     

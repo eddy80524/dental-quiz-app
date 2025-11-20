@@ -564,201 +564,7 @@ def get_review_priority_cards(cards: dict, target_date: datetime.date = None) ->
     return priority_cards
 
 
-def _extract_card_review_metadata(
-    q_id: str,
-    card: Dict[str, Any],
-    today: Optional[datetime.date] = None
-) -> Optional[Dict[str, Any]]:
-    """レビュー計画作成用にカードのメタ情報を抽出"""
-    if not isinstance(card, dict):
-        return None
 
-    history = card.get('history')
-    if not history:
-        return None
-
-    latest = history[-1]
-    if not isinstance(latest, dict):
-        return None
-
-    timestamp = latest.get('timestamp')
-    interval = latest.get('interval', 0)
-    quality = latest.get('quality', 0)
-    ef = latest.get('EF', 2.5)
-
-    if not timestamp:
-        return None
-
-    try:
-        last_study_date = get_japan_datetime_from_timestamp(timestamp).date()
-    except Exception:
-        return None
-
-    try:
-        interval_days = int(interval) if interval is not None else 0
-    except (ValueError, TypeError):
-        interval_days = 0
-
-    next_review_date = last_study_date + datetime.timedelta(days=max(interval_days, 0))
-
-    today = today or get_japan_today()
-    level = calculate_card_level(card)
-    is_mature = level in {"レベル5", "習得済み"} or interval_days >= 45
-
-    return {
-        'id': q_id,
-        'level': level,
-        'interval': interval_days,
-        'quality': quality if isinstance(quality, (int, float)) else 0,
-        'ef': float(ef) if isinstance(ef, (int, float)) else 2.5,
-        'next_review_date': next_review_date,
-        'last_study_date': last_study_date,
-        'is_mature': is_mature,
-        'today': today
-    }
-
-
-def build_balanced_review_plan(
-    cards: Dict[str, Any],
-    daily_target: int = 120,
-    horizon_days: int = 7,
-    hisshu_set: Optional[set] = None,
-    mature_daily_quota_factor: float = 0.25
-) -> Dict[str, Any]:
-    """膨らみがちな復習量を平準化するレビュー計画を生成"""
-    if daily_target <= 0:
-        daily_target = 1
-
-    today = get_japan_today()
-    hisshu_set = hisshu_set or set()
-
-    backlog_non_mature: List[Dict[str, Any]] = []
-    backlog_mature: List[Dict[str, Any]] = []
-    future_non_mature: Dict[datetime.date, List[Dict[str, Any]]] = defaultdict(list)
-    future_mature: Dict[datetime.date, List[Dict[str, Any]]] = defaultdict(list)
-
-    considered_total = 0
-
-    for q_id, card in cards.items():
-        metadata = _extract_card_review_metadata(q_id, card, today)
-        if not metadata:
-            continue
-
-        considered_total += 1
-        entry = {
-            'id': q_id,
-            'due_date': metadata['next_review_date'],
-            'quality': metadata['quality'],
-            'ef': metadata['ef'],
-            'level': metadata['level'],
-            'is_mature': metadata['is_mature'],
-            'is_hisshu': q_id in hisshu_set
-        }
-
-        if metadata['next_review_date'] <= today:
-            if metadata['is_mature']:
-                backlog_mature.append(entry)
-            else:
-                backlog_non_mature.append(entry)
-        else:
-            target_map = future_mature if metadata['is_mature'] else future_non_mature
-            target_map[metadata['next_review_date']].append(entry)
-
-    backlog_non_mature.sort(key=lambda x: (x['due_date'], x['quality'], x['ef']))
-    backlog_mature.sort(key=lambda x: (x['due_date'], x['quality'], x['ef']))
-
-    initial_backlog = len(backlog_non_mature) + len(backlog_mature)
-
-    non_mature_dates = sorted(future_non_mature.keys())
-    mature_dates = sorted(future_mature.keys())
-    non_idx = 0
-    mature_idx = 0
-
-    days: List[Dict[str, Any]] = []
-    served_total = 0
-
-    for offset in range(max(horizon_days, 0)):
-        current_date = today + datetime.timedelta(days=offset)
-
-        while non_idx < len(non_mature_dates) and non_mature_dates[non_idx] <= current_date:
-            due_date = non_mature_dates[non_idx]
-            backlog_non_mature.extend(future_non_mature.pop(due_date, []))
-            non_idx += 1
-        while mature_idx < len(mature_dates) and mature_dates[mature_idx] <= current_date:
-            due_date = mature_dates[mature_idx]
-            backlog_mature.extend(future_mature.pop(due_date, []))
-            mature_idx += 1
-
-        backlog_non_mature.sort(key=lambda x: (x['due_date'], x['quality'], x['ef']))
-        backlog_mature.sort(key=lambda x: (x['due_date'], x['quality'], x['ef']))
-
-        assigned: List[Dict[str, Any]] = []
-        hisshu_count = 0
-        mature_count = 0
-
-        take_non = min(len(backlog_non_mature), daily_target)
-        if take_non > 0:
-            assigned.extend(backlog_non_mature[:take_non])
-            hisshu_count += sum(1 for item in backlog_non_mature[:take_non] if item['is_hisshu'])
-            mature_count += sum(1 for item in backlog_non_mature[:take_non] if item['is_mature'])
-            backlog_non_mature = backlog_non_mature[take_non:]
-
-        remaining_slots = daily_target - len(assigned)
-        mature_quota = max(2, int(daily_target * mature_daily_quota_factor))
-
-        if remaining_slots > 0 and backlog_mature:
-            take_mature = min(remaining_slots, len(backlog_mature))
-            if len(assigned) > 0 and take_mature > mature_quota:
-                take_mature = mature_quota
-
-            if take_mature > 0:
-                assigned.extend(backlog_mature[:take_mature])
-                hisshu_count += sum(1 for item in backlog_mature[:take_mature] if item['is_hisshu'])
-                mature_count += take_mature
-                backlog_mature = backlog_mature[take_mature:]
-
-        # それでも枠が余り、未成熟カードが無い場合は成熟カードで埋める
-        remaining_slots = daily_target - len(assigned)
-        if remaining_slots > 0 and not backlog_non_mature and backlog_mature:
-            take_additional = min(remaining_slots, len(backlog_mature))
-            assigned.extend(backlog_mature[:take_additional])
-            hisshu_count += sum(1 for item in backlog_mature[:take_additional] if item['is_hisshu'])
-            mature_count += take_additional
-            backlog_mature = backlog_mature[take_additional:]
-
-        served_total += len(assigned)
-        overdue_served = sum(1 for item in assigned if item['due_date'] < current_date)
-        due_today_served = sum(1 for item in assigned if item['due_date'] == current_date)
-
-        days.append({
-            'date': current_date,
-            'count': len(assigned),
-            'overdue_served': overdue_served,
-            'due_today_served': due_today_served,
-            'hisshu_count': hisshu_count,
-            'mature_count': mature_count,
-            'card_examples': [item['id'] for item in assigned[:10]],
-            'remaining_backlog': len(backlog_non_mature) + len(backlog_mature)
-        })
-
-    remaining_future = sum(len(v) for v in future_non_mature.values()) + sum(len(v) for v in future_mature.values())
-    backlog_after_horizon = len(backlog_non_mature) + len(backlog_mature)
-
-    outstanding = backlog_after_horizon + remaining_future
-    projected_clear_days = horizon_days + math.ceil(outstanding / daily_target) if outstanding > 0 else horizon_days
-
-    return {
-        'today': today,
-        'daily_target': daily_target,
-        'considered_total': considered_total,
-        'served_total': served_total,
-        'overdue_total': initial_backlog,
-        'backlog_start': initial_backlog,
-        'backlog_after_horizon': backlog_after_horizon,
-        'remaining_future': remaining_future,
-        'projected_clear_days': projected_clear_days,
-        'days': days
-    }
 
 def check_gakushi_permission(uid: str) -> bool:
     """学士試験へのアクセス権限をチェック（キャッシュ対応）"""
@@ -1047,26 +853,8 @@ def render_search_page():
 
     today_date = get_japan_today()
     today_label = today_date.strftime("%Y/%m/%d (%a)")
-    daily_limit = st.session_state.get('daily_review_limit')
-    plan_registry = st.session_state.get('review_plan_registry', {})
-    active_plan = plan_registry.get(analysis_target)
-    today_plan = None
-    if active_plan and active_plan.get('days'):
-        for day in active_plan['days']:
-            day_date = day.get('date')
-            if isinstance(day_date, datetime.date) and day_date == today_date:
-                today_plan = day
-                break
-            if isinstance(day_date, str) and day_date == today_date.isoformat():
-                today_plan = day
-                break
-
     chip_html = []
-    if isinstance(daily_limit, int):
-        chip_html.append(f"<span class='ios-chip'>復習上限 {daily_limit}枚</span>")
     chip_html.append(f"<span class='ios-chip'>対象 {analysis_target}</span>")
-    if today_plan and isinstance(today_plan.get('count'), int):
-        chip_html.append(f"<span class='ios-chip'>今日の復習 {today_plan['count']}枚</span>")
 
     st.markdown(
         f"""
@@ -1159,8 +947,8 @@ def render_search_page():
         
 
     
-    # タブコンテナ - 5つのタブ（メモ一覧を追加）
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["概要", "グラフ分析", "問題リスト", "キーワード検索", "📝 メモ一覧"])
+    # タブコンテナ - 4つのタブ
+    tab1, tab2, tab3, tab4 = st.tabs(["概要", "グラフ分析", "問題リスト", "キーワード検索"])
     
     with tab1:
         render_overview_tab_perfect(filtered_df, base_df, ALL_QUESTIONS, analysis_target)
@@ -1173,9 +961,6 @@ def render_search_page():
     
     with tab4:
         render_keyword_search_tab_perfect(analysis_target)
-    
-    with tab5:
-        render_notes_tab()
 
 def render_overview_tab_perfect(filtered_df: pd.DataFrame, base_df: pd.DataFrame, all_questions: List, analysis_target: str):
     """
@@ -1191,105 +976,9 @@ def render_overview_tab_perfect(filtered_df: pd.DataFrame, base_df: pd.DataFrame
 
         hisshu_set = GAKUSHI_HISSHU_Q_NUMBERS_SET if analysis_target == "学士試験" else HISSHU_Q_NUMBERS_SET
 
-        min_limit = 30
-        max_limit = 400
-        default_limit = st.session_state.get('daily_review_limit', 120)
-        if default_limit < min_limit:
-            default_limit = min_limit
-        elif default_limit > max_limit:
-            default_limit = max_limit
-
-        st.markdown('<div class="ios-section-title">📅 デイリーレビュープランナー</div>', unsafe_allow_html=True)
-        daily_limit = st.slider(
-            "1日の復習上限",
-            min_value=min_limit,
-            max_value=max_limit,
-            value=default_limit,
-            step=10,
-            help="毎日の復習上限を設定すると、遅延カードを数日間に分散して消化できます。"
-        )
-        st.session_state['daily_review_limit'] = daily_limit
-
-        review_plan = build_balanced_review_plan(
-            target_cards,
-            daily_target=daily_limit,
-            horizon_days=7,
-            hisshu_set=hisshu_set
-        )
-
-        plan_days_storage = []
-        for day in review_plan.get('days', []):
-            plan_days_storage.append({
-                'date': day.get('date'),
-                'count': day.get('count', 0),
-                'overdue_served': day.get('overdue_served', 0),
-                'hisshu_count': day.get('hisshu_count', 0),
-                'mature_count': day.get('mature_count', 0),
-                'remaining_backlog': day.get('remaining_backlog', 0)
-            })
-
-        plan_registry = dict(st.session_state.get('review_plan_registry', {}))
-        plan_registry[analysis_target] = {
-            'generated_on': review_plan.get('today'),
-            'days': plan_days_storage,
-            'daily_limit': daily_limit,
-            'overdue_total': review_plan.get('overdue_total', 0),
-            'served_total': review_plan.get('served_total', 0),
-            'considered_total': review_plan.get('considered_total', 0),
-            'backlog_after_horizon': review_plan.get('backlog_after_horizon', 0),
-            'remaining_future': review_plan.get('remaining_future', 0)
-        }
-        st.session_state['review_plan_registry'] = plan_registry
-
-        today_plan_entry = None
-        today_date = review_plan.get('today')
-        for day in plan_days_storage:
-            day_date = day.get('date')
-            if isinstance(day_date, datetime.date) and day_date == today_date:
-                today_plan_entry = day
-                break
-            if isinstance(day_date, str) and today_date and isinstance(today_date, datetime.date) and day_date == today_date.isoformat():
-                today_plan_entry = day
-                break
-
-        today_summary_registry = dict(st.session_state.get('review_plan_today_summary', {}))
-        if today_plan_entry:
-            today_summary_registry[analysis_target] = today_plan_entry
-        else:
-            today_summary_registry.pop(analysis_target, None)
-        st.session_state['review_plan_today_summary'] = today_summary_registry
-
-        if review_plan['considered_total'] == 0:
-            st.info("対象の復習カードがまだありません。演習を進めるとここに計画が表示されます。")
-        else:
-            served_ratio = (review_plan['served_total'] / review_plan['considered_total'] * 100) if review_plan['considered_total'] else 0
-            backlog_after = review_plan['backlog_after_horizon'] + review_plan['remaining_future']
-
-            col_plan_a, col_plan_b, col_plan_c = st.columns(3)
-            with col_plan_a:
-                st.metric("今日までの未消化復習", f"{review_plan['overdue_total']} 問")
-            with col_plan_b:
-                st.metric("7日間の処理見込み", f"{review_plan['served_total']} / {review_plan['considered_total']} 問", help=f"約{served_ratio:.1f}%を今週中に解消できます。")
-            with col_plan_c:
-                st.metric("完了までの目安", f"約{review_plan['projected_clear_days']}日")
-
-            if review_plan['days']:
-                plan_rows = []
-                for day in review_plan['days']:
-                    plan_rows.append({
-                        '日付': day['date'].strftime('%m/%d (%a)'),
-                        '予定復習数': day['count'],
-                        '遅延解消数': day['overdue_served'],
-                        '必修カード': day['hisshu_count'],
-                        '成熟カード': day['mature_count'],
-                        '処理後残数': day['remaining_backlog']
-                    })
-
-                plan_df = pd.DataFrame(plan_rows)
-                st.dataframe(plan_df, hide_index=True, use_container_width=True)
-
-            if backlog_after > 0:
-                st.caption(f"7日後も残るカード: {backlog_after} 問。上限を一時的に+{max(20, daily_limit//2)}するか、演習ペースを抑えて調整してください。")
+        # 削除: デイリーレビュープランナー機能
+        # ユーザー要望により、復習計画の自動生成機能は削除しました。
+        # シンプルに学習状況のサマリーのみを表示します。
 
         st.markdown("---")
 
@@ -1452,103 +1141,247 @@ def render_graph_analysis_tab_perfect(filtered_df: pd.DataFrame, base_df: pd.Dat
             lambda row: f"{row['progress_pct']:.1f}% ({int(row['studied_questions'])}/{int(row['total_questions'])}問)",
             axis=1
         )
-        progress_chart_df = progress_summary.sort_values('progress_pct', ascending=True)
+        
+        # 正答率の計算
+        def _count_history_attempts(history_list: Any) -> Tuple[int, int]:
+            attempts = 0
+            correct = 0
+            if isinstance(history_list, list):
+                for record in history_list:
+                    if not isinstance(record, dict):
+                        continue
+                    if 'is_correct' in record:
+                        attempts += 1
+                        if record.get('is_correct'):
+                            correct += 1
+                    elif 'quality' in record:
+                        attempts += 1
+                        if record.get('quality', 0) >= 3:
+                            correct += 1
+            return attempts, correct
 
-        try:
-            progress_fig = px.bar(
-                progress_chart_df,
-                x='progress_pct',
-                y='subject_display',
-                orientation='h',
-                text='progress_text',
-                color='progress_pct',
-                color_continuous_scale='Blues',
-                title=f"{analysis_target} 科目別進捗率（学習済み問題割合）"
+        attempts_series = subject_df['history'].apply(_count_history_attempts)
+        subject_df['total_attempts'] = attempts_series.apply(lambda x: x[0])
+        subject_df['correct_attempts'] = attempts_series.apply(lambda x: x[1])
+
+        accuracy_summary = (
+            subject_df.groupby('subject_display')
+            .agg(
+                total_attempts=('total_attempts', 'sum'),
+                correct_attempts=('correct_attempts', 'sum')
             )
-            x_max = max(105, float(progress_chart_df['progress_pct'].max()) + 5)
-            bar_count = len(progress_chart_df)
-            chart_height = max(420, 36 * bar_count + 140)
-            progress_fig.update_layout(
-                xaxis=dict(title='進捗率 (%)', range=[0, min(110, x_max)]),
-                yaxis=dict(title=None, automargin=True),
-                coloraxis_showscale=False,
-                height=chart_height,
-                margin=dict(l=240, r=60, t=80, b=60)
-            )
-            progress_fig.update_traces(textposition='outside', cliponaxis=False)
-            st.plotly_chart(progress_fig, use_container_width=True)
-        except ImportError:
-            st.bar_chart(progress_chart_df.set_index('subject_display')['progress_pct'])
-
-    def _count_history_attempts(history_list: Any) -> Tuple[int, int]:
-        attempts = 0
-        correct = 0
-        if isinstance(history_list, list):
-            for record in history_list:
-                if not isinstance(record, dict):
-                    continue
-                if 'is_correct' in record:
-                    attempts += 1
-                    if record.get('is_correct'):
-                        correct += 1
-                elif 'quality' in record:
-                    attempts += 1
-                    if record.get('quality', 0) >= 3:
-                        correct += 1
-        return attempts, correct
-
-    attempts_series = subject_df['history'].apply(_count_history_attempts)
-    subject_df['total_attempts'] = attempts_series.apply(lambda x: x[0])
-    subject_df['correct_attempts'] = attempts_series.apply(lambda x: x[1])
-
-    accuracy_summary = (
-        subject_df.groupby('subject_display')
-        .agg(
-            total_attempts=('total_attempts', 'sum'),
-            correct_attempts=('correct_attempts', 'sum')
+            .reset_index()
         )
-        .reset_index()
-    )
 
-    accuracy_summary['accuracy_pct'] = accuracy_summary.apply(
-        lambda row: (row['correct_attempts'] / row['total_attempts'] * 100) if row['total_attempts'] > 0 else None,
-        axis=1
-    )
-
-    accuracy_valid = accuracy_summary.dropna(subset=['accuracy_pct'])
-    if accuracy_valid.empty:
-        st.info("科目別の正答率を算出できる学習履歴がまだありません。")
-    else:
-        accuracy_valid['accuracy_text'] = accuracy_valid.apply(
-            lambda row: f"{row['accuracy_pct']:.1f}% ({int(row['correct_attempts'])}/{int(row['total_attempts'])}回)",
+        accuracy_summary['accuracy_pct'] = accuracy_summary.apply(
+            lambda row: (row['correct_attempts'] / row['total_attempts'] * 100) if row['total_attempts'] > 0 else None,
             axis=1
         )
-        accuracy_chart_df = accuracy_valid.sort_values('accuracy_pct', ascending=False)
-
-        try:
-            accuracy_fig = px.bar(
-                accuracy_chart_df,
-                x='accuracy_pct',
-                y='subject_display',
-                orientation='h',
-                text='accuracy_text',
-                color='accuracy_pct',
-                color_continuous_scale='Teal',
-                title=f"{analysis_target} 科目別平均正答率"
-            )
-            bar_count = len(accuracy_chart_df)
-            chart_height = max(420, 36 * bar_count + 140)
-            accuracy_fig.update_layout(
-                xaxis=dict(title='平均正答率 (%)', range=[0, 105]),
-                yaxis=dict(title=None, automargin=True),
-                coloraxis_showscale=False,
-                height=chart_height,
-                margin=dict(l=240, r=60, t=80, b=60)
-            )
-            accuracy_fig.update_traces(textposition='outside', cliponaxis=False)
-            st.plotly_chart(accuracy_fig, use_container_width=True)
-        except ImportError:
-            st.bar_chart(accuracy_chart_df.set_index('subject_display')['accuracy_pct'])
+        
+        # --- 科目パフォーマンスマトリックス（進捗率 × 正答率の散布図） ---
+        st.markdown("##### 科目パフォーマンスマトリックス")
+        
+        # データマージ: progress_summary と accuracy_summary を結合
+        combined_df = progress_summary.merge(
+            accuracy_summary[['subject_display', 'accuracy_pct', 'total_attempts', 'correct_attempts']], 
+            on='subject_display', 
+            how='left'
+        )
+        
+        # NaN処理（正答率データがない科目は0%とする）
+        combined_df['accuracy_pct'] = combined_df['accuracy_pct'].fillna(0)
+        combined_df['total_attempts'] = combined_df['total_attempts'].fillna(0).astype(int)
+        combined_df['correct_attempts'] = combined_df['correct_attempts'].fillna(0).astype(int)
+        
+        if combined_df.empty:
+            st.info("科目別のデータがありません。")
+        else:
+            try:
+                import plotly.graph_objects as go
+                
+                # バブルサイズの計算（最小10、最大60）
+                max_questions = combined_df['total_questions'].max()
+                min_size = 10
+                max_size = 60
+                combined_df['bubble_size'] = combined_df['total_questions'].apply(
+                    lambda x: min_size + (max_size - min_size) * (x / max_questions) if max_questions > 0 else min_size
+                )
+                
+                fig = go.Figure()
+                
+                # 散布図のプロット
+                fig.add_trace(go.Scatter(
+                    x=combined_df['progress_pct'],
+                    y=combined_df['accuracy_pct'],
+                    mode='markers+text',
+                    marker=dict(
+                        size=combined_df['bubble_size'],
+                        color=combined_df['progress_pct'],  # 進捗率で色分け
+                        colorscale='Viridis',
+                        showscale=True,
+                        colorbar=dict(title="進捗率(%)"),
+                        line=dict(width=2, color='white'),
+                        opacity=0.8
+                    ),
+                    text=combined_df['subject_display'],
+                    textposition='top center',
+                    textfont=dict(size=9, color='black'),
+                    hovertemplate=(
+                        '<b>%{text}</b><br>' +
+                        '進捗率: %{x:.1f}% (%{customdata[0]}/%{customdata[1]}問)<br>' +
+                        '正答率: %{y:.1f}% (%{customdata[2]}/%{customdata[3]}回)<br>' +
+                        '<extra></extra>'
+                    ),
+                    customdata=combined_df[[
+                        'studied_questions', 'total_questions',
+                        'correct_attempts', 'total_attempts'
+                    ]].values,
+                    name=''
+                ))
+                
+                # 象限を示す補助線
+                fig.add_hline(
+                    y=80, 
+                    line_dash="dash", 
+                    line_color="red", 
+                    opacity=0.4,
+                    annotation_text="合格ライン (80%)", 
+                    annotation_position="right"
+                )
+                fig.add_vline(
+                    x=50, 
+                    line_dash="dash", 
+                    line_color="gray", 
+                    opacity=0.4,
+                    annotation_text="進捗50%", 
+                    annotation_position="top"
+                )
+                
+                # レイアウト設定
+                fig.update_layout(
+                    title=dict(
+                        text=f"{analysis_target} 科目パフォーマンスマトリックス<br><sub>バブルサイズ = 問題数</sub>",
+                        x=0.5,
+                        xanchor='center'
+                    ),
+                    xaxis=dict(
+                        title='進捗率 (%)',
+                        range=[-5, 105],
+                        showgrid=True,
+                        gridcolor='lightgray',
+                        dtick=20
+                    ),
+                    yaxis=dict(
+                        title='正答率 (%)',
+                        range=[-5, 105],
+                        showgrid=True,
+                        gridcolor='lightgray',
+                        dtick=20
+                    ),
+                    height=600,
+                    hovermode='closest',
+                    showlegend=False,
+                    plot_bgcolor='rgba(240,240,240,0.5)'
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # 象限別の科目リスト
+                st.markdown("### 📊 象限別分析")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("#### ⚠️ 要復習（高進捗×低正答率）")
+                    weak_subjects = combined_df[
+                        (combined_df['progress_pct'] >= 50) & 
+                        (combined_df['accuracy_pct'] < 80)
+                    ].sort_values('accuracy_pct')
+                    
+                    if not weak_subjects.empty:
+                        for _, row in weak_subjects.iterrows():
+                            st.markdown(
+                                f"- **{row['subject_display']}**: "
+                                f"進捗{row['progress_pct']:.1f}% / 正答率{row['accuracy_pct']:.1f}%"
+                            )
+                    else:
+                        st.success("該当なし✅")
+                    
+                    st.markdown("#### 📈 ポテンシャル（低進捗×高正答率）")
+                    potential_subjects = combined_df[
+                        (combined_df['progress_pct'] < 50) & 
+                        (combined_df['accuracy_pct'] >= 80)
+                    ].sort_values('progress_pct', ascending=False)
+                    
+                    if not potential_subjects.empty:
+                        for _, row in potential_subjects.iterrows():
+                            st.markdown(
+                                f"- **{row['subject_display']}**: "
+                                f"進捗{row['progress_pct']:.1f}% / 正答率{row['accuracy_pct']:.1f}%"
+                            )
+                    else:
+                        st.info("該当なし")
+                
+                with col2:
+                    st.markdown("#### 🌟 マスター（高進捗×高正答率）")
+                    master_subjects = combined_df[
+                        (combined_df['progress_pct'] >= 50) & 
+                        (combined_df['accuracy_pct'] >= 80)
+                    ].sort_values('accuracy_pct', ascending=False)
+                    
+                    if not master_subjects.empty:
+                        for _, row in master_subjects.iterrows():
+                            st.markdown(
+                                f"- **{row['subject_display']}**: "
+                                f"進捗{row['progress_pct']:.1f}% / 正答率{row['accuracy_pct']:.1f}%"
+                            )
+                    else:
+                        st.info("該当なし")
+                    
+                    st.markdown("#### 🆕 未着手（低進捗×低正答率）")
+                    unexplored_subjects = combined_df[
+                        (combined_df['progress_pct'] < 50) & 
+                        (combined_df['accuracy_pct'] < 80)
+                    ].sort_values('progress_pct')
+                    
+                    if not unexplored_subjects.empty:
+                        for _, row in unexplored_subjects.iterrows():
+                            st.markdown(
+                                f"- **{row['subject_display']}**: "
+                                f"進捗{row['progress_pct']:.1f}% / 正答率{row['accuracy_pct']:.1f}%"
+                            )
+                    else:
+                        st.info("該当なし")
+                
+            except ImportError:
+                # Plotlyが利用できない場合は従来の棒グラフを表示
+                st.warning("Plotlyが利用できないため、従来表示に切り替えます。")
+                
+                progress_chart_df = progress_summary.sort_values('progress_pct', ascending=True)
+                progress_fig = px.bar(
+                    progress_chart_df,
+                    x='progress_pct',
+                    y='subject_display',
+                    orientation='h',
+                    text='progress_text',
+                    color='progress_pct',
+                    color_continuous_scale='Blues',
+                    title=f"{analysis_target} 科目別進捗率（学習済み問題割合）"
+                )
+                st.plotly_chart(progress_fig, use_container_width=True)
+                
+                accuracy_chart_df = accuracy_valid.sort_values('accuracy_pct', ascending=False)
+                accuracy_fig = px.bar(
+                    accuracy_chart_df,
+                    x='accuracy_pct',
+                    y='subject_display',
+                    orientation='h',
+                    text='accuracy_text',
+                    color='accuracy_pct',
+                    color_continuous_scale='Teal',
+                    title=f"{analysis_target} 科目別平均正答率"
+                )
+                st.plotly_chart(accuracy_fig, use_container_width=True)
 
     no_history_subjects = accuracy_summary[
         accuracy_summary['total_attempts'] == 0
@@ -1947,108 +1780,7 @@ def render_keyword_search_tab_perfect(analysis_target: str):
                 st.info("キーワードを入力して検索してください")
 
 
-def render_notes_tab():
-    """メモ一覧タブの描画"""
-    st.markdown("## 📝 学習メモ一覧")
-    
-    uid = st.session_state.get("uid")
-    if not uid:
-        st.warning("ログインしてください")
-        return
-    
-    from modules.notes_manager import NotesManager
-    from utils import ALL_QUESTIONS
-    
-    # 全メモを取得
-    all_notes = NotesManager.get_all_user_notes(uid)
-    
-    if not all_notes:
-        st.info("まだメモがありません。問題演習後にメモを追加してみましょう！")
-        return
-    
-    # フィルター
-    st.markdown("### 🔍 フィルター")
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        filter_type = st.selectbox(
-            "メモタイプ",
-            ["すべて", "画像付きのみ"],
-            key="note_filter_type"
-        )
-    
-    with col2:
-        sort_order = st.selectbox(
-            "並び順",
-            ["新しい順", "古い順", "問題番号順"],
-            key="note_sort_order"
-        )
-    
-    with col3:
-        search_keyword = st.text_input(
-            "🔎 キーワード検索",
-            placeholder="メモ内容や問題番号で検索...",
-            key="note_search"
-        )
-    
-    st.markdown("---")
-    st.markdown(f"### 📋 メモ一覧（{len(all_notes)}問）")
-    
-    for note_data in all_notes:
-        question_id = note_data.get("question_id")
-        notes = note_data.get("notes", [])
-        last_updated = note_data.get("last_updated", "")
-        
-        # フィルタリング
-        if filter_type == "画像付きのみ":
-            notes = [n for n in notes if n.get("images")]
-        
-        if search_keyword:
-            notes = [n for n in notes if search_keyword.lower() in n.get("content", "").lower()]
-        
-        if not notes:
-            continue
-        
-        # ALL_QUESTIONSリストから問題を検索
-        question = None
-        for q in ALL_QUESTIONS:
-            if q.get("number") == question_id:
-                question = q
-                break
-        
-        if question:
-            question_text = question.get("question", "問題文なし")[:100] + "..."
-            subject = question.get("subject", "未分類")
-        else:
-            question_text = "問題文が見つかりません"
-            subject = "未分類"
-        
-        with st.expander(f"**{question_id}** - {subject}", expanded=False):
-            st.markdown(f"📄 **問題**: {question_text}")
-            st.markdown(f"🕒 **最終更新**: {last_updated[:16] if last_updated else '不明'}")
-            
-            # キーをより具体的にして一意性を保証
-            if st.button(f"🎯 この問題を解く", key=f"notes_list_jump_to_{question_id}"):
-                st.session_state["current_q_group"] = [question_id]
-                st.session_state["session_choice_made"] = True
-                st.session_state["session_type"] = "メモから復習"
-                st.session_state["page"] = "練習"
-                st.rerun()
-            
-            st.markdown("---")
-            
-            for i, note in enumerate(notes):
-                NotesManager.render_note_display(note)
-                
-                col1, col2 = st.columns([4, 1])
-                with col2:
-                    # 削除ボタンのキーも具体的に
-                    if st.button("🗑️", key=f"notes_list_delete_{question_id}_{i}"):
-                        if NotesManager.delete_note(uid, question_id, i):
-                            st.success("削除しました")
-                            st.rerun()
-                
-                st.markdown("---")
+
 
 
 # メイン関数
