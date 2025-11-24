@@ -220,11 +220,8 @@ class AuthManager:
                             from firestore_db import get_firestore_manager
                             db_manager = get_firestore_manager()
                             # Firestoreからユーザーの全カードデータをロード
-                            user_cards = db_manager.get_user_data(uid)
-                            if user_cards and 'cards' in user_cards:
-                                st.session_state['cards'] = user_cards['cards']
-                            else:
-                                st.session_state['cards'] = {}
+                            user_cards = db_manager.get_user_cards(uid)
+                            st.session_state['cards'] = user_cards
                         except Exception as e:
                             print(f"学習データの読み込みに失敗しました: {e}")
                             st.session_state['cards'] = {}  # エラー時は空で初期化
@@ -350,7 +347,7 @@ class AuthManager:
             if not id_token:
                 return False
             
-            # トークンの有効期限をチェック（より長期間に延長）
+            # トークンの有効期限をチェック
             token_timestamp = st.session_state.get("token_timestamp")
             if token_timestamp:
                 try:
@@ -358,26 +355,19 @@ class AuthManager:
                     current_time = datetime.datetime.now(datetime.timezone.utc)
                     time_diff = (current_time - token_time).total_seconds()
                     
-                    # 6時間経過していたらリフレッシュを試行（従来の50分から大幅延長）
-                    if time_diff > 21600:  # 6時間 = 6 * 60 * 60 秒
+                    # 50分経過していたらリフレッシュを試行（Firebase IDトークンは1時間で期限切れ）
+                    # 余裕を持って50分(3000秒)で更新する
+                    if time_diff > 3000:  # 50分
                         refresh_token = st.session_state.get("refresh_token")
                         if refresh_token:
+                            print(f"Token refreshing... (age: {int(time_diff)}s)")
                             result = self.refresh_token(refresh_token)
                             if not result or "id_token" not in result:
+                                print("Token refresh failed")
                                 return False
+                            print("Token refreshed successfully")
                         else:
                             return False
-                    # 3時間経過したら積極的にリフレッシュ（バックグラウンド更新）
-                    elif time_diff > 10800:  # 3時間
-                        refresh_token = st.session_state.get("refresh_token")
-                        if refresh_token:
-                            # バックグラウンドでトークンを更新（失敗しても継続）
-                            try:
-                                result = self.refresh_token(refresh_token)
-                                if result and "id_token" in result:
-                                    print("Token refreshed successfully in background")
-                            except Exception:
-                                pass  # バックグラウンド更新の失敗は無視
                 except Exception as e:
                     print(f"Token validation error: {e}")
                     return False
@@ -524,12 +514,9 @@ class CookieManager:
                             from firestore_db import get_firestore_manager
                             db_manager = get_firestore_manager()
                             # Firestoreからユーザーの全カードデータをロード
-                            user_cards = db_manager.get_user_data(uid)
-                            if user_cards and 'cards' in user_cards:
-                                st.session_state['cards'] = user_cards['cards']
-                                print(f"自動ログイン時に{len(user_cards['cards'])}件の学習データを読み込みました")
-                            else:
-                                st.session_state['cards'] = {}
+                            user_cards = db_manager.get_user_cards(uid)
+                            st.session_state['cards'] = user_cards
+                            print(f"自動ログイン時に{len(user_cards)}件の学習データを読み込みました")
                         except Exception as e:
                             print(f"学習データの読み込みに失敗しました: {e}")
                             st.session_state['cards'] = {}  # エラー時は空で初期化

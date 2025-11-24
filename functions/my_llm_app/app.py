@@ -23,17 +23,43 @@ from collections import Counter
 # 日本時間用のタイムゾーン
 JST = pytz.timezone('Asia/Tokyo')
 
+# ローカル開発用デバッグフラグ
+LOCAL_DEBUG_MODE = False  # Firebaseをスキップしてローカルテスト可能
+
 def get_japan_now() -> datetime.datetime:
     """日本時間の現在時刻を取得"""
     return datetime.datetime.now(JST)
 
 # Streamlit設定 - サイドバーを自動展開
 st.set_page_config(
-    page_title="国家試験AI対策アプリ",
+    page_title="歯科国家試験AI対策アプリ",
     page_icon="🦷",
     layout="wide",
     initial_sidebar_state="expanded"  # サイドバーを展開状態で開始
 )
+
+# 早期にGoogle Analyticsを初期化
+try:
+    from utils import AnalyticsUtils, GA_MEASUREMENT_ID
+    
+    # HTMLヘッダーにGoogle Analyticsタグを挿入
+    ga_head_html = f"""
+    <script async src="https://www.googletagmanager.com/gtag/js?id={GA_MEASUREMENT_ID}"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){{dataLayer.push(arguments);}}
+      gtag('js', new Date());
+      gtag('config', '{GA_MEASUREMENT_ID}');
+    </script>
+    """
+    st.markdown(ga_head_html, unsafe_allow_html=True)
+    
+    # ページロード時に即座にAnalyticsを初期化
+    if 'ga_early_init' not in st.session_state:
+        AnalyticsUtils.inject_ga_script()
+        st.session_state['ga_early_init'] = True
+except ImportError:
+    pass
 
 # モジュールのインポート
 from auth import AuthManager, CookieManager, call_cloud_function, get_user_permission
@@ -110,9 +136,20 @@ class DentalApp:
         # パフォーマンス最適化を最初に適用
         apply_performance_optimizations()
         
-        self.auth_manager = AuthManager()
-        self.cookie_manager = CookieManager()
-        self.firestore_manager = get_firestore_manager()
+        # ローカルデバッグモードの場合はFirebaseをスキップ
+        if LOCAL_DEBUG_MODE:
+            self.auth_manager = None
+            self.cookie_manager = None  
+            self.firestore_manager = None
+            # ダミーユーザー情報を設定
+            st.session_state["user_logged_in"] = True
+            st.session_state["uid"] = "debug_user"
+            st.session_state["email"] = "debug@example.com"
+            st.session_state["name"] = "デバッグユーザー"
+        else:
+            self.auth_manager = AuthManager()
+            self.cookie_manager = CookieManager()
+            self.firestore_manager = get_firestore_manager()
         
         # 強化されたGoogle Analytics統合
         # self.analytics = enhanced_ga
@@ -121,7 +158,8 @@ class DentalApp:
         self._initialize_session_state()
         
         # ユーザー行動追跡の初期化
-        self._initialize_user_tracking()
+        if not LOCAL_DEBUG_MODE:
+            self._initialize_user_tracking()
     
     def _initialize_session_state(self):
         """セッション状態の初期化"""
@@ -161,6 +199,9 @@ class DentalApp:
     
     def track_page_navigation(self, page_name: str):
         """ページナビゲーション追跡"""
+        # Google Analytics ページビュー
+        AnalyticsUtils.track_page_view(page_name)
+        
         # ページビュー追跡
         # self.analytics.track_page_view(
         #     page_name=page_name,
@@ -184,6 +225,12 @@ class DentalApp:
             'login_timestamp': get_japan_now().isoformat(),  # 日本時間で記録
             'has_gakushi_permission': user_info.get('has_gakushi_permission', False)
         }
+        
+        # Google Analytics追跡
+        uid = user_info.get('uid')
+        if uid:
+            AnalyticsUtils.track_user_login(uid, 'manual_login')
+            AnalyticsUtils.track_page_view('main_app_manual_login')
         
         # self.analytics.track_user_login(
         #     login_method='firebase',
@@ -287,72 +334,31 @@ class DentalApp:
         return sorted(list(subjects)) if subjects else ["一般"]
     
     def _load_user_data(self):
-        """ユーザーの演習データを読み込み（最適化されたスキーマ対応・Streamlit Cloud対応）"""
+        """ユーザーの演習データを読み込み（キャッシュ対応版）"""
         uid = st.session_state.get("uid")
         if not uid:
             return
         
-        # 既にデータが読み込まれている場合はスキップ（強化版）
+        # 既にデータが読み込まれている場合はスキップ
         if st.session_state.get("cards") and len(st.session_state.get("cards", {})) > 0:
             return
         
         try:
-            # Firestore接続の確認（Streamlit Cloud対応）
+            # Firestoreマネージャー経由で取得（内部でキャッシュ利用）
             firestore_manager = get_firestore_manager()
             if not firestore_manager:
-                print("[ERROR] _load_user_data: Firestoreマネージャーの取得に失敗")
                 st.session_state["cards"] = {}
                 return
                 
-            db = firestore_manager.db
-            if not db:
-                print("[ERROR] _load_user_data: Firestoreデータベース接続に失敗")
-                st.session_state["cards"] = {}
-                return
-            
-            # 最適化されたstudy_cardsコレクションからユーザーデータを読み込み
-            study_cards_ref = db.collection("study_cards")
-            user_cards_query = study_cards_ref.where("uid", "==", uid)
-            user_cards_docs = user_cards_query.get()
-            
-            # カードデータを変換（既存の形式に合わせる）
-            cards = {}
-            for doc in user_cards_docs:
-                try:
-                    card_data = doc.to_dict()
-                    question_id = doc.id.split('_')[-1] if '_' in doc.id else doc.id
-                    
-                    # 既存の形式に変換
-                    card = {
-                        "q_id": question_id,
-                        "uid": card_data.get("uid", uid),
-                        "history": card_data.get("history", []),
-                        "sm2_data": card_data.get("sm2_data", {}),
-                        "performance": card_data.get("performance", {}),
-                        "metadata": card_data.get("metadata", {})
-                    }
-                    
-                    # SM2データから既存の形式に変換
-                    sm2_data = card_data.get("sm2_data", {})
-                    if sm2_data:
-                        card.update({
-                            "n": sm2_data.get("n", 0),
-                            "EF": sm2_data.get("ef", 2.5),
-                            "interval": sm2_data.get("interval", 1),
-                            "next_review": sm2_data.get("next_review"),
-                            "last_review": sm2_data.get("last_review")
-                        })
-                    
-                    cards[question_id] = card
-                    
-                except Exception as card_error:
-                    print(f"[WARNING] カードデータ処理エラー ({doc.id}): {card_error}")
-                    continue
+            # キャッシュされたデータを取得
+            # get_user_cardsは内部でcached_load_user_cardsを呼び出すため高速
+            cards = firestore_manager.get_user_cards(uid)
             
             # セッション状態に保存
             st.session_state["cards"] = cards
             
         except Exception as e:
+            print(f"[ERROR] _load_user_data: {e}")
             st.session_state["cards"] = {}
     
     def _initialize_user_profile(self):
@@ -389,20 +395,20 @@ class DentalApp:
     def run(self):
         """アプリケーションのメイン実行（デフォルト設定版）"""
         # デフォルトのStreamlit設定を使用
+        # Google Analytics初期化（最初に実行して確実にロード）
+        AnalyticsUtils.inject_ga_script()
         
         # パフォーマンス最適化の適用
         apply_performance_optimizations()
-        
-        # Google Analytics初期化（ページ読み込み時に一度だけ実行）
-        if not st.session_state.get("ga_initialized"):
-            AnalyticsUtils.inject_ga_script()
-            st.session_state["ga_initialized"] = True
         
         # ユーザーのアクティビティ追跡
         self._track_user_activity()
         
         # 🔄 1. Automatic Login Attempt - ログイン画面表示前に最優先で実行
-        if (not st.session_state.get("user_logged_in") and 
+        if LOCAL_DEBUG_MODE:
+            # ローカルデバッグモードの場合は自動的にログイン済み状態
+            pass
+        elif (not st.session_state.get("user_logged_in") and 
             not st.session_state.get("auto_login_attempted")):
             
             st.session_state["auto_login_attempted"] = True
@@ -416,6 +422,10 @@ class DentalApp:
                 self._initialize_user_profile()
                 
                 # ログイン成功追跡
+                uid = st.session_state.get('uid')
+                if uid:
+                    AnalyticsUtils.track_user_login(uid, 'auto_login')
+                    AnalyticsUtils.track_page_view('main_app_auto_login')
                 user_info = {
                     'uid': st.session_state.get('uid'),
                     'email': st.session_state.get('email'),
@@ -427,13 +437,7 @@ class DentalApp:
                 st.rerun()
         
         # ログイン状態をチェック
-        if not st.session_state.get("user_logged_in") or not self.auth_manager.ensure_valid_session():
-            # 自動ログインが失敗した場合のみログイン画面を表示
-            self._render_login_page()
-            
-            # ログインページビュー追跡
-            self.track_page_navigation("login")
-        else:
+        if LOCAL_DEBUG_MODE or (st.session_state.get("user_logged_in") and (not self.auth_manager or self.auth_manager.ensure_valid_session())):
             # ログイン済みの場合はサイドバーとメインコンテンツを表示
             
             # --- ▼▼▼ 遅延読み込みロジック ▼▼▼ ---
@@ -444,9 +448,13 @@ class DentalApp:
                 
             # 2. 学習データ(cards)がなければ読み込む (最も重い処理)
             if not st.session_state.get("cards"):
-                with st.spinner("学習データを読み込んでいます..."):
-                    self._load_user_data()
-
+                if LOCAL_DEBUG_MODE:
+                    # ローカルデバッグモードでは空の学習データ
+                    st.session_state["cards"] = {}
+                else:
+                    with st.spinner("学習データを読み込んでいます..."):
+                        self._load_user_data()
+            
             # 3. 科目リストがなければ初期化
             if not st.session_state.get('available_subjects'):
                 self._initialize_available_subjects()
@@ -461,10 +469,21 @@ class DentalApp:
             
             # ログイン後のページビュー追跡
             current_page = st.session_state.get("page", "練習")
-            self.track_page_navigation(current_page)
+            if not LOCAL_DEBUG_MODE:
+                self.track_page_navigation(current_page)
+        else:
+            # 自動ログインが失敗した場合のみログイン画面を表示
+            self._render_login_page()
+            
+            # ログインページビュー追跡
+            if not LOCAL_DEBUG_MODE:
+                self.track_page_navigation("login")
     
     def _track_user_activity(self):
         """ユーザーアクティビティの追跡"""
+        if LOCAL_DEBUG_MODE:
+            return  # ローカルデバッグモードでは追跡をスキップ
+            
         try:
             uid = st.session_state.get("uid")
             if uid:
@@ -474,6 +493,12 @@ class DentalApp:
                         "session_type": "web_app",
                         "timestamp": get_japan_now().isoformat(),  # 日本時間で記録
                         "user_agent": st.context.headers.get("User-Agent", "unknown") if hasattr(st.context, 'headers') else "unknown"
+                    })
+                    
+                    # Google Analytics セッション開始
+                    AnalyticsUtils.track_event('session_start', {
+                        'session_type': 'web_app',
+                        'user_id': uid
                     })
                     st.session_state["session_tracked"] = True
                 
@@ -487,6 +512,9 @@ class DentalApp:
                         "active_duration_seconds": current_time - last_activity,
                         "current_page": st.session_state.get("current_page", "unknown")
                     })
+                    
+                    # Google Analytics エンゲージメント
+                    AnalyticsUtils.track_app_engagement()
                     st.session_state["last_activity_logged"] = current_time
                     
         except Exception:
@@ -617,47 +645,44 @@ class DentalApp:
             if login_submitted:
                 if email and password:
                     # セッション状態を更新
-                        st.session_state["login_email_value"] = email
-                        st.session_state["login_password_value"] = password
-                        
-                        # ログインボタンが押されたら、まずフォームをスピナーに置き換える
-                        login_container.empty()
-                        with login_container.container():
-                            with st.spinner("ログイン中..."):
-                                result = self.auth_manager.signin(email, password)
-                                
-                                if "error" in result:
-                                    # ❌ Failure: エラーメッセージを表示
-                                    error_message = result["error"]["message"]
-                                    if "INVALID_PASSWORD" in error_message:
-                                        st.error("パスワードが正しくありません")
-                                    elif "EMAIL_NOT_FOUND" in error_message:
-                                        st.error("このメールアドレスは登録されていません")
-                                    elif "INVALID_EMAIL" in error_message:
-                                        st.error("メールアドレスの形式が正しくありません")
-                                    else:
-                                        st.error(f"ログインエラー: {error_message}")
-                                    
-                                    time.sleep(2)  # エラーメッセージ表示のための待機
-                                    st.rerun()  # フォームを再表示
-                                    
+                    st.session_state["login_email_value"] = email
+                    st.session_state["login_password_value"] = password
+                    
+                    # ログインボタンが押されたら、まずフォームをスピナーに置き換える
+                    login_container.empty()
+                    with login_container.container():
+                        with st.spinner("ログイン中..."):
+                            result = self.auth_manager.signin(email, password)
+                            
+                            if "error" in result:
+                                # ❌ Failure: エラーメッセージを表示
+                                error_message = result["error"]["message"]
+                                if "INVALID_PASSWORD" in error_message:
+                                    st.error("パスワードが正しくありません")
+                                elif "EMAIL_NOT_FOUND" in error_message:
+                                    st.error("このメールアドレスは登録されていません")
+                                elif "INVALID_EMAIL" in error_message:
+                                    st.error("メールアドレスの形式が正しくありません")
                                 else:
-                                    # ✅ Success: ログイン成功
-                                    if save_password:
-                                        st.success("ログインしました！")
-                                    else:
-                                        st.success("ログインしました！")
-                                    
-                                    # Cookie Saving: 長期間有効なリフレッシュトークンをCookieに保存
-                                    if save_password:
-                                        cookie_data = {
-                                            "refresh_token": result.get("refreshToken", ""),
-                                            "uid": st.session_state.get("uid", ""),
-                                            "email": email,
-                                            "password": password  # 永続ログイン用にパスワードも保存
-                                        }
-                                        # 長期間有効なCookieとして保存（30日間）
-                                        self.cookie_manager.save_login_cookies(cookie_data, save_password=True)
+                                    st.error(f"ログインエラー: {error_message}")
+                                
+                                time.sleep(2)  # エラーメッセージ表示のための待機
+                                st.rerun()  # フォームを再表示
+                                
+                            else:
+                                # ✅ Success: ログイン成功
+                                st.success("ログインしました！")
+                                
+                                # Cookie Saving: 長期間有効なリフレッシュトークンをCookieに保存
+                                if save_password:
+                                    cookie_data = {
+                                        "refresh_token": result.get("refreshToken", ""),
+                                        "uid": st.session_state.get("uid", ""),
+                                        "email": email,
+                                        "password": password  # 永続ログイン用にパスワードも保存
+                                    }
+                                    # 長期間有効なCookieとして保存（30日間）
+                                    self.cookie_manager.save_login_cookies(cookie_data, save_password=True)
                                     
                                     # Google Analytics イベント
                                     uid = st.session_state.get("uid")
@@ -689,7 +714,7 @@ class DentalApp:
         """新規登録タブの描画"""
         # 新規登録の一時停止フラグ（必要に応じて True に変更）
         SIGNUP_TEMPORARILY_DISABLED = False  # ← ★この行が重要です
-
+        
         if SIGNUP_TEMPORARILY_DISABLED:
             st.warning("🚧 新規登録は一時的に停止中です")
             st.info("既存のアカウントをお持ちの方は「ログイン」タブからログインしてください。")
@@ -747,8 +772,8 @@ class DentalApp:
         st.success(f"👤 {name} としてログイン中")
         
         # ページ選択をラジオボタン形式に変更
-        page_options = ["練習", "検索・進捗", "ランキング"]
-        page_labels = ["📚 練習ページ", "📊 検索・進捗", "🏆 ランキング"]
+        page_options = ["練習", "検索・進捗", "ランキング", "学習メモ"]
+        page_labels = ["📚 練習ページ", "📊 検索・進捗", "🏆 ランキング", "📝 学習メモ"]
         
         current_page = st.session_state.get("page", "練習")
         current_index = 0
@@ -756,6 +781,8 @@ class DentalApp:
             current_index = 1
         elif current_page == "ランキング":
             current_index = 2
+        elif current_page == "学習メモ":
+            current_index = 3
         
         selected_page = st.selectbox(
             "ページを選択",
@@ -772,6 +799,8 @@ class DentalApp:
             new_page = "検索・進捗"
         elif selected_page == "🏆 ランキング":
             new_page = "ランキング"
+        elif selected_page == "📝 学習メモ":
+            new_page = "学習メモ"
         
         # ページが変更された場合はイベントを送信（簡素化版）
         if new_page and new_page != st.session_state.get("page"):
@@ -1275,6 +1304,22 @@ class DentalApp:
         uid = st.session_state.get("uid")
         if uid:
             log_to_ga("logout", uid, {"keep_password": str(keep_password)})
+            
+            # ログアウト前にセッション状態をFirestoreに保存（完全ログアウト時以外）
+            if keep_password and self._has_practice_session():
+                try:
+                    self._save_current_session_to_firestore()
+                    print(f"[LOGOUT] セッション状態をFirestoreに保存しました (uid: {uid})")
+                except Exception as e:
+                    print(f"[LOGOUT] セッション状態の保存に失敗: {e}")
+            
+            # 完全ログアウト時はFirestoreのセッション情報も削除
+            if not keep_password:
+                try:
+                    self.firestore_manager.clear_session_state(uid)
+                    print(f"[LOGOUT] Firestoreのセッション情報を削除しました (uid: {uid})")
+                except Exception as e:
+                    print(f"[LOGOUT] Firestoreセッション情報の削除に失敗: {e}")
         
         # セッション状態のクリア
         self.auth_manager.logout()
@@ -1283,16 +1328,62 @@ class DentalApp:
         if not keep_password:
             # 完全ログアウト: 永続ログイン用のCookieも削除
             self.cookie_manager.clear_saved_password()
-            st.success("完全にログアウトしました（永続ログイン情報も削除）")
+            st.success("完全にログアウトしました（永続ログイン情報と演習データも削除）")
         else:
             # 部分ログアウト: 永続ログイン情報は保持
-            st.success("ログアウトしました（永続ログイン情報は保持）")
+            st.success("ログアウトしました（永続ログイン情報と進行中の演習データは保持）")
         
         # 自動ログイン試行フラグをリセット（次回アクセス時に再試行させる）
         st.session_state.pop("auto_login_attempted", None)
         
         time.sleep(1)
         st.rerun()
+    
+    def _has_practice_session(self) -> bool:
+        """現在進行中の演習セッションがあるかチェック"""
+        # 演習関連のセッション状態をチェック
+        practice_keys = [
+            'questions', 'current_question_index', 'answers', 'confidence_ratings',
+            'selected_subjects', 'practice_count', 'correct_answer_displayed',
+            'is_practice_complete', 'practice_state'
+        ]
+        
+        # いずれかのキーが存在し、かつ演習が未完了の場合
+        has_session = any(key in st.session_state for key in practice_keys)
+        is_incomplete = not st.session_state.get('is_practice_complete', False)
+        
+        return has_session and is_incomplete
+    
+    def _save_current_session_to_firestore(self):
+        """現在のセッション状態をFirestoreに保存"""
+        uid = st.session_state.get("uid")
+        if not uid:
+            return
+            
+        # 演習セッションのデータを収集
+        session_data = {}
+        preserve_keys = [
+            'questions', 'current_question_index', 'answers', 'confidence_ratings',
+            'selected_subjects', 'practice_count', 'correct_answer_displayed',
+            'is_practice_complete', 'practice_state', 'practice_start_time'
+        ]
+        
+        for key in preserve_keys:
+            if key in st.session_state:
+                session_data[key] = st.session_state[key]
+        
+        if session_data:
+            # Firestoreに保存
+            try:
+                self.firestore_manager.db.collection('user_sessions').document(uid).set({
+                    'session_data': session_data,
+                    'last_saved': datetime.datetime.now(),
+                    'session_type': 'practice'
+                })
+                print(f"[SESSION_SAVE] セッションデータを保存: {list(session_data.keys())}")
+            except Exception as e:
+                print(f"[SESSION_SAVE] 保存エラー: {e}")
+                raise e
     
     def _render_settings(self, has_gakushi_permission: bool):
         """設定の描画"""
@@ -1351,6 +1442,9 @@ class DentalApp:
             # 遅延インポートで初回ロード高速化
             from modules.search_page import render_search_page
             render_search_page()
+        elif current_page == "学習メモ":
+            from modules.notes_page import render_notes_page
+            render_notes_page()
         else:
             render_practice_page(self.auth_manager)
     

@@ -71,9 +71,10 @@ def get_natural_sort_key(q_dict):
 
 # Google Analytics設定
 try:
-    GA_MEASUREMENT_ID = st.secrets.get("google_analytics_id", "G-XXXXXXXXXX")
+    # 実際のFirebase Analytics IDを設定
+    GA_MEASUREMENT_ID = st.secrets.get("google_analytics_id", "G-4V14HSE21L")  # Firebase プロジェクトの実際のID
 except:
-    GA_MEASUREMENT_ID = "G-XXXXXXXXXX"  # フォールバック値
+    GA_MEASUREMENT_ID = "G-4V14HSE21L"  # Firebase プロジェクトの実際のID
 
 
 class AnalyticsUtils:
@@ -81,40 +82,135 @@ class AnalyticsUtils:
     
     @staticmethod
     def inject_ga_script():
-        """Google Analytics スクリプトを注入"""
-        ga_script = f"""
-        <!-- Google tag (gtag.js) -->
-        <script async src="https://www.googletagmanager.com/gtag/js?id={GA_MEASUREMENT_ID}"></script>
-        <script>
-          window.dataLayer = window.dataLayer || [];
-          function gtag(){{dataLayer.push(arguments);}}
-          gtag('js', new Date());
-          gtag('config', '{GA_MEASUREMENT_ID}', {{
-            cookie_domain: 'auto',
-            cookie_flags: 'SameSite=None;Secure'
-          }});
-        </script>
-        """
-        components.html(ga_script, height=0)
+        """Google Analytics 標準タグを注入"""
+        if GA_MEASUREMENT_ID and GA_MEASUREMENT_ID != "G-XXXXXXXXXX":
+            # Google Analytics 標準実装
+            ga_script = f"""
+            <!-- Google tag (gtag.js) -->
+            <script async src="https://www.googletagmanager.com/gtag/js?id={GA_MEASUREMENT_ID}"></script>
+            <script>
+              window.dataLayer = window.dataLayer || [];
+              function gtag(){{dataLayer.push(arguments);}}
+              gtag('js', new Date());
+
+              gtag('config', '{GA_MEASUREMENT_ID}');
+              
+              // デバッグ用ログ
+              console.log('🔍 Google Analytics initialized:', '{GA_MEASUREMENT_ID}');
+            </script>
+            """
+            components.html(ga_script, height=0)
+            
+            # 追加のページビューイベント（確実にデータ送信するため）
+            page_view_script = f"""
+            <script>
+            // ページロード完了後にページビューを送信
+            window.addEventListener('load', function() {{
+                setTimeout(function() {{
+                    if (typeof gtag !== 'undefined') {{
+                        gtag('event', 'page_view', {{
+                            page_title: document.title || 'Dental Quiz App',
+                            page_location: window.location.href
+                        }});
+                        console.log('📊 Page view sent to GA4');
+                    }}
+                }}, 1000);
+            }});
+            </script>
+            """
+    @staticmethod
+    def inject_ga_script():
+        """Google Analytics 標準タグを<head>に注入"""
+        if GA_MEASUREMENT_ID and GA_MEASUREMENT_ID != "G-XXXXXXXXXX":
+            # <head>セクションにGoogle Analyticsタグを挿入
+            head_html = f"""
+            <script async src="https://www.googletagmanager.com/gtag/js?id={GA_MEASUREMENT_ID}"></script>
+            <script>
+              window.dataLayer = window.dataLayer || [];
+              function gtag(){{dataLayer.push(arguments);}}
+              gtag('js', new Date());
+
+              gtag('config', '{GA_MEASUREMENT_ID}');
+              
+              console.log('🔍 Google Analytics initialized:', '{GA_MEASUREMENT_ID}');
+            </script>
+            """
+            
+            # headタグに挿入
+            components.html(head_html, height=0)
+            
+            # 追加でbodyでページビューを送信
+            body_script = f"""
+            <script>
+              // ページが完全に読み込まれた後にページビューを送信
+              document.addEventListener('DOMContentLoaded', function() {{
+                if (typeof gtag !== 'undefined') {{
+                  gtag('event', 'page_view', {{
+                    page_title: document.title || 'Dental Quiz App',
+                    page_location: window.location.href,
+                    content_group1: 'StreamlitApp'
+                  }});
+                  console.log('📊 Page view sent to GA4');
+                }}
+              }});
+              
+              // 5秒後に追加のエンゲージメントイベント
+              setTimeout(function() {{
+                if (typeof gtag !== 'undefined') {{
+                  gtag('event', 'user_engagement', {{
+                    engagement_time_msec: 5000
+                  }});
+                  console.log('💓 User engagement sent to GA4');
+                }}
+              }}, 5000);
+            </script>
+            """
+            components.html(body_script, height=0)
     
     @staticmethod
     def track_event(event_name: str, parameters: Dict[str, Any] = None):
         """Google Analyticsイベントを追跡"""
+        if not GA_MEASUREMENT_ID or GA_MEASUREMENT_ID == "G-XXXXXXXXXX":
+            return  # 無効なIDの場合はスキップ
+            
         if parameters is None:
             parameters = {}
         
         # ユーザーIDを取得（セッション状態から）
-        user_id = st.session_state.get('user_id', 'anonymous')
+        user_id = st.session_state.get('uid', st.session_state.get('user_id', 'anonymous'))
         parameters['user_id'] = user_id
         
         # タイムスタンプを追加
         parameters['timestamp'] = datetime.datetime.now(JST).isoformat()
         
-        # JavaScriptでGoogle Analytics イベントを送信
+        # FirestoreとGoogle Analytics両方にログ
+        try:
+            # 1. Firestoreにログ（デバッグ用）
+            from firestore_db import get_firestore_manager
+            firestore_manager = get_firestore_manager()
+            if firestore_manager and firestore_manager.db:
+                analytics_doc = {
+                    'event_name': event_name,
+                    'parameters': parameters,
+                    'timestamp': datetime.datetime.now(JST),
+                    'user_id': user_id
+                }
+                firestore_manager.db.collection('analytics_events').add(analytics_doc)
+        except Exception as e:
+            print(f"Firestore analytics logging error: {e}")
+        
+        # 2. JavaScriptでGoogle Analytics イベントを送信
         ga_js = f"""
         <script>
-        if (typeof gtag !== 'undefined') {{
-            gtag('event', '{event_name}', {json.dumps(parameters)});
+        try {{
+            if (typeof gtag !== 'undefined') {{
+                gtag('event', '{event_name}', {json.dumps(parameters)});
+                console.log('GA Event sent:', '{event_name}', {json.dumps(parameters)});
+            }} else {{
+                console.warn('gtag not available for event: {event_name}');
+            }}
+        }} catch (error) {{
+            console.error('GA Event error:', error);
         }}
         </script>
         """
@@ -126,7 +222,8 @@ class AnalyticsUtils:
         AnalyticsUtils.track_event('study_session_start', {
             'session_type': session_type,
             'question_count': question_count,
-            'page_title': 'Practice Session'
+            'page_title': 'Practice Session',
+            'custom_parameter_1': 'dental_quiz_app'
         })
     
     @staticmethod
@@ -136,7 +233,8 @@ class AnalyticsUtils:
             'question_id': question_id,
             'is_correct': is_correct,
             'quality': quality,
-            'page_title': 'Practice Page'
+            'page_title': 'Practice Page',
+            'custom_parameter_1': 'dental_quiz_app'
         })
     
     @staticmethod
@@ -146,7 +244,8 @@ class AnalyticsUtils:
             'session_duration_minutes': round(session_duration / 60, 2),
             'questions_answered': questions_answered,
             'accuracy_percentage': round(accuracy * 100, 1),
-            'page_title': 'Practice Results'
+            'page_title': 'Practice Results',
+            'custom_parameter_1': 'dental_quiz_app'
         })
     
     @staticmethod
@@ -154,7 +253,25 @@ class AnalyticsUtils:
         """ページビューを追跡"""
         AnalyticsUtils.track_event('page_view', {
             'page_name': page_name,
-            'page_title': page_name
+            'page_title': page_name,
+            'custom_parameter_1': 'dental_quiz_app'
+        })
+    
+    @staticmethod
+    def track_user_login(uid: str, login_method: str = 'google'):
+        """ユーザーログインを追跡"""
+        AnalyticsUtils.track_event('login', {
+            'method': login_method,
+            'user_id': uid,
+            'custom_parameter_1': 'dental_quiz_app'
+        })
+    
+    @staticmethod
+    def track_app_engagement():
+        """アプリエンゲージメント（ハートビート）を追跡"""
+        AnalyticsUtils.track_event('user_engagement', {
+            'engagement_time_msec': 30000,  # 30秒
+            'custom_parameter_1': 'dental_quiz_app'
         })
 
 
@@ -230,7 +347,7 @@ class QuestionUtils:
 
     @staticmethod
     def is_gakushi_general(q_num_str: str) -> bool:
-        """学士試験の問題番号が「一般問題」に該当するか判定"""
+        """学士試験問題が一般問題かを判定"""
         if QuestionUtils.is_gakushi_hisshu(q_num_str):
             return False
         match = re.match(r'^G\d{2}-[\d\-再]+-[A-D]-(\d+)$', q_num_str)
@@ -241,7 +358,7 @@ class QuestionUtils:
 
     @staticmethod
     def is_gakushi_clinical(q_num_str: str) -> bool:
-        """学士試験の問題番号が「臨床実地」に該当するか判定"""
+        """学士試験問題が臨床実地かを判定"""
         if QuestionUtils.is_gakushi_hisshu(q_num_str):
             return False
         match = re.match(r'^G\d{2}-[\d\-再]+-[A-D]-(\d+)$', q_num_str)
@@ -269,7 +386,7 @@ class QuestionUtils:
             if ryoiki == 'C' and num > 35:
                 return False
             return True
-        # 100回以前は領域Dが臨床実地、それ以外を一般扱い
+        # 100回以前は領域Dを臨床実地とみなし、それ以外を一般扱い
         return ryoiki != 'D'
 
     @staticmethod
@@ -332,8 +449,8 @@ class QuestionUtils:
             return True
 
         if '手順' in question_text and choices:
-            arrow_symbols = ('→', '⇒', '>', '->')
             pattern_hits = 0
+            arrow_symbols = ('→', '⇒', '>', '->')
             for choice in choices:
                 normalized_choice = QuestionUtils._normalize_answer_string(choice)
                 if any(symbol in choice for symbol in arrow_symbols) and len(normalized_choice) < 40:
@@ -445,7 +562,7 @@ class QuestionUtils:
         return correct_answer.upper()
     
     @staticmethod
-    def get_answer_feedback_message(user_choice: str, correct_answer: str, is_correct: bool) -> tuple:
+    def get_answer_feedback_message(user_choice: str, correct_answer: str, is_correct: bool, question_choices: List[str] = None) -> tuple:
         """
         複数正解対応の回答フィードバックメッセージを生成
         
@@ -453,6 +570,7 @@ class QuestionUtils:
             user_choice: ユーザーの選択
             correct_answer: 正解
             is_correct: 正解かどうか
+            question_choices: 問題の選択肢リスト（ラベルを選択肢テキストに変換するため）
         
         Returns:
             tuple: (main_message, additional_info)
@@ -462,6 +580,19 @@ class QuestionUtils:
         
         # 全角スラッシュを半角に統一
         normalized_answer = correct_answer.replace('／', '/')
+        
+        # 選択肢ラベルを選択肢テキストに変換するヘルパー関数
+        def label_to_text(label: str) -> str:
+            if not question_choices:
+                return label
+            
+            # ラベル（A, B, C, D, E）を対応する選択肢テキストに変換
+            choice_labels = ['A', 'B', 'C', 'D', 'E']
+            if label.upper() in choice_labels:
+                index = choice_labels.index(label.upper())
+                if index < len(question_choices):
+                    return f"{label.upper()}. {question_choices[index]}"
+            return label
         
         if is_correct:
             # 正解の場合
@@ -475,10 +606,12 @@ class QuestionUtils:
                 
                 main_msg = "✅ 正解！"
                 if other_correct:
-                    if len(other_correct) == 1:
-                        additional_info = f"{other_correct[0]}も正答です"
+                    # 他の正解を選択肢テキストに変換
+                    other_correct_texts = [label_to_text(ans) for ans in other_correct]
+                    if len(other_correct_texts) == 1:
+                        additional_info = f"{other_correct_texts[0]} も正答です"
                     else:
-                        additional_info = f"{', '.join(other_correct)}も正答です"
+                        additional_info = f"{' または '.join(other_correct_texts)} も正答です"
                 else:
                     additional_info = ""
                 
@@ -489,10 +622,12 @@ class QuestionUtils:
             # 不正解の場合
             if '/' in normalized_answer:
                 answers = [ans.strip() for ans in normalized_answer.split('/')]
-                formatted_answers = " または ".join(answers)
+                # 正解選択肢を選択肢テキストに変換
+                formatted_answers = " または ".join([label_to_text(ans) for ans in answers])
                 return ("❌ 不正解", f"正解は {formatted_answers} です")
             else:
-                return ("❌ 不正解", f"正解は {correct_answer} です")
+                formatted_answer = label_to_text(correct_answer)
+                return ("❌ 不正解", f"正解は {formatted_answer} です")
     
     @staticmethod
     def build_gakushi_indices(all_questions: List[Dict[str, Any]]):
@@ -628,32 +763,52 @@ class SM2Algorithm:
         
         EF, n, I = card.get("EF", 2.5), card.get("n", 0), card.get("I", 0)
         
-        if quality == 1:
-            n = 0
-            EF = max(EF - 0.3, 1.3)
-            I = 10 / 1440
+        # ユーザー評価(1-4)をSM2標準のQuality(0-5)にマッピング
+        # 1(×) -> 1 (Fail, Incorrect)
+        # 2(△) -> 2 (Fail, Hard)
+        # 3(◯) -> 4 (Pass, Correct)
+        # 4(◎) -> 5 (Pass, Perfect)
+        sm2_quality = quality
+        if quality == 4:
+            sm2_quality = 5
+        elif quality == 3:
+            sm2_quality = 4
         elif quality == 2:
-            EF = max(EF - 0.15, 1.3)
-            I = max(card.get("I", 1) * 0.5, 10 / 1440)
-        elif quality == 4 or quality == 5:
+            sm2_quality = 2
+        elif quality == 1:
+            sm2_quality = 1
+            
+        # SM2アルゴリズム計算
+        if sm2_quality >= 3:
+            # 正解の場合 (Quality 3, 4, 5)
             if n == 0:
                 I = 1
             elif n == 1:
-                I = 4
+                I = 6
             else:
-                EF = max(EF + (0.1 - (5-quality)*(0.08 + (5-quality)*0.02)), 1.3)
-                I = card.get("I", 1) * EF
+                I = round(I * EF)
             n += 1
-            if quality == 5:
-                I *= 1.3
         else:
+            # 不正解の場合 (Quality 0, 1, 2)
             n = 0
-            I = 10 / 1440
-        
+            I = 1
+            
+        # EFの更新 (Quality 0-5)
+        # EF' = EF + (0.1 - (5-q) * (0.08 + (5-q)*0.02))
+        # q=5 -> EF + 0.1
+        # q=4 -> EF + 0.0
+        # q=3 -> EF - 0.14
+        # q=2 -> EF - 0.32
+        # q=1 -> EF - 0.54
+        EF = EF + (0.1 - (5 - sm2_quality) * (0.08 + (5 - sm2_quality) * 0.02))
+        if EF < 1.3:
+            EF = 1.3
+            
         next_review_dt = now + datetime.timedelta(days=I)
         card["history"] = card.get("history", []) + [{
             "timestamp": now.isoformat(),
-            "quality": quality,
+            "quality": quality,  # 履歴には元の評価(1-4)を保存
+            "sm2_quality": sm2_quality, # 計算に使用したQualityも保存
             "interval": I,
             "EF": EF
         }]

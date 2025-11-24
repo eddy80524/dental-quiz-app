@@ -1,122 +1,121 @@
-# 歯科国試アプリ 開発環境セットアップガイド
+# 開発ガイド
 
-## 🚀 簡単起動方法
+## 🚀 開発環境のセットアップ
 
-### 方法1: スクリプトで起動（推奨）
+### 必要な環境
+- Python 3.11
+- Firebase CLI
+- テキストエディタ（VS Code推奨）
 
+### 初回セットアップ
+詳細は [docs/SETUP.md](docs/SETUP.md) を参照してください。
+
+## 🏃 アプリの起動
+
+### 推奨: スクリプトで起動
 ```bash
 ./start_app.sh
 ```
 
-このスクリプトは以下を自動実行します：
+自動実行される内容:
 - 仮想環境のアクティベート
 - 依存関係のインストール確認
-- キャッシュクリア（Python + Streamlit）
+- キャッシュクリア
 - ポート8501の競合チェック
 - Streamlitアプリの起動
 
-### 方法2: VS Code タスクで起動
-
-1. `Cmd+Shift+P` でコマンドパレットを開く
-2. "Tasks: Run Task" を選択
-3. "歯科国試アプリ起動" を選択
-
-### 方法3: 手動起動
-
+### 手動起動
 ```bash
-# 1. 仮想環境アクティベート
 source .venv/bin/activate
-
-# 2. キャッシュクリア
-find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-rm -rf ~/.streamlit 2>/dev/null || true
-
-# 3. アプリ起動
 streamlit run my_llm_app/app.py
 ```
 
 ## 🛠️ トラブルシューティング
 
-### よくある問題と解決法
-
-#### 1. ポート8501が使用中エラー
+### ポート8501が使用中
 ```bash
-# 使用中のプロセスを確認
-lsof -i:8501
-
-# プロセスを終了
 lsof -ti:8501 | xargs kill -9
 ```
 
-#### 2. キャッシュ関連の問題
-VS Codeタスク "キャッシュクリア" を実行するか：
+### キャッシュクリア
 ```bash
-# 手動でキャッシュクリア
 find . -type d -name "__pycache__" -exec rm -rf {} +
-find . -name "*.pyc" -delete
 rm -rf ~/.streamlit
-rm -rf .streamlit
 ```
 
-#### 3. 仮想環境の問題
+### 仮想環境の再作成
 ```bash
-# 仮想環境を再作成
 rm -rf .venv
-python3 -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-#### 4. Firebase Functions のコンパイルエラー
-VS Codeタスク "Firebase Functions ビルド" を実行するか：
-```bash
-cd functions
-npm run build
-```
+## 📁 プロジェクト構造
 
-## 📊 アプリ機能
-
-### 学習レベルシステム（7段階）
-- **未学習**: まだ学習していない問題
-- **レベル0**: 初回学習（赤色）
-- **レベル1**: 2回目学習（オレンジ色）
-- **レベル2**: 3回目学習（黄色）
-- **レベル3**: 4回目学習（薄緑色）
-- **レベル4**: 5回目学習（緑色）
-- **レベル5**: 6回目学習（青色）
-- **習得済み**: 完全に習得した問題（紫色）
-
-### 問題データ
-- **国試問題**: 8,576問
-- **学士試験問題**: 4,941問
-- **合計**: 13,517問
-
-### 主要ページ
-1. **ホーム**: 学習状況ダッシュボード
-2. **問題練習**: ランダム出題と学習記録
-3. **検索・進捗**: 問題検索と詳細な進捗分析
-4. **ランキング**: ユーザーランキングとプロフィール
-
-## 🔧 開発者向け情報
-
-### プロジェクト構造
 ```
 dental-DX-PoC/
-├── my_llm_app/           # Streamlitアプリ
-│   ├── app.py           # メインアプリ
-│   ├── modules/         # ページモジュール
-│   └── data/           # 問題データ
-├── functions/           # Firebase Functions
-├── .venv/              # Python仮想環境
-└── start_app.sh        # 起動スクリプト
+├── my_llm_app/              # メインアプリケーション
+│   ├── app.py               # エントリポイント
+│   ├── modules/             # 機能モジュール
+│   │   ├── practice_page.py
+│   │   ├── search_page.py
+│   │   └── ranking_page.py
+│   ├── utils.py             # SM2アルゴリズム等
+│   └── data/                # 問題データ
+├── functions/               # Cloud Functions (Python)
+│   ├── main.py              # 全関数の実装
+│   └── my_llm_app/          # 共有ロジック（自動同期）
+├── docs/                    # ドキュメント
+├── deploy_functions.sh      # デプロイスクリプト
+└── start_app.sh             # 起動スクリプト
 ```
 
-### 環境変数
-Firebase設定は `firebase.json` と環境変数で管理
+## 🔧 開発ワークフロー
 
-### バックアップ
-重要なファイルは定期的にバックアップを推奨
+### 1. 機能開発
+`my_llm_app/` 内で実装を行う
 
----
+### 2. ローカルテスト
+```bash
+./start_app.sh
+```
 
-**問題が解決しない場合は、start_app.sh を実行してください。**
+### 3. Cloud Functions更新（必要時）
+`functions/main.py` を編集
+
+### 4. デプロイ
+```bash
+./deploy_functions.sh
+```
+
+## 📊 データと機能
+
+### 問題データ
+- 国試問題: 8,576問
+- 学士試験問題: 4,941問
+- 合計: 13,517問
+
+### 学習レベル（7段階）
+- 未学習 → レベル0-5 → 習得済み
+- SM2アルゴリズムで自動管理
+
+### 主要機能
+1. **練習ページ**: 問題演習とSM2学習
+2. **検索ページ**: 問題検索と進捗分析
+3. **ランキングページ**: ユーザーランキング
+
+## 🐛 デバッグ
+
+### ログ確認
+Streamlitアプリのログはターミナルに表示されます。
+
+### Cloud Functionsログ
+```bash
+firebase functions:log
+```
+
+## 📚 関連ドキュメント
+- [セットアップ](docs/SETUP.md)
+- [デプロイ](docs/DEPLOYMENT.md)
+- [アーキテクチャ](docs/ARCHITECTURE.md)

@@ -30,6 +30,50 @@ from decimal import Decimal, InvalidOperation
 # 日本時間のタイムゾーン設定
 JST = pytz.timezone('Asia/Tokyo')
 
+def get_japan_now() -> datetime.datetime:
+    """日本時間の現在時刻を取得"""
+    return datetime.datetime.now(JST)
+
+def get_japan_today() -> datetime.date:
+    """
+    日本時間の今日の日付を取得
+    
+    新規学習目標のリセットタイミング：
+    - 日本時間の0時にカウントがリセットされる
+    - ユーザーが日本にいることを想定したタイムゾーン設定
+    """
+    return get_japan_now().date()
+
+def get_japan_datetime_from_timestamp(timestamp) -> datetime.datetime:
+    """タイムスタンプから日本時間のdatetimeオブジェクトを取得"""
+    try:
+        # まず文字列の場合の処理
+        if isinstance(timestamp, str):
+            try:
+                # ISO文字列をパース
+                dt = datetime.datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                return dt.astimezone(JST)
+            except ValueError:
+                try:
+                    # 日付部分のみの場合
+                    dt = datetime.datetime.strptime(timestamp[:10], '%Y-%m-%d')
+                    return JST.localize(dt)
+                except (ValueError, IndexError):
+                    return datetime.datetime.now(JST)
+        elif hasattr(timestamp, 'replace'):
+            # DatetimeWithNanoseconds または datetime オブジェクト
+            if hasattr(timestamp, 'tzinfo') and timestamp.tzinfo is None:
+                # ナイーブなdatetimeの場合、UTCとして扱って日本時間に変換
+                return pytz.UTC.localize(timestamp).astimezone(JST)
+            else:
+                return timestamp.astimezone(JST)
+        
+        # その他の場合はデフォルト値を返す
+        return datetime.datetime.now(JST)
+    except Exception as e:
+        # 予期しないエラーの場合もデフォルト値を返す
+        return datetime.datetime.now(JST)
+
 
 def get_natural_sort_key(q_dict):
     """
@@ -763,32 +807,52 @@ class SM2Algorithm:
         
         EF, n, I = card.get("EF", 2.5), card.get("n", 0), card.get("I", 0)
         
-        if quality == 1:
-            n = 0
-            EF = max(EF - 0.3, 1.3)
-            I = 10 / 1440
+        # ユーザー評価(1-4)をSM2標準のQuality(0-5)にマッピング
+        # 1(×) -> 1 (Fail, Incorrect)
+        # 2(△) -> 2 (Fail, Hard)
+        # 3(◯) -> 4 (Pass, Correct)
+        # 4(◎) -> 5 (Pass, Perfect)
+        sm2_quality = quality
+        if quality == 4:
+            sm2_quality = 5
+        elif quality == 3:
+            sm2_quality = 4
         elif quality == 2:
-            EF = max(EF - 0.15, 1.3)
-            I = max(card.get("I", 1) * 0.5, 10 / 1440)
-        elif quality == 4 or quality == 5:
+            sm2_quality = 2
+        elif quality == 1:
+            sm2_quality = 1
+            
+        # SM2アルゴリズム計算
+        if sm2_quality >= 3:
+            # 正解の場合 (Quality 3, 4, 5)
             if n == 0:
                 I = 1
             elif n == 1:
-                I = 4
+                I = 6
             else:
-                EF = max(EF + (0.1 - (5-quality)*(0.08 + (5-quality)*0.02)), 1.3)
-                I = card.get("I", 1) * EF
+                I = round(I * EF)
             n += 1
-            if quality == 5:
-                I *= 1.3
         else:
+            # 不正解の場合 (Quality 0, 1, 2)
             n = 0
-            I = 10 / 1440
-        
+            I = 1
+            
+        # EFの更新 (Quality 0-5)
+        # EF' = EF + (0.1 - (5-q) * (0.08 + (5-q)*0.02))
+        # q=5 -> EF + 0.1
+        # q=4 -> EF + 0.0
+        # q=3 -> EF - 0.14
+        # q=2 -> EF - 0.32
+        # q=1 -> EF - 0.54
+        EF = EF + (0.1 - (5 - sm2_quality) * (0.08 + (5 - sm2_quality) * 0.02))
+        if EF < 1.3:
+            EF = 1.3
+            
         next_review_dt = now + datetime.timedelta(days=I)
         card["history"] = card.get("history", []) + [{
             "timestamp": now.isoformat(),
-            "quality": quality,
+            "quality": quality,  # 履歴には元の評価(1-4)を保存
+            "sm2_quality": sm2_quality, # 計算に使用したQualityも保存
             "interval": I,
             "EF": EF
         }]

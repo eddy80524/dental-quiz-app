@@ -1,0 +1,1312 @@
+"""
+検索・進捗ページのモジュール - UI完全保持最適化版
+
+元のUIと完全に一致しながらパフォーマンスを劇的に改善:
+- @st.cache_dataを使った重いデータ処理のキャッシュ化（元のUI保持）
+- 演習ページとの連携による差分更新
+- 元のrender_*_tab_perfect関数群を完全保持
+- UserDataExtractorの統合とキャッシュ最適化
+- 元の4つのタブ構造とメトリクス表示を完全再現
+"""
+
+import streamlit as st
+import pandas as pd
+import plotly.graph_objects as go
+import plotly.express as px
+import datetime
+import math
+import pytz
+from typing import Dict, List, Any, Optional, Tuple
+import time
+from functools import lru_cache
+from collections import defaultdict, Counter
+import hashlib
+import json
+import re
+import random
+import sys
+import os
+import subprocess
+import shutil
+import tempfile
+
+# 日本時間用のタイムゾーン
+JST = pytz.timezone('Asia/Tokyo')
+
+def get_japan_today() -> datetime.date:
+    """日本時間の今日の日付を取得"""
+    return datetime.datetime.now(JST).date()
+
+def get_japan_datetime_from_timestamp(timestamp) -> datetime.datetime:
+    """タイムスタンプから日本時間のdatetimeオブジェクトを取得"""
+    try:
+        # まず文字列の場合の処理
+        if isinstance(timestamp, str):
+            try:
+                # ISO文字列をパース
+                dt = datetime.datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                return dt.astimezone(JST)
+            except ValueError:
+                try:
+                    # 日付部分のみの場合
+                    dt = datetime.datetime.strptime(timestamp[:10], '%Y-%m-%d')
+                    return JST.localize(dt)
+                except (ValueError, IndexError):
+                    return datetime.datetime.now(JST)
+        elif hasattr(timestamp, 'replace'):
+            # DatetimeWithNanoseconds または datetime オブジェクト
+            if hasattr(timestamp, 'tzinfo') and timestamp.tzinfo is None:
+                # ナイーブなdatetimeの場合、UTCとして扱って日本時間に変換
+                return pytz.UTC.localize(timestamp).astimezone(JST)
+            else:
+                return timestamp.astimezone(JST)
+        
+        # その他の場合はデフォルト値を返す
+        return datetime.datetime.now(JST)
+    except Exception as e:
+        # 予期しないエラーの場合もデフォルト値を返す
+        return datetime.datetime.now(JST)
+
+# 必要なインポート
+try:
+    from utils import (
+        ALL_QUESTIONS, 
+        HISSHU_Q_NUMBERS_SET, 
+        GAKUSHI_HISSHU_Q_NUMBERS_SET,
+        _gather_images_for_questions,
+        _image_block_latex,
+        export_questions_to_latex_tcb_jsarticle,
+        compile_latex_to_pdf,
+        extract_year_from_question_number
+    )
+except ImportError:
+    try:
+        from ..utils import (
+            ALL_QUESTIONS, 
+            HISSHU_Q_NUMBERS_SET, 
+            GAKUSHI_HISSHU_Q_NUMBERS_SET,
+            _gather_images_for_questions,
+            _image_block_latex,
+            export_questions_to_latex_tcb_jsarticle,
+            compile_latex_to_pdf,
+            extract_year_from_question_number
+        )
+    except ImportError:
+        # フォールバック: 最小限の定義
+        ALL_QUESTIONS = []
+        HISSHU_Q_NUMBERS_SET = set()
+        GAKUSHI_HISSHU_Q_NUMBERS_SET = set()
+
+try:
+    from firestore_db import get_firestore_manager
+except ImportError:
+    try:
+        from ..firestore_db import get_firestore_manager
+    except ImportError:
+        get_firestore_manager = None
+
+try:
+    from constants import LEVEL_COLORS
+except ImportError:
+    try:
+        from ..constants import LEVEL_COLORS
+    except ImportError:
+        LEVEL_COLORS = {}
+
+# UserDataExtractor
+try:
+    from user_data_extractor import UserDataExtractor
+    HAS_USER_DATA_EXTRACTOR = True
+except ImportError:
+    try:
+        from ..user_data_extractor import UserDataExtractor
+        HAS_USER_DATA_EXTRACTOR = True
+    except ImportError:
+        UserDataExtractor = None
+        HAS_USER_DATA_EXTRACTOR = False
+
+from modules.logic.sm2_service import SM2Service
+from modules.logic.progress_service import ProgressService
+from modules.components.search_tabs import SearchTabs
+
+def update_session_evaluation_log(question_id: str, quality: int, timestamp: datetime.datetime = None):
+    """
+    演習ページから呼び出される関数：学習結果をセッション状態に追加（日本時間ベース）
+    """
+    if timestamp is None:
+        timestamp = datetime.datetime.now(JST)  # 日本時間で記録
+    
+    # セッション状態の評価ログを初期化（存在しない場合）
+    if 'evaluation_logs' not in st.session_state:
+        st.session_state['evaluation_logs'] = []
+    
+    # 新しい評価ログを追加
+    new_log = {
+        'question_id': question_id,
+        'quality': quality,
+        'timestamp': timestamp
+    }
+    
+    st.session_state['evaluation_logs'].append(new_log)
+    
+    # ログが多くなりすぎないよう、古いデータを制限（例：最新1000件）
+    if len(st.session_state['evaluation_logs']) > 1000:
+        st.session_state['evaluation_logs'] = st.session_state['evaluation_logs'][-1000:]
+
+# レベル順序定義（0-5レベルシステム）
+LEVEL_ORDER = ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "レベル5", "習得済み"]
+
+
+def inject_search_page_styles():
+    """iOSライクな柔らかなUIスタイルを常時適用"""
+    st.markdown(
+        """
+        <style>
+        :root {
+            --ios-bg-start: #f5f7ff;
+            --ios-bg-end: #eef1ff;
+            --ios-card-bg: rgba(255, 255, 255, 0.92);
+            --ios-card-border: rgba(255, 255, 255, 0.55);
+            --ios-accent: #5b7fff;
+            --ios-accent-soft: rgba(91, 127, 255, 0.18);
+        }
+
+        div[data-testid="stAppViewContainer"] {
+            background: linear-gradient(180deg, var(--ios-bg-start) 0%, var(--ios-bg-end) 100%);
+        }
+
+        section[data-testid="stSidebar"] {
+            background: rgba(255, 255, 255, 0.85) !important;
+            backdrop-filter: blur(14px);
+        }
+
+        .block-container {
+            padding-top: 1.2rem;
+            padding-bottom: 3rem;
+        }
+
+        .ios-hero {
+            border-radius: 28px;
+            padding: 30px;
+            margin-bottom: 1.2rem;
+            background: linear-gradient(135deg, #5b7fff 0%, #7f9bff 45%, #a2b7ff 100%);
+            color: #ffffff;
+            box-shadow: 0 20px 40px rgba(91, 127, 255, 0.25);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .ios-hero::after {
+            content: "";
+            position: absolute;
+            top: -40%;
+            right: -30%;
+            width: 55%;
+            height: 120%;
+            background: rgba(255, 255, 255, 0.18);
+            filter: blur(0px);
+            transform: rotate(25deg);
+        }
+
+        .ios-hero__badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.3);
+            font-size: 0.85rem;
+            font-weight: 500;
+            letter-spacing: 0.02em;
+        }
+
+        .ios-hero__title {
+            font-size: 2rem;
+            font-weight: 700;
+            margin: 12px 0 6px;
+        }
+
+        .ios-hero__subtitle {
+            font-size: 1rem;
+            opacity: 0.92;
+            max-width: 520px;
+            line-height: 1.7;
+        }
+
+        .ios-section-title {
+            font-size: 1.08rem;
+            font-weight: 600;
+            color: #1c1c1e;
+            margin-bottom: 0.4rem;
+            letter-spacing: 0.01em;
+        }
+
+        .ios-hero__chips {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 18px;
+        }
+
+        .ios-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 6px 14px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.3);
+            color: #ffffff;
+            font-size: 0.82rem;
+            font-weight: 500;
+            letter-spacing: 0.01em;
+        }
+
+        div[data-testid="stMetric"] {
+            border-radius: 20px;
+            padding: 16px 18px;
+            background: var(--ios-card-bg);
+            border: 1px solid var(--ios-card-border);
+            box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
+        }
+
+        div[data-testid="stMetric"] > div:nth-child(1) {
+            color: #636366;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+
+        div[data-testid="stMetricValue"] {
+            color: #1c1c1e;
+            font-size: 1.6rem;
+            font-weight: 600;
+        }
+
+        div[data-testid="stMetricDelta"] {
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+
+        div[data-testid="stSlider"] {
+            padding: 14px 18px 10px;
+            border-radius: 20px;
+            background: var(--ios-card-bg);
+            border: 1px solid var(--ios-card-border);
+            box-shadow: 0 12px 32px rgba(15, 23, 42, 0.07);
+        }
+
+        div[data-testid="stSlider"] label {
+            font-weight: 600;
+            color: #1c1c1e;
+        }
+
+        div[data-testid="stSlider"] span {
+            color: #636366;
+        }
+
+        .stDataFrame {
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 12px 32px rgba(15, 23, 42, 0.07);
+        }
+
+        .stCaption {
+            color: #3a3a3c;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+
+def prepare_data_for_display(uid: str, cards: dict, analysis_target: str, force_refresh: bool = False) -> pd.DataFrame:
+    """
+    最適化されたデータ準備関数（重い処理をキャッシュ）
+    """
+    return ProgressService.prepare_data_for_display(uid, cards, analysis_target, force_refresh)
+
+def calculate_card_level(card: Dict[str, Any]) -> str:
+    """
+    【最終改善版】
+    自己評価(quality)を重視し、「不安定な正解」でレベルが上がるのを防ぐレベル計算関数
+    """
+    return SM2Service.calculate_card_level(card)
+
+def calculate_sm2_review_schedule(cards: dict, days_ahead: int = 7) -> Dict[str, List[str]]:
+    """
+    SM-2アルゴリズムに基づいて復習スケジュールを計算（日本時間ベース）
+    """
+    return SM2Service.calculate_sm2_review_schedule(cards, days_ahead)
+
+def get_review_priority_cards(cards: dict, target_date: datetime.date = None) -> List[tuple]:
+    """
+    指定日の復習優先度付きカードリストを取得（日本時間ベース）
+    """
+    return SM2Service.get_review_priority_cards(cards, target_date)
+
+
+
+
+def check_gakushi_permission(uid: str) -> bool:
+    """学士試験へのアクセス権限をチェック（キャッシュ対応）"""
+    try:
+        # Streamlitのキャッシュを使用して権限データを保存（表示なし）
+        @st.cache_data(ttl=300, show_spinner=False)  # 5分間キャッシュ、スピナー非表示
+        def _cached_gakushi_check(uid: str) -> bool:
+            db = get_firestore_manager()
+            user_ref = db.collection('users').document(uid)
+            user_doc = user_ref.get()
+            
+            if user_doc.exists:
+                user_data = user_doc.to_dict()
+                return user_data.get('has_gakushi_permission', False)
+            
+            return True
+        
+        return _cached_gakushi_check(uid)
+    except Exception:
+        return True
+
+def calculate_progress_metrics(cards: Dict, base_df: pd.DataFrame, uid: str, analysis_target: str) -> Dict:
+    """
+    進捗メトリクス計算（元のUIと同様）- 日本時間ベース
+    """
+    return ProgressService.calculate_progress_metrics(cards, base_df, uid, analysis_target)
+
+def render_search_page():
+    """
+    検索ページのメイン関数（UI完全保持）
+    """
+    # セッション状態の取得
+    uid = st.session_state.get("uid", "guest")
+    cards = st.session_state.get("cards", {})
+    analysis_target = st.session_state.get("analysis_target", "国試")
+    level_filter = st.session_state.get("level_filter", LEVEL_ORDER)
+    subject_filter = st.session_state.get("subject_filter", [])
+
+    inject_search_page_styles()
+
+    today_date = get_japan_today()
+    today_label = today_date.strftime("%Y/%m/%d (%a)")
+    chip_html = []
+    chip_html.append(f"<span class='ios-chip'>対象 {analysis_target}</span>")
+
+    st.markdown(
+        f"""
+        <div class="ios-hero">
+            <span class="ios-hero__badge">進捗ビュー</span>
+            <div class="ios-hero__title">学習ダッシュボード</div>
+            <div class="ios-hero__subtitle">検索・進捗ページでは、演習データをもとに復習量の偏りや達成状況を確認できます。今日 ({today_label}) の指標をチェックして、次の一手を決めましょう。</div>
+            <div class="ios-hero__chips">{''.join(chip_html)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # 権限チェック
+    has_gakushi_permission = st.session_state.get('has_gakushi_permission', False)
+
+    # 最適化されたデータ準備
+    base_df = prepare_data_for_display(uid, cards, analysis_target)
+    
+    # フィルター適用
+    filtered_df = base_df.copy()
+    
+    # レベルフィルター
+    if level_filter and set(level_filter) != set(LEVEL_ORDER):
+        filtered_df = filtered_df[filtered_df['level'].isin(level_filter)]
+    
+    # 科目フィルター
+    if subject_filter:
+        filtered_df = filtered_df[filtered_df['subject'].isin(subject_filter)]
+    
+    # 必修問題フィルター
+    show_hisshu_only = st.session_state.get('show_hisshu_only', False)
+    if show_hisshu_only:
+        filtered_df = filtered_df[filtered_df['is_hisshu'] == True]
+    
+    # メトリクス表示（分析対象に基づく正確な計算）
+    if not filtered_df.empty:
+        # メトリクス計算には全体データ（フィルタされていない）を使用
+        metrics = calculate_progress_metrics(cards, base_df, uid, analysis_target)
+        
+        # デバッグ情報表示（開発時のみ）
+        if st.session_state.get("debug_mode", False):
+            st.write(f"デバッグ - 現在学習済み問題数({analysis_target}): {metrics['current_studied_count']}, 昨日時点: {metrics['current_studied_count'] - metrics['progress_delta']}, デルタ: {metrics['progress_delta']}")
+            st.write(f"デバッグ - 必修現在: {metrics['current_hisshu_studied_count']}, 必修昨日時点: {metrics['current_hisshu_studied_count'] - metrics['hisshu_delta']}, 必修デルタ: {metrics['hisshu_delta']}")
+            
+            # 全体の練習記録数と現在の分析対象の関係を表示
+            total_practice_records = len(st.session_state.get('evaluation_logs', []))
+            all_cards = st.session_state.get("cards", {})
+            total_learned_all = sum(1 for card in all_cards.values() if card.get('history') and calculate_card_level(card) != "未学習")
+            
+            st.write(f"デバッグ - 総練習記録数: {total_practice_records}回 | 全分野学習済み: {total_learned_all}問 | {analysis_target}学習済み: {metrics['current_studied_count']}問")
+            st.info(f"💡 表示中: {analysis_target}の学習進捗。全分野の合計は{total_learned_all}問です。")
+        
+        # 4つの主要指標をst.metricで表示
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            progress_delta_text = f"+{metrics['progress_delta']} 問" if metrics['progress_delta'] > 0 else f"{metrics['progress_delta']} 問" if metrics['progress_delta'] < 0 else "変化なし"
+            st.metric(
+                f"学習進捗率（{analysis_target}）",
+                f"{metrics['current_studied_count']} / {metrics['total_count']} 問",
+                delta=progress_delta_text,
+                help=f"{analysis_target}で学習済みのユニークな問題数です。同じ問題の復習は重複カウントされません。"
+            )
+        
+        with col2:
+            hisshu_delta_text = f"+{metrics['hisshu_delta']} 問" if metrics['hisshu_delta'] > 0 else f"{metrics['hisshu_delta']} 問" if metrics['hisshu_delta'] < 0 else "変化なし"
+            st.metric(
+                "必修問題の進捗",
+                f"{metrics['current_hisshu_studied_count']} / {metrics['hisshu_total_count']} 問",
+                delta=hisshu_delta_text
+            )
+        
+        with col3:
+            today_delta = metrics['today_study_count'] - metrics['yesterday_study_count']
+            today_delta_text = f"+{today_delta}" if today_delta > 0 else f"{today_delta}" if today_delta < 0 else "±0"
+            st.metric(
+                "今日の学習",
+                f"{metrics['today_study_count']} 問",
+                delta=f"昨日比 {today_delta_text}"
+            )
+        
+        with col4:
+            accuracy_delta_text = f"+{metrics['accuracy_delta']:.1f}%" if metrics['accuracy_delta'] > 0 else f"{metrics['accuracy_delta']:.1f}%" if metrics['accuracy_delta'] < 0 else "±0%"
+            st.metric(
+                "直近の正解率",
+                f"{metrics['recent_accuracy']:.1f}%",
+                delta=f"前週比 {accuracy_delta_text}"
+            )
+        
+
+    
+    # タブコンテナ - 4つのタブ
+    tab1, tab2, tab3, tab4 = st.tabs(["概要", "グラフ分析", "問題リスト", "キーワード検索"])
+    
+    with tab1:
+        SearchTabs.render_overview_tab_perfect(filtered_df, base_df, ALL_QUESTIONS, analysis_target)
+    
+    with tab2:
+        SearchTabs.render_graph_analysis_tab_perfect(filtered_df, base_df, analysis_target)
+    
+    with tab3:
+        SearchTabs.render_question_list_tab_perfect(filtered_df, analysis_target)
+    
+    with tab4:
+        SearchTabs.render_keyword_search_tab_perfect(analysis_target)
+
+
+
+
+
+
+
+    if filtered_df.empty:
+        st.warning("選択された条件に一致する問題がありません。")
+    else:
+        cards_state = st.session_state.get('cards', {})
+        relevant_ids = [q_id for q_id in filtered_df['id'].tolist() if q_id]
+        target_cards = {q_id: cards_state[q_id] for q_id in relevant_ids if q_id in cards_state}
+
+        hisshu_set = GAKUSHI_HISSHU_Q_NUMBERS_SET if analysis_target == "学士試験" else HISSHU_Q_NUMBERS_SET
+
+        # 削除: デイリーレビュープランナー機能
+        # ユーザー要望により、復習計画の自動生成機能は削除しました。
+        # シンプルに学習状況のサマリーのみを表示します。
+
+        st.markdown("---")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("##### カード習熟度分布（全体）")
+            # 分析対象の全体データ（サイドバーフィルター無関係）を使用
+            level_counts = base_df["level"].value_counts().reindex(LEVEL_ORDER).fillna(0).astype(int)
+            st.dataframe(level_counts)
+        with col2:
+            st.markdown("##### 正解率 (True Retention)")
+            total_reviews = 0
+            correct_reviews = 0
+            for history_list in filtered_df["history"]:
+                for review in history_list:
+                    if isinstance(review, dict) and "quality" in review:
+                        total_reviews += 1
+                        if review["quality"] >= 4:
+                            correct_reviews += 1
+            retention_rate = (correct_reviews / total_reviews * 100) if total_reviews > 0 else 0
+            st.metric(label="選択範囲の正解率", value=f"{retention_rate:.1f}%", delta=f"{correct_reviews} / {total_reviews} 回")
+
+            # 必修問題の正解率計算
+            if analysis_target == "学士試験":
+                hisshu_df = filtered_df[filtered_df["is_hisshu"] == True]
+                hisshu_label = "【学士試験・必修問題】の正解率 (目標: 80%以上)"
+            else:
+                hisshu_df = filtered_df[filtered_df["id"].isin(HISSHU_Q_NUMBERS_SET)]
+                hisshu_label = "【必修問題】の正解率 (目標: 80%以上)"
+
+            hisshu_total_reviews = 0
+            hisshu_correct_reviews = 0
+            for history_list in hisshu_df["history"]:
+                for review in history_list:
+                    if isinstance(review, dict) and "quality" in review:
+                        hisshu_total_reviews += 1
+                        if review["quality"] >= 4:
+                            hisshu_correct_reviews += 1
+            hisshu_retention_rate = (hisshu_correct_reviews / hisshu_total_reviews * 100) if hisshu_total_reviews > 0 else 0
+            st.metric(label=hisshu_label, value=f"{hisshu_retention_rate:.1f}%", delta=f"{hisshu_correct_reviews} / {hisshu_total_reviews} 回")
+
+def render_graph_analysis_tab_perfect(filtered_df: pd.DataFrame, base_df: pd.DataFrame, analysis_target: str):
+    """
+    グラフ分析タブ - 学習データの可視化
+    """
+    st.subheader("学習データの可視化")
+    if filtered_df.empty:
+        st.warning("選択された条件に一致する問題がありません。")
+
+    if not filtered_df.empty:
+        st.markdown("##### 学習の記録")
+        review_history = []
+        for history_list in filtered_df["history"]:
+            for review in history_list:
+                if isinstance(review, dict) and "timestamp" in review:
+                    timestamp = review["timestamp"]
+                    try:
+                        # 日本時間に変換してから日付を取得
+                        review_datetime_jst = get_japan_datetime_from_timestamp(timestamp)
+                        review_history.append(review_datetime_jst.date())
+                    except (ValueError, TypeError):
+                        # パースに失敗した場合はスキップ
+                        continue
+
+        if review_history:
+            from collections import Counter
+            review_counts = Counter(review_history)
+            ninety_days_ago = get_japan_today() - datetime.timedelta(days=90)  # 日本時間ベース
+            dates = [ninety_days_ago + datetime.timedelta(days=i) for i in range(91)]
+            counts = [review_counts.get(d, 0) for d in dates]
+            chart_df = pd.DataFrame({"Date": dates, "Reviews": counts})
+
+            # plotlyを使ってy軸の最小値を0に固定
+            try:
+                fig = px.bar(chart_df, x="Date", y="Reviews", 
+                            title="日々の学習量（過去90日間）")
+                fig.update_layout(
+                    yaxis=dict(range=[0, max(counts) * 1.1] if counts else [0, 5]),
+                    showlegend=False
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            except ImportError:
+                # plotlyが利用できない場合は従来のbar_chart
+                st.bar_chart(chart_df.set_index("Date"))
+        else:
+            st.info("選択された範囲にレビュー履歴がまだありません。")
+
+        st.markdown("##### 学習レベル別分布")
+        level_counts = filtered_df['level'].value_counts()
+
+        # 色分け定義
+        level_colors_chart = {
+            "未学習": "#757575", "レベル0": "#FF9800", "レベル1": "#FFC107",
+            "レベル2": "#8BC34A", "レベル3": "#9C27B0", "レベル4": "#03A9F4",
+            "レベル5": "#1E88E5", "習得済み": "#4CAF50"
+        }
+
+        try:
+            # レベル順に並べ替え
+            chart_data = []
+            for level in LEVEL_ORDER:
+                if level in level_counts.index:
+                    chart_data.append({"Level": level, "Count": level_counts[level]})
+
+            chart_df = pd.DataFrame(chart_data)
+
+            fig = px.bar(chart_df, x="Level", y="Count", 
+                        title="学習レベル別問題数",
+                        color="Level",
+                        color_discrete_map=level_colors_chart)
+            fig.update_layout(
+                yaxis=dict(range=[0, None]),
+                showlegend=False,
+                xaxis_tickangle=-45
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        except ImportError:
+            # plotlyが利用できない場合は基本的なbar_chart
+            st.bar_chart(level_counts)
+    else:
+        st.info("学習データがありません。")
+
+    # --- 科目別の進捗状況と正答率（analysis_targetに応じて更新） ---
+    if base_df.empty:
+        st.info(f"{analysis_target}の科目データがまだ読み込まれていません。")
+        return
+
+    subject_filter = st.session_state.get("subject_filter", [])
+    subject_df = base_df.copy()
+    if subject_filter:
+        subject_df = subject_df[subject_df['subject'].isin(subject_filter)]
+
+    if subject_df.empty:
+        st.info("表示対象の科目がありません。サイドバーの科目フィルターを確認してください。")
+        return
+
+    subject_df = subject_df.copy()
+    subject_df['subject_display'] = subject_df['subject'].apply(
+        lambda s: s.strip() if isinstance(s, str) and s.strip() else "未分類"
+    )
+    subject_df['is_studied'] = subject_df['level'].fillna('未学習') != "未学習"
+
+    progress_summary = (
+        subject_df.groupby('subject_display')
+        .agg(
+            total_questions=('id', 'count'),
+            studied_questions=('is_studied', 'sum')
+        )
+        .reset_index()
+    )
+    if progress_summary.empty:
+        st.info("科目別の進捗データがありません。")
+    else:
+        progress_summary['studied_questions'] = progress_summary['studied_questions'].astype(int)
+        progress_summary['progress_pct'] = (
+            progress_summary['studied_questions'] / progress_summary['total_questions']
+        ) * 100
+        progress_summary['progress_text'] = progress_summary.apply(
+            lambda row: f"{row['progress_pct']:.1f}% ({int(row['studied_questions'])}/{int(row['total_questions'])}問)",
+            axis=1
+        )
+        
+        # 正答率の計算
+        def _count_history_attempts(history_list: Any) -> Tuple[int, int]:
+            attempts = 0
+            correct = 0
+            if isinstance(history_list, list):
+                for record in history_list:
+                    if not isinstance(record, dict):
+                        continue
+                    if 'is_correct' in record:
+                        attempts += 1
+                        if record.get('is_correct'):
+                            correct += 1
+                    elif 'quality' in record:
+                        attempts += 1
+                        if record.get('quality', 0) >= 3:
+                            correct += 1
+            return attempts, correct
+
+        attempts_series = subject_df['history'].apply(_count_history_attempts)
+        subject_df['total_attempts'] = attempts_series.apply(lambda x: x[0])
+        subject_df['correct_attempts'] = attempts_series.apply(lambda x: x[1])
+
+        accuracy_summary = (
+            subject_df.groupby('subject_display')
+            .agg(
+                total_attempts=('total_attempts', 'sum'),
+                correct_attempts=('correct_attempts', 'sum')
+            )
+            .reset_index()
+        )
+
+        accuracy_summary['accuracy_pct'] = accuracy_summary.apply(
+            lambda row: (row['correct_attempts'] / row['total_attempts'] * 100) if row['total_attempts'] > 0 else None,
+            axis=1
+        )
+        
+        
+        # --- 科目別レーダーチャート（基礎・臨床） ---
+        st.markdown("##### 科目別正答率レーダーチャート")
+        
+        # データマージ: progress_summary と accuracy_summary を結合
+        combined_df = progress_summary.merge(
+            accuracy_summary[['subject_display', 'accuracy_pct', 'total_attempts', 'correct_attempts']], 
+            on='subject_display', 
+            how='left'
+        )
+        
+        # NaN処理
+        combined_df['accuracy_pct'] = combined_df['accuracy_pct'].fillna(0)
+        
+        if combined_df.empty:
+            st.info("科目別のデータがありません。")
+        else:
+            try:
+                import plotly.graph_objects as go
+                
+                # 科目定義
+                KISO_SUBJECTS = [
+                    "解剖学", "歯科理工学", "組織学", "生理学", "病理学", "薬理学", 
+                    "微生物学・免疫学", "衛生学", "発生学・加齢老年学", "生化学"
+                ]
+                RINSHOU_SUBJECTS = [
+                    "保存修復学", "歯周病学", "歯内治療学", "クラウンブリッジ学", 
+                    "部分床義歯学", "全部床義歯学", "インプラント学", "口腔外科学", 
+                    "歯科放射線学", "歯科麻酔学", "矯正歯科学", "小児歯科学"
+                ]
+                
+                # データ分割
+                kiso_df = combined_df[combined_df['subject_display'].isin(KISO_SUBJECTS)].copy()
+                rinshou_df = combined_df[combined_df['subject_display'].isin(RINSHOU_SUBJECTS)].copy()
+                
+                # 不足している科目を0%で補完
+                for subj in KISO_SUBJECTS:
+                    if subj not in kiso_df['subject_display'].values:
+                        new_row = pd.DataFrame({'subject_display': [subj], 'accuracy_pct': [0]})
+                        kiso_df = pd.concat([kiso_df, new_row], ignore_index=True)
+                
+                for subj in RINSHOU_SUBJECTS:
+                    if subj not in rinshou_df['subject_display'].values:
+                        new_row = pd.DataFrame({'subject_display': [subj], 'accuracy_pct': [0]})
+                        rinshou_df = pd.concat([rinshou_df, new_row], ignore_index=True)
+                
+                # 順序を固定
+                kiso_df = kiso_df.set_index('subject_display').reindex(KISO_SUBJECTS).reset_index()
+                rinshou_df = rinshou_df.set_index('subject_display').reindex(RINSHOU_SUBJECTS).reset_index()
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("###### 基礎系科目")
+                    fig_kiso = go.Figure()
+                    fig_kiso.add_trace(go.Scatterpolar(
+                        r=kiso_df['accuracy_pct'],
+                        theta=kiso_df['subject_display'],
+                        fill='toself',
+                        name='基礎系',
+                        line_color='#1f77b4'
+                    ))
+                    fig_kiso.update_layout(
+                        polar=dict(
+                            radialaxis=dict(visible=True, range=[0, 100]),
+                        ),
+                        showlegend=False,
+                        height=400,
+                        margin=dict(l=40, r=40, t=20, b=20)
+                    )
+                    st.plotly_chart(fig_kiso, use_container_width=True)
+                
+                with col2:
+                    st.markdown("###### 臨床系科目")
+                    fig_rinshou = go.Figure()
+                    fig_rinshou.add_trace(go.Scatterpolar(
+                        r=rinshou_df['accuracy_pct'],
+                        theta=rinshou_df['subject_display'],
+                        fill='toself',
+                        name='臨床系',
+                        line_color='#ff7f0e'
+                    ))
+                    fig_rinshou.update_layout(
+                        polar=dict(
+                            radialaxis=dict(visible=True, range=[0, 100]),
+                        ),
+                        showlegend=False,
+                        height=400,
+                        margin=dict(l=40, r=40, t=20, b=20)
+                    )
+                    st.plotly_chart(fig_rinshou, use_container_width=True)
+                
+                # 象限別分析（既存のロジックを維持）
+                st.markdown("### 📊 科目別詳細分析")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("#### ⚠️ 要復習（高進捗×低正答率）")
+                    weak_subjects = combined_df[
+                        (combined_df['progress_pct'] >= 50) & 
+                        (combined_df['accuracy_pct'] < 80)
+                    ].sort_values('accuracy_pct')
+                    
+                    if not weak_subjects.empty:
+                        for _, row in weak_subjects.iterrows():
+                            st.markdown(
+                                f"- **{row['subject_display']}**: "
+                                f"進捗{row['progress_pct']:.1f}% / 正答率{row['accuracy_pct']:.1f}%"
+                            )
+                    else:
+                        st.success("該当なし✅")
+                    
+                    st.markdown("#### 📈 ポテンシャル（低進捗×高正答率）")
+                    potential_subjects = combined_df[
+                        (combined_df['progress_pct'] < 50) & 
+                        (combined_df['accuracy_pct'] >= 80)
+                    ].sort_values('progress_pct', ascending=False)
+                    
+                    if not potential_subjects.empty:
+                        for _, row in potential_subjects.iterrows():
+                            st.markdown(
+                                f"- **{row['subject_display']}**: "
+                                f"進捗{row['progress_pct']:.1f}% / 正答率{row['accuracy_pct']:.1f}%"
+                            )
+                    else:
+                        st.info("該当なし")
+                
+                with col2:
+                    st.markdown("#### 🌟 マスター（高進捗×高正答率）")
+                    master_subjects = combined_df[
+                        (combined_df['progress_pct'] >= 50) & 
+                        (combined_df['accuracy_pct'] >= 80)
+                    ].sort_values('accuracy_pct', ascending=False)
+                    
+                    if not master_subjects.empty:
+                        for _, row in master_subjects.iterrows():
+                            st.markdown(
+                                f"- **{row['subject_display']}**: "
+                                f"進捗{row['progress_pct']:.1f}% / 正答率{row['accuracy_pct']:.1f}%"
+                            )
+                    else:
+                        st.info("該当なし")
+                    
+                    st.markdown("#### 🆕 未着手（低進捗×低正答率）")
+                    unexplored_subjects = combined_df[
+                        (combined_df['progress_pct'] < 50) & 
+                        (combined_df['accuracy_pct'] < 80)
+                    ].sort_values('progress_pct')
+                    
+                    if not unexplored_subjects.empty:
+                        for _, row in unexplored_subjects.iterrows():
+                            st.markdown(
+                                f"- **{row['subject_display']}**: "
+                                f"進捗{row['progress_pct']:.1f}% / 正答率{row['accuracy_pct']:.1f}%"
+                            )
+                    else:
+                        st.info("該当なし")
+                
+            except ImportError:
+                # Plotlyが利用できない場合は従来の棒グラフを表示
+                st.warning("Plotlyが利用できないため、従来表示に切り替えます。")
+                
+                progress_chart_df = progress_summary.sort_values('progress_pct', ascending=True)
+                progress_fig = px.bar(
+                    progress_chart_df,
+                    x='progress_pct',
+                    y='subject_display',
+                    orientation='h',
+                    text='progress_text',
+                    color='progress_pct',
+                    color_continuous_scale='Blues',
+                    title=f"{analysis_target} 科目別進捗率（学習済み問題割合）"
+                )
+                st.plotly_chart(progress_fig, use_container_width=True)
+                
+                accuracy_chart_df = accuracy_valid.sort_values('accuracy_pct', ascending=False)
+                accuracy_fig = px.bar(
+                    accuracy_chart_df,
+                    x='accuracy_pct',
+                    y='subject_display',
+                    orientation='h',
+                    text='accuracy_text',
+                    color='accuracy_pct',
+                    color_continuous_scale='Teal',
+                    title=f"{analysis_target} 科目別平均正答率"
+                )
+                st.plotly_chart(accuracy_fig, use_container_width=True)
+
+    no_history_subjects = accuracy_summary[
+        accuracy_summary['total_attempts'] == 0
+    ]['subject_display'].tolist()
+    if no_history_subjects:
+        st.caption("学習履歴が未登録の科目: " + "、".join(no_history_subjects))
+
+def render_question_list_tab_perfect(filtered_df: pd.DataFrame, analysis_target: str = "国試"):
+    """
+    問題リストタブ - 問題リスト
+    """
+    st.subheader("問題リスト")
+    level_colors = {
+        "未学習": "#757575", "レベル0": "#FF9800", "レベル1": "#FFC107",
+        "レベル2": "#8BC34A", "レベル3": "#9C27B0", "レベル4": "#03A9F4",
+        "レベル5": "#1E88E5", "習得済み": "#4CAF50"
+    }
+
+    # 権限チェック
+    has_gakushi_permission = st.session_state.get("has_gakushi_permission", False)
+
+    # サイドバーのフィルターを適用
+    if not filtered_df.empty:
+        # サイドバーの level_filter は既に適用済み
+
+        st.markdown(f"**{len(filtered_df)}件の問題が見つかりました**")
+        if not filtered_df.empty:
+            def sort_key(row_id):
+                m_gakushi = re.match(r'^(G)(\d+)[–\-]([\d–\-再]+)[–\-]([A-Z])[–\-](\d+)$', str(row_id))
+                if m_gakushi: return (m_gakushi.group(1), int(m_gakushi.group(2)), m_gakushi.group(3), m_gakushi.group(4), int(m_gakushi.group(5)))
+                m_normal = re.match(r"(\d+)([A-D])(\d+)", str(row_id))
+                if m_normal: return ('Z', int(m_normal.group(1)), m_normal.group(2), '', int(m_normal.group(3)))
+                return ('Z', 0, '', '', 0)
+
+            detail_filtered_sorted = filtered_df.copy()
+            detail_filtered_sorted['sort_key'] = detail_filtered_sorted['id'].apply(sort_key)
+            detail_filtered_sorted = detail_filtered_sorted.sort_values(by='sort_key').drop(columns=['sort_key'])
+            for _, row in detail_filtered_sorted.iterrows():
+                # 権限チェック：学士試験の問題で権限がない場合はスキップ
+                if str(row.id).startswith("G") and not has_gakushi_permission:
+                    continue
+
+                st.markdown(
+                    f"<div style='margin-bottom: 5px; padding: 5px; border-left: 5px solid {level_colors.get(row.level, '#888')};'>"
+                    f"<span style='display:inline-block;width:80px;font-weight:bold;color:{level_colors.get(row.level, '#888')};'>{row.level}</span>"
+                    f"<span style='font-size:1.1em;'>{row.id}</span>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+        else:
+            st.info("フィルタ条件に一致する問題がありません。")
+    else:
+        st.info("表示する問題がありません。")
+
+def render_keyword_search_tab_perfect(analysis_target: str):
+    """
+    キーワード検索タブ - キーワード検索
+    """
+    # 権限チェック
+    has_gakushi_permission = st.session_state.get("has_gakushi_permission", False)
+    
+    # キーワード検索フォーム（サイドバーフィルター連動）
+    st.subheader("🔍 キーワード検索")
+    st.info(f"🎯 検索対象: {analysis_target} （サイドバーの分析対象フィルターで変更可能）")
+
+    col1, col2 = st.columns([4, 1])
+    with col1:
+        search_keyword = st.text_input("検索キーワード", placeholder="検索したいキーワードを入力", key="search_keyword_input")
+    with col2:
+        shuffle_results = st.checkbox("結果をシャッフル", key="shuffle_checkbox")
+
+    search_btn = st.button("検索実行", type="primary", use_container_width=True)
+
+    # キーワード検索の実行と結果表示
+    if search_btn and search_keyword.strip():
+        # キーワード検索を実行
+        search_words = [word.strip() for word in search_keyword.strip().split() if word.strip()]
+
+        keyword_results = []
+        for q in ALL_QUESTIONS:
+            # 権限チェック：学士試験の問題で権限がない場合はスキップ
+            question_number = q.get('number', '')
+            if question_number.startswith("G") and not has_gakushi_permission:
+                continue
+
+            # 分析対象フィルタチェック（サイドバーの設定を使用）
+            if analysis_target == "学士試験" and not question_number.startswith("G"):
+                continue
+            elif analysis_target == "国試" and question_number.startswith("G"):
+                continue
+
+            # キーワード検索
+            text_to_search = f"{q.get('question', '')} {q.get('subject', '')} {q.get('number', '')}"
+            if any(word.lower() in text_to_search.lower() for word in search_words):
+                keyword_results.append(q)
+
+        # シャッフル処理
+        if shuffle_results:
+            random.shuffle(keyword_results)
+
+        # 結果をセッション状態に保存
+        st.session_state["search_results"] = keyword_results
+        st.session_state["search_query"] = search_keyword.strip()
+        st.session_state["search_page_analysis_target"] = analysis_target
+        st.session_state["search_page_shuffle_setting"] = shuffle_results
+
+    # 検索結果の表示
+    if "search_results" in st.session_state:
+        results = st.session_state["search_results"]
+        query = st.session_state.get("search_query", "")
+        search_type = st.session_state.get("search_page_analysis_target", "国試")
+        shuffle_info = "（シャッフル済み）" if st.session_state.get("search_page_shuffle_setting", False) else "（順番通り）"
+
+        if results:
+            st.success(f"「{query}」で{len(results)}問見つかりました（{search_type}）{shuffle_info}")
+
+            # 結果の統計を表示
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("検索結果", f"{len(results)}問")
+            with col2:
+                subjects = [q.get("subject", "未分類") for q in results]
+                unique_subjects = len(set(subjects))
+                st.metric("関連科目", f"{unique_subjects}科目")
+            with col3:
+                years = []
+                for q in results:
+                    year = extract_year_from_question_number(q.get("number", ""))
+                    if year is not None:
+                        years.append(int(year))
+
+                year_range = f"{min(years)}-{max(years)}" if years else "不明"
+                st.metric("年度範囲", year_range)
+
+            # 検索結果の詳細表示
+            st.subheader("検索結果")
+
+            # レベル別色分け定義
+            level_colors = {
+                "未学習": "#757575", "レベル0": "#FF9800", "レベル1": "#FFC107",
+                "レベル2": "#8BC34A", "レベル3": "#9C27B0", "レベル4": "#03A9F4",
+                "レベル5": "#1E88E5", "習得済み": "#4CAF50"
+            }
+
+            level_icons = {
+                "未学習": "#757575",        # グレー系
+                "レベル0": "#FF9800",      # オレンジ #FF9800
+                "レベル1": "#FFC107",      # イエロー #FFC107
+                "レベル2": "#8BC34A",      # グリーン #8BC34A
+                "レベル3": "#9C27B0",      # パープル #9C27B0
+                "レベル4": "#03A9F4",      # ブルー #03A9F4
+                "レベル5": "#1E88E5",      # ダークブルー #1E88E5
+                "習得済み": "#4CAF50"      # グリーン完了 #4CAF50
+            }
+
+            for i, q in enumerate(results[:20]):  # 最初の20件を表示
+                # 権限チェック：学士試験の問題で権限がない場合はスキップ
+                question_number = q.get('number', '')
+                if question_number.startswith("G") and not has_gakushi_permission:
+                    continue
+
+                # 学習レベルの取得
+                card = st.session_state.cards.get(question_number, {})
+                if not card:
+                    level = "未学習"
+                else:
+                    card_level = card.get("level", 0)
+                    if card_level >= 6:
+                        level = "習得済み"
+                    else:
+                        level = f"レベル{card_level}"
+
+                # 必修問題チェック
+                if search_type == "学士試験":
+                    is_hisshu = question_number in GAKUSHI_HISSHU_Q_NUMBERS_SET
+                else:
+                    is_hisshu = question_number in HISSHU_Q_NUMBERS_SET
+
+                level_color = level_colors.get(level, "#888888")
+                hisshu_mark = "🔥" if is_hisshu else ""
+
+                # 色付きドットアイコンをHTMLで生成
+                color_dot = f'<span style="color: {level_color}; font-size: 1.2em; font-weight: bold;">●</span>'
+
+                with st.expander(f"● {q.get('number', 'N/A')} - {q.get('subject', '未分類')} {hisshu_mark}"):
+                    # レベルを大きく色付きで表示  
+                    st.markdown(f"**学習レベル:** <span style='color: {level_color}; font-weight: bold; font-size: 1.2em;'>{level}</span>", unsafe_allow_html=True)
+                    st.markdown(f"**問題:** {q.get('question', '')[:100]}...")
+                    if q.get('choices'):
+                        st.markdown("**選択肢:**")
+                        for j, choice in enumerate(q['choices']):  # 全ての選択肢を表示
+                            choice_text = choice.get('text', str(choice)) if isinstance(choice, dict) else str(choice)
+                            st.markdown(f"  {chr(65+j)}. {choice_text[:50]}...")
+
+                    # 学習履歴の表示
+                    if card and card.get('history'):
+                        st.markdown(f"**学習履歴:** {len(card['history'])}回")
+                        for j, review in enumerate(card['history'][-3:]):  # 最新3件
+                            if isinstance(review, dict):
+                                timestamp = review.get('timestamp', '不明')
+                                quality = review.get('quality', 0)
+                                quality_emoji = "✅" if quality >= 4 else "❌"
+                                st.markdown(f"  {j+1}. {timestamp} - 評価: {quality} {quality_emoji}")
+                    else:
+                        st.markdown("**学習履歴:** なし")
+
+            if len(results) > 20:
+                st.info(f"表示は最初の20件です。全{len(results)}件中")
+
+            # PDF生成とダウンロード機能
+            st.markdown("#### 📄 PDF生成")
+
+            colA, colB = st.columns(2)
+            with colA:
+                if st.button("📄 PDFを生成", key="pdf_tcb_js_generate"):
+                    with st.spinner("PDFを生成中..."):
+                        # 1) LaTeX本文（右上は固定の'◯◯◯◯◯'を表示）
+                        latex_tcb = export_questions_to_latex_tcb_jsarticle(results)
+                        # 2) 画像収集（URL/Storage問わず）
+                        assets, per_q_files = _gather_images_for_questions(results)
+                        # 3) 画像スロットを includegraphics に差し替え
+                        for i, files in enumerate(per_q_files, start=1):
+                            block = _image_block_latex(files)
+                            latex_tcb = latex_tcb.replace(rf"%__IMAGES_SLOT__{i}__", block)
+                        # 4) コンパイル
+                        pdf_bytes, log = compile_latex_to_pdf(latex_tcb, assets=assets)
+                        if pdf_bytes:
+                            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                            st.session_state["pdf_bytes_tcb_js"] = pdf_bytes
+                            st.session_state["pdf_filename_tcb_js"] = f"dental_questions_tcb_js_{ts}.pdf"
+                            st.success("✅ PDFの生成に成功しました。右のボタンからDLできます。")
+                        else:
+                            st.error("❌ PDF生成に失敗しました。")
+                            with st.expander("ログを見る"):
+                                st.code(log or "no log", language="text")
+
+            with colB:
+                if "pdf_bytes_tcb_js" in st.session_state:
+                    # 統一されたPDFダウンロード（新タブで開く）
+                    pdf_data = st.session_state["pdf_bytes_tcb_js"]
+                    filename = st.session_state.get("pdf_filename_tcb_js", "dental_questions_tcb_js.pdf")
+
+                    # Base64エンコード
+                    import base64
+                    b64_pdf = base64.b64encode(pdf_data).decode()
+
+                    # Data URI を持つHTMLリンクを生成（新タブで開く）
+                    href = f'<a href="data:application/pdf;base64,{b64_pdf}" download="{filename}" target="_blank" style="display: inline-block; padding: 12px; background-color: #ff6b6b; color: white; text-decoration: none; border-radius: 6px; text-align: center; width: 100%; font-size: 16px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">📥 PDFをダウンロード</a>'
+
+                    st.markdown(href, unsafe_allow_html=True)
+                else:
+                    st.button("⬇️ PDFをDL", disabled=True, use_container_width=True)
+
+        else:
+            st.warning(f"「{query}」に該当する問題が見つかりませんでした")
+    else:
+        st.info("キーワードを入力して検索してください")
+
+    # 検索結果表示
+    if "search_results" in st.session_state:
+        results = st.session_state["search_results"]
+        query = st.session_state.get("search_query", "")
+        search_type = st.session_state.get("search_analysis_target", "国試")
+        is_shuffled = st.session_state.get("search_shuffled", False)
+
+        if results:
+            shuffle_info = "（シャッフル済み）" if is_shuffled else "（順番通り）"
+            st.success(f"「{query}」で{len(results)}問見つかりました（{search_type}）{shuffle_info}")
+
+            subjects = set(q.get('subject', '') for q in results)
+            
+            years = [extract_year_from_question_number(q.get("number", "")) for q in results]
+            valid_years = [y for y in years if y is not None]
+            year_range = f"{min(valid_years)}-{max(valid_years)}" if valid_years else "不明"
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("ヒット数", len(results))
+            with col2:
+                st.metric("関連科目数", len(subjects))
+            with col3:
+                st.metric("年度範囲", year_range)
+
+            # 検索結果リスト
+            st.subheader("検索結果")
+            for i, q in enumerate(results[:20]):
+                q_number = q.get('number', 'N/A')
+                subject = q.get('subject', '未分類')
+                
+                cards = st.session_state.get('cards', {})
+                card = cards.get(q_number, {})
+                level = calculate_card_level(card)
+                
+                with st.expander(f"● {q_number} - {subject}"):
+                    st.markdown(f"**学習レベル:** {level}")
+                    
+                    question_text = q.get('question', '')
+                    if len(question_text) > 100:
+                        st.markdown(f"**問題:** {question_text[:100]}...")
+                    else:
+                        st.markdown(f"**問題:** {question_text}")
+                    
+                    choices = q.get('choices', [])
+                    if choices:
+                        st.markdown("**選択肢:**")
+                        for j, choice in enumerate(choices):
+                            if isinstance(choice, dict):
+                                choice_text = choice.get('text', str(choice))
+                            else:
+                                choice_text = str(choice)
+                            
+                            if len(choice_text) > 50:
+                                st.markdown(f"  {chr(65 + j)}. {choice_text[:50]}...")
+                            else:
+                                st.markdown(f"  {chr(65 + j)}. {choice_text}")
+                    
+                    answer = q.get('answer', '')
+                    if answer:
+                        st.markdown(f"**正解:** {answer}")
+                    
+                    history = card.get('history', [])
+                    n = card.get('n', 0)
+                    if not history:
+                        st.markdown("**学習履歴:** なし")
+                    else:
+                        st.markdown(f"**学習履歴:** {len(history)}回")
+                        st.markdown(f"**演習回数:** {n}回")
+                        if len(history) > 0:
+                            latest = history[-1]
+                            timestamp = latest.get('timestamp', '')
+                            quality = latest.get('quality', 0)
+                            if timestamp:
+                                try:
+                                    if hasattr(timestamp, 'strftime'):
+                                        time_str = timestamp.strftime('%Y-%m-%d %H:%M')
+                                    else:
+                                        try:
+                                            if 'T' in str(timestamp):
+                                                timestamp_str = str(timestamp).split('.')[0] if '.' in str(timestamp) else str(timestamp)
+                                                parsed_time = datetime.datetime.fromisoformat(timestamp_str)
+                                                time_str = parsed_time.strftime('%Y-%m-%d %H:%M')
+                                            else:
+                                                time_str = str(timestamp)[:16]
+                                        except:
+                                            time_str = "不明"
+                                    st.markdown(f"　最新: {time_str} (評価: {quality})")
+                                except:
+                                    st.markdown(f"　最新: (評価: {quality})")
+
+            # PDF生成機能
+            st.markdown("#### 📄 PDF生成")
+            colA, colB = st.columns(2)
+            
+            with colA:
+                if st.button("📄 PDFを生成", key="pdf_generate_button"):
+                    with st.spinner("PDFを生成中... 高品質なレイアウトのため数分かかることがあります。"):
+                        assets, per_q_files = _gather_images_for_questions(results)
+                        latex_source = export_questions_to_latex_tcb_jsarticle(results, right_label_fn=lambda q: q.get('subject', ''))
+                        
+                        for i, files in enumerate(per_q_files, start=1):
+                            block = _image_block_latex(files)
+                            latex_source = latex_source.replace(rf"%__IMAGES_SLOT__{i}__", block)
+
+                        pdf_bytes, log = compile_latex_to_pdf(latex_source, assets=assets)
+
+                        if pdf_bytes:
+                            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M")
+                            st.session_state["pdf_bytes_for_download"] = pdf_bytes
+                            st.session_state["pdf_filename_for_download"] = f"search_results_{ts}.pdf"
+                            st.success("✅ PDF生成完了！右のボタンからダウンロードしてください。")
+                        else:
+                            st.error("❌ PDF生成に失敗しました。")
+                            if "pdf_bytes_for_download" in st.session_state:
+                                del st.session_state["pdf_bytes_for_download"]
+                            with st.expander("エラーログ"):
+                                st.code(log or "ログはありません", language="text")
+            
+            with colB:
+                if "pdf_bytes_for_download" in st.session_state and st.session_state["pdf_bytes_for_download"]:
+                    file_size_kb = len(st.session_state["pdf_bytes_for_download"]) / 1024
+                    st.download_button(
+                        label="📥 PDFをダウンロード",
+                        data=st.session_state["pdf_bytes_for_download"],
+                        file_name=st.session_state["pdf_filename_for_download"],
+                        mime="application/pdf",
+                        use_container_width=True,
+                        type="primary",
+                        help=f"ファイルサイズ: {file_size_kb:.1f} KB"
+                    )
+                else:
+                    st.button("📥 PDFをDL", disabled=True, use_container_width=True)
+        else:
+            if query:
+                st.warning(f"「{query}」に該当する問題が見つかりませんでした")
+            else:
+                st.info("キーワードを入力して検索してください")
+
+
+
+
+
+# メイン関数
+def main():
+    """モジュールのメイン関数"""
+    render_search_page()
+
+if __name__ == "__main__":
+    main()

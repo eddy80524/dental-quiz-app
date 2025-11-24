@@ -14,8 +14,9 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 import datetime
+import math
 import pytz
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 import time
 from functools import lru_cache
 from collections import defaultdict, Counter
@@ -150,6 +151,167 @@ def update_session_evaluation_log(question_id: str, quality: int, timestamp: dat
 
 # レベル順序定義（0-5レベルシステム）
 LEVEL_ORDER = ["未学習", "レベル0", "レベル1", "レベル2", "レベル3", "レベル4", "レベル5", "習得済み"]
+
+
+def inject_search_page_styles():
+    """iOSライクな柔らかなUIスタイルを常時適用"""
+    st.markdown(
+        """
+        <style>
+        :root {
+            --ios-bg-start: #f5f7ff;
+            --ios-bg-end: #eef1ff;
+            --ios-card-bg: rgba(255, 255, 255, 0.92);
+            --ios-card-border: rgba(255, 255, 255, 0.55);
+            --ios-accent: #5b7fff;
+            --ios-accent-soft: rgba(91, 127, 255, 0.18);
+        }
+
+        div[data-testid="stAppViewContainer"] {
+            background: linear-gradient(180deg, var(--ios-bg-start) 0%, var(--ios-bg-end) 100%);
+        }
+
+        section[data-testid="stSidebar"] {
+            background: rgba(255, 255, 255, 0.85) !important;
+            backdrop-filter: blur(14px);
+        }
+
+        .block-container {
+            padding-top: 1.2rem;
+            padding-bottom: 3rem;
+        }
+
+        .ios-hero {
+            border-radius: 28px;
+            padding: 30px;
+            margin-bottom: 1.2rem;
+            background: linear-gradient(135deg, #5b7fff 0%, #7f9bff 45%, #a2b7ff 100%);
+            color: #ffffff;
+            box-shadow: 0 20px 40px rgba(91, 127, 255, 0.25);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .ios-hero::after {
+            content: "";
+            position: absolute;
+            top: -40%;
+            right: -30%;
+            width: 55%;
+            height: 120%;
+            background: rgba(255, 255, 255, 0.18);
+            filter: blur(0px);
+            transform: rotate(25deg);
+        }
+
+        .ios-hero__badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.3);
+            font-size: 0.85rem;
+            font-weight: 500;
+            letter-spacing: 0.02em;
+        }
+
+        .ios-hero__title {
+            font-size: 2rem;
+            font-weight: 700;
+            margin: 12px 0 6px;
+        }
+
+        .ios-hero__subtitle {
+            font-size: 1rem;
+            opacity: 0.92;
+            max-width: 520px;
+            line-height: 1.7;
+        }
+
+        .ios-section-title {
+            font-size: 1.08rem;
+            font-weight: 600;
+            color: #1c1c1e;
+            margin-bottom: 0.4rem;
+            letter-spacing: 0.01em;
+        }
+
+        .ios-hero__chips {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 18px;
+        }
+
+        .ios-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 6px 14px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.3);
+            color: #ffffff;
+            font-size: 0.82rem;
+            font-weight: 500;
+            letter-spacing: 0.01em;
+        }
+
+        div[data-testid="stMetric"] {
+            border-radius: 20px;
+            padding: 16px 18px;
+            background: var(--ios-card-bg);
+            border: 1px solid var(--ios-card-border);
+            box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
+        }
+
+        div[data-testid="stMetric"] > div:nth-child(1) {
+            color: #636366;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+
+        div[data-testid="stMetricValue"] {
+            color: #1c1c1e;
+            font-size: 1.6rem;
+            font-weight: 600;
+        }
+
+        div[data-testid="stMetricDelta"] {
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+
+        div[data-testid="stSlider"] {
+            padding: 14px 18px 10px;
+            border-radius: 20px;
+            background: var(--ios-card-bg);
+            border: 1px solid var(--ios-card-border);
+            box-shadow: 0 12px 32px rgba(15, 23, 42, 0.07);
+        }
+
+        div[data-testid="stSlider"] label {
+            font-weight: 600;
+            color: #1c1c1e;
+        }
+
+        div[data-testid="stSlider"] span {
+            color: #636366;
+        }
+
+        .stDataFrame {
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 12px 32px rgba(15, 23, 42, 0.07);
+        }
+
+        .stCaption {
+            color: #3a3a3c;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 @st.cache_data(ttl=600, show_spinner=False)  # 10分間キャッシュ、スピナー非表示
 def calculate_total_questions():
@@ -401,6 +563,9 @@ def get_review_priority_cards(cards: dict, target_date: datetime.date = None) ->
     
     return priority_cards
 
+
+
+
 def check_gakushi_permission(uid: str) -> bool:
     """学士試験へのアクセス権限をチェック（キャッシュ対応）"""
     try:
@@ -617,9 +782,46 @@ def calculate_progress_metrics(cards: Dict, base_df: pd.DataFrame, uid: str, ana
     recent_accuracy = enhanced_data.get('recent_accuracy', 0)
     previous_accuracy = enhanced_data.get('previous_accuracy', 0)
     
-    # 差分計算
-    progress_delta = 0  # 学習進捗のデルタ（前日比など）
-    hisshu_delta = 0    # 必修問題のデルタ
+    # 差分計算（前日比の進捗変化）
+    # 昨日時点での学習済み数を計算（昨日までの学習ログをもとに）
+    yesterday_studied_count = 0
+    yesterday_hisshu_studied_count = 0
+    
+    if uid and uid != "guest":
+        # 昨日までの学習ログから昨日時点での進捗を計算
+        evaluation_logs = st.session_state.get('evaluation_logs', [])
+        yesterday_learned_questions = set()
+        yesterday_learned_hisshu = set()
+        
+        for log in evaluation_logs:
+            try:
+                log_timestamp = log['timestamp']
+                log_datetime_jst = get_japan_datetime_from_timestamp(log_timestamp)
+                log_date = log_datetime_jst.date()
+                
+                # 昨日以前の学習記録
+                if log_date <= yesterday:
+                    q_id = log.get('question_id', '')
+                    
+                    # analysis_targetでフィルタリング
+                    if analysis_target == "学士試験":
+                        if q_id.startswith('G'):
+                            yesterday_learned_questions.add(q_id)
+                            if q_id in GAKUSHI_HISSHU_Q_NUMBERS_SET:
+                                yesterday_learned_hisshu.add(q_id)
+                    else:
+                        if not q_id.startswith('G'):
+                            yesterday_learned_questions.add(q_id)
+                            if q_id in HISSHU_Q_NUMBERS_SET:
+                                yesterday_learned_hisshu.add(q_id)
+            except Exception:
+                continue
+        
+        yesterday_studied_count = len(yesterday_learned_questions)
+        yesterday_hisshu_studied_count = len(yesterday_learned_hisshu)
+    
+    progress_delta = current_studied_count - yesterday_studied_count
+    hisshu_delta = current_hisshu_studied_count - yesterday_hisshu_studied_count
     accuracy_delta = recent_accuracy - previous_accuracy
     
     return {
@@ -646,10 +848,29 @@ def render_search_page():
     analysis_target = st.session_state.get("analysis_target", "国試")
     level_filter = st.session_state.get("level_filter", LEVEL_ORDER)
     subject_filter = st.session_state.get("subject_filter", [])
-    
+
+    inject_search_page_styles()
+
+    today_date = get_japan_today()
+    today_label = today_date.strftime("%Y/%m/%d (%a)")
+    chip_html = []
+    chip_html.append(f"<span class='ios-chip'>対象 {analysis_target}</span>")
+
+    st.markdown(
+        f"""
+        <div class="ios-hero">
+            <span class="ios-hero__badge">進捗ビュー</span>
+            <div class="ios-hero__title">学習ダッシュボード</div>
+            <div class="ios-hero__subtitle">検索・進捗ページでは、演習データをもとに復習量の偏りや達成状況を確認できます。今日 ({today_label}) の指標をチェックして、次の一手を決めましょう。</div>
+            <div class="ios-hero__chips">{''.join(chip_html)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
     # 権限チェック
     has_gakushi_permission = st.session_state.get('has_gakushi_permission', False)
-    
+
     # 最適化されたデータ準備
     base_df = prepare_data_for_display(uid, cards, analysis_target)
     
@@ -674,15 +895,29 @@ def render_search_page():
         # メトリクス計算には全体データ（フィルタされていない）を使用
         metrics = calculate_progress_metrics(cards, base_df, uid, analysis_target)
         
+        # デバッグ情報表示（開発時のみ）
+        if st.session_state.get("debug_mode", False):
+            st.write(f"デバッグ - 現在学習済み問題数({analysis_target}): {metrics['current_studied_count']}, 昨日時点: {metrics['current_studied_count'] - metrics['progress_delta']}, デルタ: {metrics['progress_delta']}")
+            st.write(f"デバッグ - 必修現在: {metrics['current_hisshu_studied_count']}, 必修昨日時点: {metrics['current_hisshu_studied_count'] - metrics['hisshu_delta']}, 必修デルタ: {metrics['hisshu_delta']}")
+            
+            # 全体の練習記録数と現在の分析対象の関係を表示
+            total_practice_records = len(st.session_state.get('evaluation_logs', []))
+            all_cards = st.session_state.get("cards", {})
+            total_learned_all = sum(1 for card in all_cards.values() if card.get('history') and calculate_card_level(card) != "未学習")
+            
+            st.write(f"デバッグ - 総練習記録数: {total_practice_records}回 | 全分野学習済み: {total_learned_all}問 | {analysis_target}学習済み: {metrics['current_studied_count']}問")
+            st.info(f"💡 表示中: {analysis_target}の学習進捗。全分野の合計は{total_learned_all}問です。")
+        
         # 4つの主要指標をst.metricで表示
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
             progress_delta_text = f"+{metrics['progress_delta']} 問" if metrics['progress_delta'] > 0 else f"{metrics['progress_delta']} 問" if metrics['progress_delta'] < 0 else "変化なし"
             st.metric(
-                "学習進捗率",
+                f"学習進捗率（{analysis_target}）",
                 f"{metrics['current_studied_count']} / {metrics['total_count']} 問",
-                delta=progress_delta_text
+                delta=progress_delta_text,
+                help=f"{analysis_target}で学習済みのユニークな問題数です。同じ問題の復習は重複カウントされません。"
             )
         
         with col2:
@@ -709,24 +944,23 @@ def render_search_page():
                 f"{metrics['recent_accuracy']:.1f}%",
                 delta=f"前週比 {accuracy_delta_text}"
             )
+        
+
     
-    # タブコンテナ - 5つのタブ（メモ一覧を追加）
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["概要", "グラフ分析", "問題リスト", "キーワード検索", "📝 メモ一覧"])
+    # タブコンテナ - 4つのタブ
+    tab1, tab2, tab3, tab4 = st.tabs(["概要", "グラフ分析", "問題リスト", "キーワード検索"])
     
     with tab1:
         render_overview_tab_perfect(filtered_df, base_df, ALL_QUESTIONS, analysis_target)
     
     with tab2:
-        render_graph_analysis_tab_perfect(filtered_df)
+        render_graph_analysis_tab_perfect(filtered_df, base_df, analysis_target)
     
     with tab3:
         render_question_list_tab_perfect(filtered_df, analysis_target)
     
     with tab4:
         render_keyword_search_tab_perfect(analysis_target)
-    
-    with tab5:
-        render_notes_tab()
 
 def render_overview_tab_perfect(filtered_df: pd.DataFrame, base_df: pd.DataFrame, all_questions: List, analysis_target: str):
     """
@@ -736,6 +970,18 @@ def render_overview_tab_perfect(filtered_df: pd.DataFrame, base_df: pd.DataFrame
     if filtered_df.empty:
         st.warning("選択された条件に一致する問題がありません。")
     else:
+        cards_state = st.session_state.get('cards', {})
+        relevant_ids = [q_id for q_id in filtered_df['id'].tolist() if q_id]
+        target_cards = {q_id: cards_state[q_id] for q_id in relevant_ids if q_id in cards_state}
+
+        hisshu_set = GAKUSHI_HISSHU_Q_NUMBERS_SET if analysis_target == "学士試験" else HISSHU_Q_NUMBERS_SET
+
+        # 削除: デイリーレビュープランナー機能
+        # ユーザー要望により、復習計画の自動生成機能は削除しました。
+        # シンプルに学習状況のサマリーのみを表示します。
+
+        st.markdown("---")
+
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("##### カード習熟度分布（全体）")
@@ -774,14 +1020,15 @@ def render_overview_tab_perfect(filtered_df: pd.DataFrame, base_df: pd.DataFrame
             hisshu_retention_rate = (hisshu_correct_reviews / hisshu_total_reviews * 100) if hisshu_total_reviews > 0 else 0
             st.metric(label=hisshu_label, value=f"{hisshu_retention_rate:.1f}%", delta=f"{hisshu_correct_reviews} / {hisshu_total_reviews} 回")
 
-def render_graph_analysis_tab_perfect(filtered_df: pd.DataFrame):
+def render_graph_analysis_tab_perfect(filtered_df: pd.DataFrame, base_df: pd.DataFrame, analysis_target: str):
     """
     グラフ分析タブ - 学習データの可視化
     """
     st.subheader("学習データの可視化")
     if filtered_df.empty:
         st.warning("選択された条件に一致する問題がありません。")
-    else:
+
+    if not filtered_df.empty:
         st.markdown("##### 学習の記録")
         review_history = []
         for history_list in filtered_df["history"]:
@@ -798,7 +1045,6 @@ def render_graph_analysis_tab_perfect(filtered_df: pd.DataFrame):
 
         if review_history:
             from collections import Counter
-            import pandas as pd  # ローカルスコープで確実にインポート
             review_counts = Counter(review_history)
             ninety_days_ago = get_japan_today() - datetime.timedelta(days=90)  # 日本時間ベース
             dates = [ninety_days_ago + datetime.timedelta(days=i) for i in range(91)]
@@ -807,7 +1053,6 @@ def render_graph_analysis_tab_perfect(filtered_df: pd.DataFrame):
 
             # plotlyを使ってy軸の最小値を0に固定
             try:
-                import plotly.express as px
                 fig = px.bar(chart_df, x="Date", y="Reviews", 
                             title="日々の学習量（過去90日間）")
                 fig.update_layout(
@@ -822,47 +1067,311 @@ def render_graph_analysis_tab_perfect(filtered_df: pd.DataFrame):
             st.info("選択された範囲にレビュー履歴がまだありません。")
 
         st.markdown("##### 学習レベル別分布")
-        if not filtered_df.empty:
-            level_counts = filtered_df['level'].value_counts()
+        level_counts = filtered_df['level'].value_counts()
 
-            # 色分け定義
-            level_colors_chart = {
-                "未学習": "#757575", "レベル0": "#FF9800", "レベル1": "#FFC107",
-                "レベル2": "#8BC34A", "レベル3": "#9C27B0", "レベル4": "#03A9F4",
-                "レベル5": "#1E88E5", "習得済み": "#4CAF50"
-            }
+        # 色分け定義
+        level_colors_chart = {
+            "未学習": "#757575", "レベル0": "#FF9800", "レベル1": "#FFC107",
+            "レベル2": "#8BC34A", "レベル3": "#9C27B0", "レベル4": "#03A9F4",
+            "レベル5": "#1E88E5", "習得済み": "#4CAF50"
+        }
 
-            try:
-                import plotly.express as px
-                import pandas as pd
+        try:
+            # レベル順に並べ替え
+            chart_data = []
+            for level in LEVEL_ORDER:
+                if level in level_counts.index:
+                    chart_data.append({"Level": level, "Count": level_counts[level]})
 
-                # レベル順に並べ替え
-                chart_data = []
-                colors = []
+            chart_df = pd.DataFrame(chart_data)
 
-                for level in LEVEL_ORDER:
-                    if level in level_counts.index:
-                        chart_data.append({"Level": level, "Count": level_counts[level]})
-                        colors.append(level_colors_chart.get(level, "#888888"))
+            fig = px.bar(chart_df, x="Level", y="Count", 
+                        title="学習レベル別問題数",
+                        color="Level",
+                        color_discrete_map=level_colors_chart)
+            fig.update_layout(
+                yaxis=dict(range=[0, None]),
+                showlegend=False,
+                xaxis_tickangle=-45
+            )
+            st.plotly_chart(fig, use_container_width=True)
 
-                chart_df = pd.DataFrame(chart_data)
+        except ImportError:
+            # plotlyが利用できない場合は基本的なbar_chart
+            st.bar_chart(level_counts)
+    else:
+        st.info("学習データがありません。")
 
-                fig = px.bar(chart_df, x="Level", y="Count", 
-                            title="学習レベル別問題数",
-                            color="Level",
-                            color_discrete_map=level_colors_chart)
-                fig.update_layout(
-                    yaxis=dict(range=[0, None]),
-                    showlegend=False,
-                    xaxis_tickangle=-45
-                )
-                st.plotly_chart(fig, use_container_width=True)
+    # --- 科目別の進捗状況と正答率（analysis_targetに応じて更新） ---
+    if base_df.empty:
+        st.info(f"{analysis_target}の科目データがまだ読み込まれていません。")
+        return
 
-            except ImportError:
-                # plotlyが利用できない場合は基本的なbar_chart
-                st.bar_chart(level_counts)
+    subject_filter = st.session_state.get("subject_filter", [])
+    subject_df = base_df.copy()
+    if subject_filter:
+        subject_df = subject_df[subject_df['subject'].isin(subject_filter)]
+
+    if subject_df.empty:
+        st.info("表示対象の科目がありません。サイドバーの科目フィルターを確認してください。")
+        return
+
+    subject_df = subject_df.copy()
+    subject_df['subject_display'] = subject_df['subject'].apply(
+        lambda s: s.strip() if isinstance(s, str) and s.strip() else "未分類"
+    )
+    subject_df['is_studied'] = subject_df['level'].fillna('未学習') != "未学習"
+
+    progress_summary = (
+        subject_df.groupby('subject_display')
+        .agg(
+            total_questions=('id', 'count'),
+            studied_questions=('is_studied', 'sum')
+        )
+        .reset_index()
+    )
+    if progress_summary.empty:
+        st.info("科目別の進捗データがありません。")
+    else:
+        progress_summary['studied_questions'] = progress_summary['studied_questions'].astype(int)
+        progress_summary['progress_pct'] = (
+            progress_summary['studied_questions'] / progress_summary['total_questions']
+        ) * 100
+        progress_summary['progress_text'] = progress_summary.apply(
+            lambda row: f"{row['progress_pct']:.1f}% ({int(row['studied_questions'])}/{int(row['total_questions'])}問)",
+            axis=1
+        )
+        
+        # 正答率の計算
+        def _count_history_attempts(history_list: Any) -> Tuple[int, int]:
+            attempts = 0
+            correct = 0
+            if isinstance(history_list, list):
+                for record in history_list:
+                    if not isinstance(record, dict):
+                        continue
+                    if 'is_correct' in record:
+                        attempts += 1
+                        if record.get('is_correct'):
+                            correct += 1
+                    elif 'quality' in record:
+                        attempts += 1
+                        if record.get('quality', 0) >= 3:
+                            correct += 1
+            return attempts, correct
+
+        attempts_series = subject_df['history'].apply(_count_history_attempts)
+        subject_df['total_attempts'] = attempts_series.apply(lambda x: x[0])
+        subject_df['correct_attempts'] = attempts_series.apply(lambda x: x[1])
+
+        accuracy_summary = (
+            subject_df.groupby('subject_display')
+            .agg(
+                total_attempts=('total_attempts', 'sum'),
+                correct_attempts=('correct_attempts', 'sum')
+            )
+            .reset_index()
+        )
+
+        accuracy_summary['accuracy_pct'] = accuracy_summary.apply(
+            lambda row: (row['correct_attempts'] / row['total_attempts'] * 100) if row['total_attempts'] > 0 else None,
+            axis=1
+        )
+        
+        
+        # --- 科目別レーダーチャート（基礎・臨床） ---
+        st.markdown("##### 科目別正答率レーダーチャート")
+        
+        # データマージ: progress_summary と accuracy_summary を結合
+        combined_df = progress_summary.merge(
+            accuracy_summary[['subject_display', 'accuracy_pct', 'total_attempts', 'correct_attempts']], 
+            on='subject_display', 
+            how='left'
+        )
+        
+        # NaN処理
+        combined_df['accuracy_pct'] = combined_df['accuracy_pct'].fillna(0)
+        
+        if combined_df.empty:
+            st.info("科目別のデータがありません。")
         else:
-            st.info("学習データがありません。")
+            try:
+                import plotly.graph_objects as go
+                
+                # 科目定義
+                KISO_SUBJECTS = [
+                    "解剖学", "歯科理工学", "組織学", "生理学", "病理学", "薬理学", 
+                    "微生物学・免疫学", "衛生学", "発生学・加齢老年学", "生化学"
+                ]
+                RINSHOU_SUBJECTS = [
+                    "保存修復学", "歯周病学", "歯内治療学", "クラウンブリッジ学", 
+                    "部分床義歯学", "全部床義歯学", "インプラント学", "口腔外科学", 
+                    "歯科放射線学", "歯科麻酔学", "矯正歯科学", "小児歯科学"
+                ]
+                
+                # データ分割
+                kiso_df = combined_df[combined_df['subject_display'].isin(KISO_SUBJECTS)].copy()
+                rinshou_df = combined_df[combined_df['subject_display'].isin(RINSHOU_SUBJECTS)].copy()
+                
+                # 不足している科目を0%で補完
+                for subj in KISO_SUBJECTS:
+                    if subj not in kiso_df['subject_display'].values:
+                        new_row = pd.DataFrame({'subject_display': [subj], 'accuracy_pct': [0]})
+                        kiso_df = pd.concat([kiso_df, new_row], ignore_index=True)
+                
+                for subj in RINSHOU_SUBJECTS:
+                    if subj not in rinshou_df['subject_display'].values:
+                        new_row = pd.DataFrame({'subject_display': [subj], 'accuracy_pct': [0]})
+                        rinshou_df = pd.concat([rinshou_df, new_row], ignore_index=True)
+                
+                # 順序を固定
+                kiso_df = kiso_df.set_index('subject_display').reindex(KISO_SUBJECTS).reset_index()
+                rinshou_df = rinshou_df.set_index('subject_display').reindex(RINSHOU_SUBJECTS).reset_index()
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("###### 基礎系科目")
+                    fig_kiso = go.Figure()
+                    fig_kiso.add_trace(go.Scatterpolar(
+                        r=kiso_df['accuracy_pct'],
+                        theta=kiso_df['subject_display'],
+                        fill='toself',
+                        name='基礎系',
+                        line_color='#1f77b4'
+                    ))
+                    fig_kiso.update_layout(
+                        polar=dict(
+                            radialaxis=dict(visible=True, range=[0, 100]),
+                        ),
+                        showlegend=False,
+                        height=400,
+                        margin=dict(l=40, r=40, t=20, b=20)
+                    )
+                    st.plotly_chart(fig_kiso, use_container_width=True)
+                
+                with col2:
+                    st.markdown("###### 臨床系科目")
+                    fig_rinshou = go.Figure()
+                    fig_rinshou.add_trace(go.Scatterpolar(
+                        r=rinshou_df['accuracy_pct'],
+                        theta=rinshou_df['subject_display'],
+                        fill='toself',
+                        name='臨床系',
+                        line_color='#ff7f0e'
+                    ))
+                    fig_rinshou.update_layout(
+                        polar=dict(
+                            radialaxis=dict(visible=True, range=[0, 100]),
+                        ),
+                        showlegend=False,
+                        height=400,
+                        margin=dict(l=40, r=40, t=20, b=20)
+                    )
+                    st.plotly_chart(fig_rinshou, use_container_width=True)
+                
+                # 象限別分析（既存のロジックを維持）
+                st.markdown("### 📊 科目別詳細分析")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("#### ⚠️ 要復習（高進捗×低正答率）")
+                    weak_subjects = combined_df[
+                        (combined_df['progress_pct'] >= 50) & 
+                        (combined_df['accuracy_pct'] < 80)
+                    ].sort_values('accuracy_pct')
+                    
+                    if not weak_subjects.empty:
+                        for _, row in weak_subjects.iterrows():
+                            st.markdown(
+                                f"- **{row['subject_display']}**: "
+                                f"進捗{row['progress_pct']:.1f}% / 正答率{row['accuracy_pct']:.1f}%"
+                            )
+                    else:
+                        st.success("該当なし✅")
+                    
+                    st.markdown("#### 📈 ポテンシャル（低進捗×高正答率）")
+                    potential_subjects = combined_df[
+                        (combined_df['progress_pct'] < 50) & 
+                        (combined_df['accuracy_pct'] >= 80)
+                    ].sort_values('progress_pct', ascending=False)
+                    
+                    if not potential_subjects.empty:
+                        for _, row in potential_subjects.iterrows():
+                            st.markdown(
+                                f"- **{row['subject_display']}**: "
+                                f"進捗{row['progress_pct']:.1f}% / 正答率{row['accuracy_pct']:.1f}%"
+                            )
+                    else:
+                        st.info("該当なし")
+                
+                with col2:
+                    st.markdown("#### 🌟 マスター（高進捗×高正答率）")
+                    master_subjects = combined_df[
+                        (combined_df['progress_pct'] >= 50) & 
+                        (combined_df['accuracy_pct'] >= 80)
+                    ].sort_values('accuracy_pct', ascending=False)
+                    
+                    if not master_subjects.empty:
+                        for _, row in master_subjects.iterrows():
+                            st.markdown(
+                                f"- **{row['subject_display']}**: "
+                                f"進捗{row['progress_pct']:.1f}% / 正答率{row['accuracy_pct']:.1f}%"
+                            )
+                    else:
+                        st.info("該当なし")
+                    
+                    st.markdown("#### 🆕 未着手（低進捗×低正答率）")
+                    unexplored_subjects = combined_df[
+                        (combined_df['progress_pct'] < 50) & 
+                        (combined_df['accuracy_pct'] < 80)
+                    ].sort_values('progress_pct')
+                    
+                    if not unexplored_subjects.empty:
+                        for _, row in unexplored_subjects.iterrows():
+                            st.markdown(
+                                f"- **{row['subject_display']}**: "
+                                f"進捗{row['progress_pct']:.1f}% / 正答率{row['accuracy_pct']:.1f}%"
+                            )
+                    else:
+                        st.info("該当なし")
+                
+            except ImportError:
+                # Plotlyが利用できない場合は従来の棒グラフを表示
+                st.warning("Plotlyが利用できないため、従来表示に切り替えます。")
+                
+                progress_chart_df = progress_summary.sort_values('progress_pct', ascending=True)
+                progress_fig = px.bar(
+                    progress_chart_df,
+                    x='progress_pct',
+                    y='subject_display',
+                    orientation='h',
+                    text='progress_text',
+                    color='progress_pct',
+                    color_continuous_scale='Blues',
+                    title=f"{analysis_target} 科目別進捗率（学習済み問題割合）"
+                )
+                st.plotly_chart(progress_fig, use_container_width=True)
+                
+                accuracy_chart_df = accuracy_valid.sort_values('accuracy_pct', ascending=False)
+                accuracy_fig = px.bar(
+                    accuracy_chart_df,
+                    x='accuracy_pct',
+                    y='subject_display',
+                    orientation='h',
+                    text='accuracy_text',
+                    color='accuracy_pct',
+                    color_continuous_scale='Teal',
+                    title=f"{analysis_target} 科目別平均正答率"
+                )
+                st.plotly_chart(accuracy_fig, use_container_width=True)
+
+    no_history_subjects = accuracy_summary[
+        accuracy_summary['total_attempts'] == 0
+    ]['subject_display'].tolist()
+    if no_history_subjects:
+        st.caption("学習履歴が未登録の科目: " + "、".join(no_history_subjects))
 
 def render_question_list_tab_perfect(filtered_df: pd.DataFrame, analysis_target: str = "国試"):
     """
@@ -1255,108 +1764,7 @@ def render_keyword_search_tab_perfect(analysis_target: str):
                 st.info("キーワードを入力して検索してください")
 
 
-def render_notes_tab():
-    """メモ一覧タブの描画"""
-    st.markdown("## 📝 学習メモ一覧")
-    
-    uid = st.session_state.get("uid")
-    if not uid:
-        st.warning("ログインしてください")
-        return
-    
-    from modules.notes_manager import NotesManager
-    from utils import ALL_QUESTIONS
-    
-    # 全メモを取得
-    all_notes = NotesManager.get_all_user_notes(uid)
-    
-    if not all_notes:
-        st.info("まだメモがありません。問題演習後にメモを追加してみましょう！")
-        return
-    
-    # フィルター
-    st.markdown("### 🔍 フィルター")
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        filter_type = st.selectbox(
-            "メモタイプ",
-            ["すべて", "画像付きのみ"],
-            key="note_filter_type"
-        )
-    
-    with col2:
-        sort_order = st.selectbox(
-            "並び順",
-            ["新しい順", "古い順", "問題番号順"],
-            key="note_sort_order"
-        )
-    
-    with col3:
-        search_keyword = st.text_input(
-            "🔎 キーワード検索",
-            placeholder="メモ内容や問題番号で検索...",
-            key="note_search"
-        )
-    
-    st.markdown("---")
-    st.markdown(f"### 📋 メモ一覧（{len(all_notes)}問）")
-    
-    for note_data in all_notes:
-        question_id = note_data.get("question_id")
-        notes = note_data.get("notes", [])
-        last_updated = note_data.get("last_updated", "")
-        
-        # フィルタリング
-        if filter_type == "画像付きのみ":
-            notes = [n for n in notes if n.get("images")]
-        
-        if search_keyword:
-            notes = [n for n in notes if search_keyword.lower() in n.get("content", "").lower()]
-        
-        if not notes:
-            continue
-        
-        # ALL_QUESTIONSリストから問題を検索
-        question = None
-        for q in ALL_QUESTIONS:
-            if q.get("number") == question_id:
-                question = q
-                break
-        
-        if question:
-            question_text = question.get("question", "問題文なし")[:100] + "..."
-            subject = question.get("subject", "未分類")
-        else:
-            question_text = "問題文が見つかりません"
-            subject = "未分類"
-        
-        with st.expander(f"**{question_id}** - {subject}", expanded=False):
-            st.markdown(f"📄 **問題**: {question_text}")
-            st.markdown(f"🕒 **最終更新**: {last_updated[:16] if last_updated else '不明'}")
-            
-            # キーをより具体的にして一意性を保証
-            if st.button(f"🎯 この問題を解く", key=f"notes_list_jump_to_{question_id}"):
-                st.session_state["current_q_group"] = [question_id]
-                st.session_state["session_choice_made"] = True
-                st.session_state["session_type"] = "メモから復習"
-                st.session_state["page"] = "練習"
-                st.rerun()
-            
-            st.markdown("---")
-            
-            for i, note in enumerate(notes):
-                NotesManager.render_note_display(note)
-                
-                col1, col2 = st.columns([4, 1])
-                with col2:
-                    # 削除ボタンのキーも具体的に
-                    if st.button("🗑️", key=f"notes_list_delete_{question_id}_{i}"):
-                        if NotesManager.delete_note(uid, question_id, i):
-                            st.success("削除しました")
-                            st.rerun()
-                
-                st.markdown("---")
+
 
 
 # メイン関数

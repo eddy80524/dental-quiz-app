@@ -10,36 +10,56 @@ from collections import defaultdict
 import logging
 from google.cloud import logging as cloud_logging
 import functions_framework
-from flask import Request, Flask, request
+from flask import Request, Flask, request, jsonify, make_response
+from firebase_admin import auth
+import json
 
 # --- グローバル変数の設定 ---
+print("Initializing global variables...")
 
 # Firebase初期化（一度だけ実行）
 if not firebase_admin._apps:
     try:
+        print("Attempting Firebase initialization...")
         # Cloud Functions環境では自動的にサービスアカウントが利用される
         cred = credentials.ApplicationDefault()
         firebase_admin.initialize_app(cred)
+        print("Firebase initialized with ApplicationDefault")
     except Exception as e:
-        # ローカル環境などでの代替初期化
-        firebase_admin.initialize_app()
+        print(f"Firebase init error (ApplicationDefault): {e}")
+        try:
+            # ローカル環境などでの代替初期化
+            firebase_admin.initialize_app()
+            print("Firebase initialized with default")
+        except Exception as e2:
+            print(f"Firebase init error (default): {e2}")
 
+try:
+    print("Initializing Firestore client...")
+    db = firestore.client()
+    print("Firestore client initialized")
+except Exception as e:
+    print(f"Firestore client init error: {e}")
+    db = None
 
-db = firestore.client()
 JST = pytz.timezone("Asia/Tokyo")
 
 # Cloud Loggingクライアント設定
 try:
+    print("Initializing Cloud Logging...")
     client = cloud_logging.Client()
     client.setup_logging()
+    print("Cloud Logging initialized")
 except Exception as e:
     # ローカル実行などで権限がない場合、標準ロギングにフォールバック
+    print(f"Cloud Logging init error: {e}")
     logging.basicConfig(level=logging.INFO)
     logging.warning(f"Cloud Loggingの初期化に失敗しました: {e}")
 
 # Pythonの標準ロギング
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+print("Global initialization complete.")
 
 
 # === ランキング計算ロジック（スタンドアロン版） ===
@@ -434,6 +454,77 @@ def import_ranking_updater():
         logger.error(f"Current sys.path: {sys.path}")
         raise
 
+# === Firebase Callable Function Helpers ===
+
+def handle_cors(request: Request):
+    """CORSヘッダーを処理する"""
+    if request.method == 'OPTIONS':
+        headers = {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'POST',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+            'Access-Control-Max-Age': '3600'
+        }
+        return ('', 204, headers)
+    
+    headers = {
+        'Access-Control-Allow-Origin': '*'
+    }
+    return headers
+
+def verify_auth_and_get_data(request: Request) -> Tuple[str, Dict[str, Any]]:
+    """
+    認証トークンを検証し、リクエストデータを取得する
+    Returns: (uid, data)
+    Raises: ValueError if auth fails or data is invalid
+    """
+    # Authorizationヘッダーの確認
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        raise ValueError("Unauthenticated: No token provided")
+    
+    id_token = auth_header.split('Bearer ')[1]
+    
+    try:
+        decoded_token = auth.verify_id_token(id_token)
+        uid = decoded_token['uid']
+    except Exception as e:
+        raise ValueError(f"Unauthenticated: Invalid token - {e}")
+    
+    # リクエストデータの取得 (Callable形式: {"data": ...})
+    try:
+        request_json = request.get_json(silent=True)
+        if request_json and 'data' in request_json:
+            data = request_json['data']
+        else:
+            data = request_json or {}
+    except Exception:
+        data = {}
+        
+    return uid, data
+
+def create_callable_response(result: Any) -> Tuple[Any, int, Dict[str, str]]:
+    """Callable形式のレスポンスを作成する ({"result": ...})"""
+    return (
+        jsonify({"result": result}),
+        200,
+        {'Access-Control-Allow-Origin': '*'}
+    )
+
+def create_error_response(code: str, message: str, status: int = 500) -> Tuple[Any, int, Dict[str, str]]:
+    """エラーレスポンスを作成する"""
+    return (
+        jsonify({
+            "error": {
+                "status": code,
+                "message": message
+            }
+        }),
+        status,
+        {'Access-Control-Allow-Origin': '*'}
+    )
+
+
 # === Cloud Functions エンドポイント ===
 
 @functions_framework.http
@@ -547,9 +638,272 @@ def healthCheck(request: Request) -> Dict[str, Any]:
         'modules_import': modules_ok,
         'should_update_today': should_update,
         'function_name': os.environ.get('K_SERVICE', 'dental-ranking-functions'),
-        'version': '1.0.1' # バージョンを更新
+        'version': '1.0.2' # バージョンを更新
     }
 
+@functions_framework.http
+def getDailyQuiz(request: Request) -> Any:
+    """
+    復習対象のカードを取得する (Callable)
+    """
+    # CORS対応
+    cors_res = handle_cors(request)
+    if isinstance(cors_res, tuple):
+        return cors_res
+    
+    try:
+        # 認証とデータ取得
+        uid, _ = verify_auth_and_get_data(request)
+        logger.info(f"Processing getDailyQuiz for user: {uid}")
+        
+        # 復習対象カード取得
+        now = datetime.datetime.now(datetime.timezone.utc)
+        
+        # Firestoreクエリ
+        # sm2_data.due_date <= now
+        cards_ref = db.collection("study_cards")
+        query = cards_ref.where("uid", "==", uid)\
+                         .where("sm2_data.due_date", "<=", now)\
+                         .order_by("sm2_data.due_date")\
+                         .limit(20)
+        
+        docs = query.stream()
+        
+        review_question_ids = []
+        for doc in docs:
+            data = doc.to_dict()
+            if 'question_id' in data:
+                review_question_ids.append(data['question_id'])
+                
+        # 新規問題（今回は簡易実装で空リスト）
+        new_question_ids = []
+        
+        all_question_ids = review_question_ids + new_question_ids
+        
+        logger.info(f"User {uid}: Returning {len(all_question_ids)} questions")
+        
+        return create_callable_response({
+            "success": True,
+            "questionIds": all_question_ids,
+            "reviewCount": len(review_question_ids),
+            "newCount": len(new_question_ids),
+            "reviewCards": review_question_ids,
+            "newCards": new_question_ids
+        })
+        
+    except ValueError as e:
+        logger.warning(f"Auth error in getDailyQuiz: {e}")
+        return create_error_response("unauthenticated", str(e), 401)
+    except Exception as e:
+        logger.error(f"Error in getDailyQuiz: {e}")
+        logger.error(traceback.format_exc())
+        return create_error_response("internal", "An error occurred while fetching the quiz")
+
+
+        return create_error_response("internal", "An error occurred while fetching the quiz")
+
+@functions_framework.http
+def logStudyActivity(request: Request) -> Any:
+    """
+    学習活動を記録する (Callable)
+    """
+    cors_res = handle_cors(request)
+    if isinstance(cors_res, tuple):
+        return cors_res
+        
+    try:
+        uid, data = verify_auth_and_get_data(request)
+        logger.info(f"Processing logStudyActivity for user: {uid}")
+        
+        question_id = data.get('questionId')
+        quality = data.get('quality')
+        is_correct = data.get('isCorrect', False)
+        
+        if not question_id or quality is None:
+            return create_error_response("invalid-argument", "questionId and quality are required", 400)
+            
+        # SM2アルゴリズムのインポート
+        setup_python_path()
+        from my_llm_app.utils import SM2Algorithm
+        
+        # カード取得
+        card_ref = db.collection("study_cards").document(f"{uid}_{question_id}")
+        card_doc = card_ref.get()
+        
+        now = datetime.datetime.now(datetime.timezone.utc)
+        
+        if card_doc.exists:
+            card_data = card_doc.to_dict()
+        else:
+            # 新規カード作成
+            card_data = {
+                "uid": uid,
+                "question_id": question_id,
+                "sm2_data": {
+                    "n": 0,
+                    "ef": 2.5,
+                    "interval": 0,
+                    "due_date": now
+                },
+                "performance": {
+                    "total_attempts": 0,
+                    "correct_attempts": 0,
+                    "avg_quality": 0.0,
+                    "last_quality": 0
+                },
+                "metadata": {
+                    "created_at": now,
+                    "updated_at": now,
+                    "subject": "未分類"
+                },
+                "history": []
+            }
+            
+        # SM2更新のためのデータ準備（スキーマ変換）
+        sm2_data = card_data.get("sm2_data", {})
+        
+        # Python utils.py は EF, n, I を期待する
+        # TS/Firestore は ef, n, interval を持っている
+        sm2_params = {
+            "EF": sm2_data.get("ef", 2.5),
+            "n": sm2_data.get("n", 0),
+            "I": sm2_data.get("interval", 0),
+            "history": card_data.get("history", [])
+        }
+        
+        # SM2更新実行
+        # utils.pyのsm2_updateは辞書を更新して返す
+        updated_params = SM2Algorithm.sm2_update(sm2_params, quality, now)
+        
+        # 結果をFirestoreスキーマに戻す
+        new_ef = updated_params.get("EF", 2.5)
+        new_n = updated_params.get("n", 0)
+        new_interval = updated_params.get("I", 0)
+        next_review_iso = updated_params.get("next_review")
+        
+        if next_review_iso:
+            next_review_dt = datetime.datetime.fromisoformat(next_review_iso)
+        else:
+            next_review_dt = now + datetime.timedelta(days=new_interval)
+            
+        # sm2_data更新
+        card_data["sm2_data"] = {
+            "n": new_n,
+            "ef": new_ef,
+            "interval": new_interval,
+            "due_date": next_review_dt,
+            "last_studied": now
+        }
+        
+        # history更新
+        card_data["history"] = updated_params.get("history", [])
+        
+        # performance更新
+        perf = card_data.get("performance", {})
+        total_attempts = perf.get("total_attempts", 0) + 1
+        correct_attempts = perf.get("correct_attempts", 0) + (1 if is_correct else 0)
+        avg_quality = perf.get("avg_quality", 0)
+        # 平均品質の更新
+        new_avg_quality = ((avg_quality * (total_attempts - 1)) + quality) / total_attempts
+        
+        card_data["performance"] = {
+            "total_attempts": total_attempts,
+            "correct_attempts": correct_attempts,
+            "avg_quality": new_avg_quality,
+            "last_quality": quality
+        }
+        
+        card_data["metadata"]["updated_at"] = now
+        
+        # 保存
+        card_ref.set(card_data)
+        
+        # 日次分析サマリー更新 (analytics_summary)
+        today_str = now.astimezone(JST).strftime("%Y-%m-%d")
+        summary_ref = db.collection("analytics_summary").document(f"{uid}_daily_{today_str}")
+        
+        summary_ref.set({
+            "uid": uid,
+            "period": "daily",
+            "date": today_str,
+            "metrics": {
+                "questions_answered": firestore.Increment(1),
+                "correct_answers": firestore.Increment(1 if is_correct else 0),
+                "study_time_minutes": firestore.Increment(1)
+            },
+            "updated_at": now
+        }, merge=True)
+        
+        # ユーザー統計更新
+        db.collection("users").document(uid).set({
+            "statistics": {
+                "total_questions_answered": firestore.Increment(1),
+                "total_correct_answers": firestore.Increment(1 if is_correct else 0),
+                "last_study_date": today_str
+            }
+        }, merge=True)
+        
+        return create_callable_response({
+            "success": True,
+            "updatedCard": card_data
+        })
+        
+    except ValueError as e:
+        return create_error_response("unauthenticated", str(e), 401)
+    except Exception as e:
+        logger.error(f"Error in logStudyActivity: {e}")
+        logger.error(traceback.format_exc())
+        return create_error_response("internal", "An error occurred while logging study activity")
+
+@functions_framework.http
+def submitStudySession(request: Request) -> Any:
+    """
+    学習セッションを記録する (Callable)
+    """
+    cors_res = handle_cors(request)
+    if isinstance(cors_res, tuple):
+        return cors_res
+        
+    try:
+        uid, data = verify_auth_and_get_data(request)
+        
+        session_id = data.get('sessionId')
+        responses = data.get('responses', [])
+        start_time = data.get('startTime')
+        end_time = data.get('endTime')
+        
+        if not session_id:
+            return create_error_response("invalid-argument", "sessionId is required", 400)
+            
+        now = datetime.datetime.now(datetime.timezone.utc)
+        
+        # セッションデータ保存
+        session_data = {
+            "uid": uid,
+            "session_id": session_id,
+            "start_time": datetime.datetime.fromisoformat(start_time.replace('Z', '+00:00')) if start_time else now,
+            "end_time": datetime.datetime.fromisoformat(end_time.replace('Z', '+00:00')) if end_time else now,
+            "total_questions": len(responses),
+            "correct_answers": sum(1 for r in responses if r.get('isCorrect')),
+            "responses": responses,
+            "created_at": now
+        }
+        
+        db.collection("study_sessions").document(session_id).set(session_data)
+        
+        # 個別の回答処理は logStudyActivity で行われるため、ここではセッション記録のみ
+        
+        return create_callable_response({
+            "success": True,
+            "sessionId": session_id,
+            "processed": len(responses)
+        })
+        
+    except ValueError as e:
+        return create_error_response("unauthenticated", str(e), 401)
+    except Exception as e:
+        logger.error(f"Error in submitStudySession: {e}")
+        return create_error_response("internal", "Failed to submit study session")
 # === ローカルでのテスト実行用 ===
 def main():
     """ローカルでのテスト実行用"""
@@ -563,14 +917,26 @@ def main():
     def local_health():
         return healthCheck(Request(environ=request.environ))
         
+    @app.route('/getDailyQuiz', methods=['POST'])
+    def local_get_quiz():
+        return getDailyQuiz(Request(environ=request.environ))
+        
+    @app.route('/logStudyActivity', methods=['POST'])
+    def local_log_activity():
+        return logStudyActivity(Request(environ=request.environ))
+        
+    @app.route('/submitStudySession', methods=['POST'])
+    def local_submit_session():
+        return submitStudySession(Request(environ=request.environ))
+        
     print("ローカルテストサーバーを起動します: http://localhost:8080")
     print("エンドポイント:")
-    print("  - http://localhost:8080/update-rankings?force=true&dry_run=true")
     print("  - http://localhost:8080/health")
+    print("  - POST http://localhost:8080/getDailyQuiz")
     
-    # Flaskアプリを直接実行する代わりに、開発サーバーを使用
-    from werkzeug.serving import run_simple
-    run_simple('localhost', 8080, app, use_reloader=True, use_debugger=True)
+    # Flaskアプリを直接実行
+    app.run(host='localhost', port=8080, debug=True, use_reloader=False)
 
 if __name__ == '__main__':
+    print("Starting main with app.run()...")
     main()

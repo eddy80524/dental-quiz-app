@@ -277,10 +277,7 @@ class FirestoreManager:
         """セッション状態を読み込み（uid統一版）（詳細デバッグ強化版）"""
         start = time.time()
         
-        print(f"[DEBUG] load_session_state開始 - uid: {uid}")
-        
         if not uid:
-            print("[DEBUG] UIDが空です - デフォルト空データを返します")
             return {
                 "main_queue": [],
                 "question_queue": [],
@@ -290,18 +287,13 @@ class FirestoreManager:
         
         try:
             session_ref = self.db.collection("users").document(uid).collection("sessionState").document("current")
-            print(f"[DEBUG] Firestore参照: users/{uid}/sessionState/current")
-            
             session_doc = session_ref.get(timeout=5)
-            print(f"[DEBUG] セッション文書取得完了 - exists: {session_doc.exists}")
             
             if session_doc.exists:
                 session_data = session_doc.to_dict()
-                print(f"[DEBUG] 取得したセッションデータ構造: {list(session_data.keys()) if session_data else 'None'}")
                 
                 # メタデータの詳細確認
                 session_metadata = session_data.get("session_metadata", {})
-                print(f"[DEBUG] セッションメタデータ: {session_metadata}")
                 
                 # 各キューの詳細確認
                 main_queue_raw = session_data.get("main_queue", [])
@@ -309,28 +301,20 @@ class FirestoreManager:
                 question_queue_raw = session_data.get("question_queue", [])
                 short_term_raw = session_data.get("short_term_review_queue", [])
                 
-                print(f"[DEBUG] 生データ - main_queue長: {len(main_queue_raw)}, current_q_group長: {len(current_q_group_raw)}, question_queue長: {len(question_queue_raw)}, short_term長: {len(short_term_raw)}")
-                
                 # Firestore対応：JSON文字列を元のリスト形式に復元
                 def deserialize_queue(queue, queue_name="unknown"):
-                    print(f"[DEBUG] {queue_name}のデシリアライズ開始 - 元サイズ: {len(queue)}")
                     deserialized = []
                     for i, item in enumerate(queue):
                         try:
                             if isinstance(item, str):
                                 parsed_item = json.loads(item)
                                 deserialized.append(parsed_item)
-                                print(f"[DEBUG] {queue_name}[{i}]: JSON解析成功")
                             elif isinstance(item, list):
                                 deserialized.append(item)
-                                print(f"[DEBUG] {queue_name}[{i}]: リスト形式そのまま")
                             else:
-                                print(f"[DEBUG] {queue_name}[{i}]: 辞書形式そのまま - {type(item)}")
                                 deserialized.append(item)
                         except (json.JSONDecodeError, TypeError) as e:
-                            print(f"[DEBUG] {queue_name}[{i}]: デシリアライズエラー - {e}")
                             continue
-                    print(f"[DEBUG] {queue_name}のデシリアライズ完了 - 結果サイズ: {len(deserialized)}")
                     return deserialized
                 
                 result = {
@@ -349,12 +333,8 @@ class FirestoreManager:
                     "last_activity_time": session_metadata.get("last_activity_time", "")
                 }
                 
-                print(f"[DEBUG] 最終結果 - main_queue: {len(result['main_queue'])}, current_q_group: {len(result['current_q_group'])}, question_queue: {len(result['question_queue'])}, session_type: {result['session_type']}")
-                print(f"[DEBUG] load_session_state処理時間: {time.time() - start:.3f}秒")
-                
                 return result
             else:
-                print("[DEBUG] セッション文書が存在しません - デフォルト空データを返します")
                 return {
                     "main_queue": [],
                     "question_queue": [],
@@ -635,8 +615,6 @@ class FirestoreManager:
     def fetch_ranking_data_optimized(self, limit: int = 100) -> List[Dict[str, Any]]:
         """最適化されたランキングデータ取得（統計データ使用）"""
         try:
-            print("[OPTIMIZED] 統計データからランキング取得開始")
-            
             # 統計データから直接取得（1回のクエリ）
             users_ref = self.db.collection("users").limit(limit)
             users_docs = users_ref.stream()
@@ -670,7 +648,6 @@ class FirestoreManager:
             # 週間ポイントでソート
             ranking_data.sort(key=lambda x: x["weekly_points"], reverse=True)
             
-            print(f"[OPTIMIZED] 最適化ランキング取得完了: {len(ranking_data)}件")
             return ranking_data
             
         except Exception as e:
@@ -686,7 +663,7 @@ class FirestoreManager:
                 return optimized_data
             
             # フォールバック：リアルタイム計算は重すぎるため廃止（空リストを返す）
-            print("[INFO] 統計データが不完全ですが、リアルタイム計算は負荷軽減のためスキップします")
+            # フォールバック：リアルタイム計算は重すぎるため廃止（空リストを返す）
             return []
             
             # 旧フォールバックコード（無効化）
@@ -700,7 +677,6 @@ class FirestoreManager:
     def fetch_ranking_data_realtime(self, limit: int = 100) -> List[Dict[str, Any]]:
         """リアルタイムランキング計算（フォールバック用）"""
         try:
-            print("[REALTIME] リアルタイムでランキング計算中...")
             today = datetime.datetime.now(datetime.timezone.utc)
             week_start = today - datetime.timedelta(days=today.weekday())
             week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -804,11 +780,8 @@ class FirestoreManager:
         
         try:
             session_data = self.load_session_state(uid)
-            print(f"[DEBUG] セッション継続チェック - UID: {uid[:8]}...")
-            
             # セッションメタデータから継続可能性をチェック
             session_metadata = session_data.get('session_metadata', {})
-            print(f"[DEBUG] セッションメタデータ: {session_metadata}")
             
             # アクティブなセッションかつ問題キューが存在するかチェック
             is_active = session_metadata.get('is_active_session', False)
@@ -819,12 +792,6 @@ class FirestoreManager:
                 session_data.get('main_queue', []) or 
                 session_data.get('current_q_group', [])
             )
-            
-            print(f"[DEBUG] is_active_session: {is_active}")
-            print(f"[DEBUG] has_questions: {has_questions}")
-            print(f"[DEBUG] question_queue length: {len(session_data.get('question_queue', []))}")
-            print(f"[DEBUG] main_queue length: {len(session_data.get('main_queue', []))}")
-            print(f"[DEBUG] current_q_group length: {len(session_data.get('current_q_group', []))}")
             
             # 最終活動時間をチェック（24時間以内）
             last_activity = session_metadata.get('last_activity_time')
@@ -839,21 +806,13 @@ class FirestoreManager:
                     time_diff = datetime.datetime.now(datetime.timezone.utc) - last_activity_dt.replace(tzinfo=datetime.timezone.utc)
                     is_recent = time_diff.total_seconds() < 24 * 3600
                     
-                    print(f"[DEBUG] last_activity_time: {last_activity}")
-                    print(f"[DEBUG] is_recent: {is_recent} (time_diff: {time_diff})")
-                    
                     result = is_active and has_questions and is_recent
-                    print(f"[DEBUG] 継続可能セッション判定結果: {result}")
-                    print(f"[DEBUG] 判定条件 - is_active: {is_active}, has_questions: {has_questions}, is_recent: {is_recent}")
                     return result
                 except Exception as e:
-                    print(f"[DEBUG] 時間解析エラー: {e}")
                     result = is_active and has_questions
-                    print(f"[DEBUG] 継続可能セッション判定結果（時間チェック失敗）: {result}")
                     return result
             
             result = is_active and has_questions
-            print(f"[DEBUG] 継続可能セッション判定結果（活動時間なし）: {result}")
             return result
             
         except Exception as e:
@@ -883,7 +842,7 @@ class FirestoreManager:
             result = self.save_session_state(uid, session_data)
             
             if result:
-                print(f"[DEBUG] ユーザー {uid} のセッション状態をクリアしました")
+                pass
             
             return result
             
@@ -896,9 +855,7 @@ class FirestoreManager:
 @st.cache_resource  # キャッシュを再有効化
 def get_firestore_manager():
     """FirestoreManagerのシングルトンインスタンスを取得"""
-    print("[DEBUG] FirestoreManagerインスタンスを作成中...")
     manager = FirestoreManager()
-    print(f"[DEBUG] 作成されたインスタンスのメソッド: has_resumable_session={hasattr(manager, 'has_resumable_session')}, clear_session_state={hasattr(manager, 'clear_session_state')}")
     return manager
 
 

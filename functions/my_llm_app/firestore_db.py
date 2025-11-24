@@ -12,7 +12,6 @@ import streamlit as st
 import json
 import datetime
 import time
-import tempfile
 import os
 import collections.abc
 from typing import Dict, Any, Optional, List
@@ -20,6 +19,63 @@ import firebase_admin
 from firebase_admin import credentials, firestore, storage
 from google.cloud.firestore_v1 import FieldFilter
 from google.cloud import firestore as gcp_firestore
+
+
+
+@st.cache_data(ttl=300)
+def cached_load_user_cards(uid: str) -> Dict[str, Any]:
+    """ユーザーのカードデータをキャッシュ付きで読み込み"""
+    if not uid:
+        return {}
+    
+    try:
+        # Firestoreクライアントを直接取得
+        # 注意: firestore.client() はシングルトン的に動作するため再取得コストは低い
+        db = firestore.client()
+        
+        # 最適化されたstudy_cardsコレクションから取得
+        cards_query = db.collection("study_cards").where("uid", "==", uid)
+        cards_docs = cards_query.get()
+        
+        cards = {}
+        for doc in cards_docs:
+            if doc.exists:
+                card_data = doc.to_dict()
+                
+                # datetimeオブジェクトをISO文字列に変換（キャッシュシリアライズ対応）
+                # 再帰的に変換するのはコストがかかるため、主要なフィールドのみ対応
+                if "metadata" in card_data:
+                    meta = card_data["metadata"]
+                    if isinstance(meta.get("created_at"), datetime.datetime):
+                        meta["created_at"] = meta["created_at"].isoformat()
+                    if isinstance(meta.get("updated_at"), datetime.datetime):
+                        meta["updated_at"] = meta["updated_at"].isoformat()
+                
+                if "history" in card_data and isinstance(card_data["history"], list):
+                    for h in card_data["history"]:
+                        if isinstance(h.get("timestamp"), datetime.datetime):
+                            h["timestamp"] = h["timestamp"].isoformat()
+                
+                question_id = card_data.get("question_id")
+                if not question_id:
+                    # フォールバック
+                    try:
+                        doc_id = str(doc.id)
+                        if "_" in doc_id:
+                            question_id = doc_id.split("_", 1)[1]
+                        else:
+                            question_id = doc_id
+                    except Exception:
+                        question_id = None
+                
+                if question_id:
+                    cards[question_id] = card_data
+        
+        return cards
+        
+    except Exception as e:
+        print(f"[ERROR] キャッシュ付きカード読み込みエラー: {e}")
+        return {}
 
 
 class FirestoreManager:
@@ -33,52 +89,32 @@ class FirestoreManager:
     def _initialize_firebase(self):
         """Firebase初期化"""
         if not hasattr(st.session_state, 'firebase_initialized'):
-            # st.secrets がない/取得できない環境（ADC）でも動くようフォールバックを実装
-            temp_path = None
+            firebase_creds = self._load_service_account_config()
+
+            project_id = self._resolve_project_id(firebase_creds)
+            storage_bucket = self._resolve_storage_bucket(firebase_creds, project_id)
+            options = {}
+            if storage_bucket:
+                options["storageBucket"] = storage_bucket
+            if project_id:
+                options["projectId"] = project_id
+
+            creds = credentials.Certificate(firebase_creds)
+
             try:
-                firebase_creds = None
-                try:
-                    # Streamlit Cloud: st.secrets["firebase"] を使用
-                    firebase_creds = self._to_dict(st.secrets.get("firebase", {}))
-                    # 旧形式との互換性のため firebase_credentials もチェック
-                    if not firebase_creds:
-                        firebase_creds = self._to_dict(st.secrets.get("firebase_credentials", {}))
-                except Exception:
-                    firebase_creds = None
+                app = firebase_admin.get_app()
+            except ValueError:
+                app = firebase_admin.initialize_app(
+                    creds,
+                    options or None
+                )
 
-                if firebase_creds:
-                    # サービスアカウントJSONを一時ファイルに保存して初期化
-                    with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
-                        json.dump(firebase_creds, f)
-                        temp_path = f.name
-                    creds = credentials.Certificate(temp_path)
-                    storage_bucket = self._resolve_storage_bucket(firebase_creds)
-                    try:
-                        app = firebase_admin.get_app()
-                    except ValueError:
-                        app = firebase_admin.initialize_app(
-                            creds,
-                            {"storageBucket": storage_bucket}
-                        )
-                else:
-                    # ADC フォールバック（Cloud Run/Functions/GCE 等）
-                    try:
-                        app = firebase_admin.get_app()
-                    except ValueError:
-                        app = firebase_admin.initialize_app()  # Use Default Credentials
-
-                self.db = firestore.client(app=app)
-                try:
-                    self.bucket = storage.bucket(app=app)
-                except Exception:
-                    self.bucket = None
-                st.session_state.firebase_initialized = True
-            finally:
-                if temp_path:
-                    try:
-                        os.unlink(temp_path)
-                    except Exception:
-                        pass
+            self.db = firestore.client(app=app)
+            try:
+                self.bucket = storage.bucket(app=app)
+            except Exception:
+                self.bucket = None
+            st.session_state.firebase_initialized = True
         else:
             # 既に初期化済みの場合は既存のクライアントを取得
             self.db = firestore.client()
@@ -96,19 +132,94 @@ class FirestoreManager:
         else:
             return obj
     
-    def _resolve_storage_bucket(self, firebase_creds):
+    def _load_service_account_config(self) -> Dict[str, Any]:
+        """st.secrets からサービスアカウント情報を取得"""
+        firebase_config: Optional[Dict[str, Any]] = None
+        try:
+            firebase_config = self._to_dict(st.secrets.get("firebase", {}))
+            if not firebase_config:
+                firebase_config = self._to_dict(st.secrets.get("firebase_credentials", {}))
+        except Exception:
+            firebase_config = None
+
+        if not self._is_service_account(firebase_config):
+            raise RuntimeError(
+                "Firebase service account credentials are not configured. "
+                "Please set the full service account JSON under [firebase] in secrets.toml."
+            )
+
+        return firebase_config
+
+    def _resolve_project_id(self, firebase_creds):
+        """プロジェクトIDを多段階で解決"""
+        candidates: List[Optional[str]] = []
+
+        if firebase_creds:
+            candidates.extend([
+                firebase_creds.get("project_id"),
+                firebase_creds.get("projectId"),
+            ])
+
+        try:
+            candidates.append(st.secrets.get("firebase_project_id"))
+            candidates.append(st.secrets.get("project_id"))
+        except Exception:
+            pass
+
+        candidates.append(os.environ.get("FIREBASE_PROJECT_ID"))
+        candidates.append(os.environ.get("GOOGLE_CLOUD_PROJECT"))
+        candidates.append(os.environ.get("GCLOUD_PROJECT"))
+        candidates.append("dent-ai-4d8d8")
+
+        for candidate in candidates:
+            if candidate:
+                pid = str(candidate).strip()
+                if pid:
+                    return pid
+        return None
+
+    def _resolve_storage_bucket(self, firebase_creds, project_id):
         """バケット名を正規化"""
-        raw = st.secrets.get("firebase_storage_bucket") \
-              or firebase_creds.get("storage_bucket") \
-              or firebase_creds.get("storageBucket")
+        raw = None
+        try:
+            raw = st.secrets.get("firebase_storage_bucket")
+        except Exception:
+            raw = None
+
+        if not raw and firebase_creds:
+            raw = firebase_creds.get("storage_bucket") \
+                  or firebase_creds.get("storageBucket")
 
         if not raw:
-            pid = firebase_creds.get("project_id") or firebase_creds.get("projectId") or "dent-ai-4d8d8"
+            raw = os.environ.get("FIREBASE_STORAGE_BUCKET")
+
+        if not raw:
+            pid = project_id or (firebase_creds or {}).get("project_id") \
+                  or (firebase_creds or {}).get("projectId") \
+                  or "dent-ai-4d8d8"
             raw = f"{pid}.firebasestorage.app"
 
         b = str(raw).strip()
         b = b.replace("gs://", "").split("/")[0]
         return b
+
+    def _is_service_account(self, firebase_config: Optional[Dict[str, Any]]) -> bool:
+        """サービスアカウント形式かを判定"""
+        if not firebase_config or not isinstance(firebase_config, dict):
+            return False
+
+        required_fields = ["client_email", "private_key", "token_uri"]
+        for field in required_fields:
+            value = firebase_config.get(field)
+            if not value or not str(value).strip():
+                return False
+
+        # private_key の整形: 改行がエスケープされているケースに対応
+        private_key = firebase_config.get("private_key")
+        if isinstance(private_key, str) and "\\n" in private_key:
+            firebase_config["private_key"] = private_key.replace("\\n", "\n")
+
+        return True
     
     def load_user_profile(self, uid: str) -> Dict[str, Any]:
         """ユーザーの基本プロフィール情報のみを高速読み込み（uid統一版）"""
@@ -163,62 +274,99 @@ class FirestoreManager:
             return {}
     
     def load_session_state(self, uid: str) -> Dict[str, Any]:
-        """セッション状態を読み込み（uid統一版）"""
+        """セッション状態を読み込み（uid統一版）（詳細デバッグ強化版）"""
         start = time.time()
         
+        print(f"[DEBUG] load_session_state開始 - uid: {uid}")
+        
         if not uid:
+            print("[DEBUG] UIDが空です - デフォルト空データを返します")
             return {
                 "main_queue": [],
+                "question_queue": [],
                 "short_term_review_queue": [],
                 "current_q_group": []
             }
         
         try:
             session_ref = self.db.collection("users").document(uid).collection("sessionState").document("current")
+            print(f"[DEBUG] Firestore参照: users/{uid}/sessionState/current")
+            
             session_doc = session_ref.get(timeout=5)
+            print(f"[DEBUG] セッション文書取得完了 - exists: {session_doc.exists}")
             
             if session_doc.exists:
                 session_data = session_doc.to_dict()
+                print(f"[DEBUG] 取得したセッションデータ構造: {list(session_data.keys()) if session_data else 'None'}")
+                
+                # メタデータの詳細確認
+                session_metadata = session_data.get("session_metadata", {})
+                print(f"[DEBUG] セッションメタデータ: {session_metadata}")
+                
+                # 各キューの詳細確認
+                main_queue_raw = session_data.get("main_queue", [])
+                current_q_group_raw = session_data.get("current_q_group", [])
+                question_queue_raw = session_data.get("question_queue", [])
+                short_term_raw = session_data.get("short_term_review_queue", [])
+                
+                print(f"[DEBUG] 生データ - main_queue長: {len(main_queue_raw)}, current_q_group長: {len(current_q_group_raw)}, question_queue長: {len(question_queue_raw)}, short_term長: {len(short_term_raw)}")
                 
                 # Firestore対応：JSON文字列を元のリスト形式に復元
-                def deserialize_queue(queue):
+                def deserialize_queue(queue, queue_name="unknown"):
+                    print(f"[DEBUG] {queue_name}のデシリアライズ開始 - 元サイズ: {len(queue)}")
                     deserialized = []
-                    for item in queue:
+                    for i, item in enumerate(queue):
                         try:
                             if isinstance(item, str):
-                                deserialized.append(json.loads(item))
+                                parsed_item = json.loads(item)
+                                deserialized.append(parsed_item)
+                                print(f"[DEBUG] {queue_name}[{i}]: JSON解析成功")
                             elif isinstance(item, list):
                                 deserialized.append(item)
-                        except (json.JSONDecodeError, TypeError):
+                                print(f"[DEBUG] {queue_name}[{i}]: リスト形式そのまま")
+                            else:
+                                print(f"[DEBUG] {queue_name}[{i}]: 辞書形式そのまま - {type(item)}")
+                                deserialized.append(item)
+                        except (json.JSONDecodeError, TypeError) as e:
+                            print(f"[DEBUG] {queue_name}[{i}]: デシリアライズエラー - {e}")
                             continue
+                    print(f"[DEBUG] {queue_name}のデシリアライズ完了 - 結果サイズ: {len(deserialized)}")
                     return deserialized
                 
                 result = {
-                    "current_q_group": deserialize_queue(session_data.get("current_q_group", [])),
-                    "main_queue": deserialize_queue(session_data.get("main_queue", [])),
-                    "question_queue": deserialize_queue(session_data.get("question_queue", [])),
-                    "short_term_review_queue": session_data.get("short_term_review_queue", []),
+                    "current_q_group": deserialize_queue(current_q_group_raw, "current_q_group"),
+                    "main_queue": deserialize_queue(main_queue_raw, "main_queue"),
+                    "question_queue": deserialize_queue(question_queue_raw, "question_queue"),
+                    "short_term_review_queue": short_term_raw,
                     
                     # セッションメタデータを追加
-                    "session_metadata": session_data.get("session_metadata", {}),
-                    "session_type": session_data.get("session_metadata", {}).get("session_type", ""),
-                    "session_start_time": session_data.get("session_metadata", {}).get("session_start_time", ""),
-                    "current_question_index": session_data.get("session_metadata", {}).get("current_question_index", 0),
-                    "total_questions_answered": session_data.get("session_metadata", {}).get("total_questions_answered", 0),
-                    "is_active_session": session_data.get("session_metadata", {}).get("is_active_session", False),
-                    "last_activity_time": session_data.get("session_metadata", {}).get("last_activity_time", "")
+                    "session_metadata": session_metadata,
+                    "session_type": session_metadata.get("session_type", ""),
+                    "session_start_time": session_metadata.get("session_start_time", ""),
+                    "current_question_index": session_metadata.get("current_question_index", 0),
+                    "total_questions_answered": session_metadata.get("total_questions_answered", 0),
+                    "is_active_session": session_metadata.get("is_active_session", False),
+                    "last_activity_time": session_metadata.get("last_activity_time", "")
                 }
+                
+                print(f"[DEBUG] 最終結果 - main_queue: {len(result['main_queue'])}, current_q_group: {len(result['current_q_group'])}, question_queue: {len(result['question_queue'])}, session_type: {result['session_type']}")
+                print(f"[DEBUG] load_session_state処理時間: {time.time() - start:.3f}秒")
                 
                 return result
             else:
+                print("[DEBUG] セッション文書が存在しません - デフォルト空データを返します")
                 return {
                     "main_queue": [],
+                    "question_queue": [],
                     "short_term_review_queue": [],
                     "current_q_group": []
                 }
                 
         except Exception as e:
             print(f"[ERROR] セッション状態読み込みエラー: {e}")
+            print(f"[ERROR] エラータイプ: {type(e)}")
+            import traceback
+            print(f"[ERROR] スタックトレース:\n{traceback.format_exc()}")
             return {
                 "main_queue": [],
                 "short_term_review_queue": [],
@@ -226,40 +374,19 @@ class FirestoreManager:
             }
     
     def get_user_cards(self, uid: str) -> Dict[str, Any]:
-        """ユーザーの学習カードデータを取得（最適化後構造対応版）"""
-        start = time.time()
-        
-        if not uid:
-            return {}
-        
+        """ユーザーの学習カードデータを取得（キャッシュ対応版）"""
         try:
-            # 最適化後のstudy_cardsコレクションから取得
-            cards_query = self.db.collection("study_cards").where("uid", "==", uid)
-            cards_docs = cards_query.get(timeout=10)
+            # キャッシュされたデータを取得
+            raw_cards = cached_load_user_cards(uid)
             
             cards = {}
-            for doc in cards_docs:
-                if doc.exists:
-                    card_data = self._to_dict(doc.to_dict())
-                    question_id = card_data.get("question_id")
-                    if not question_id:
-                        # フォールバック: ドキュメントIDから推定（uid_questionId形式想定）
-                        try:
-                            doc_id = str(doc.id)
-                            if "_" in doc_id:
-                                question_id = doc_id.split("_", 1)[1]
-                            else:
-                                question_id = doc_id
-                        except Exception:
-                            question_id = None
-                    if question_id:
-                        # 最適化後のデータ構造を旧形式に変換
-                        converted_card = self._convert_optimized_card_to_legacy(card_data)
-                        cards[question_id] = converted_card
-            
-            # 学習データの統計を計算
-            learned_cards = len([card for card in cards.values() if card.get("level", -1) >= 0])
-            mastered_cards = len([card for card in cards.values() if card.get("level", -1) >= 5])
+            for question_id, card_data in raw_cards.items():
+                try:
+                    # 最適化後のデータ構造を旧形式に変換
+                    converted_card = self._convert_optimized_card_to_legacy(card_data)
+                    cards[question_id] = converted_card
+                except Exception as conv_error:
+                    continue
             
             return cards
             
@@ -558,9 +685,13 @@ class FirestoreManager:
             if optimized_data:
                 return optimized_data
             
-            # フォールバック：リアルタイム計算
-            print("[FALLBACK] 統計データが不完全なため、リアルタイム計算実行")
-            return self.fetch_ranking_data_realtime(limit)
+            # フォールバック：リアルタイム計算は重すぎるため廃止（空リストを返す）
+            print("[INFO] 統計データが不完全ですが、リアルタイム計算は負荷軽減のためスキップします")
+            return []
+            
+            # 旧フォールバックコード（無効化）
+            # print("[FALLBACK] 統計データが不完全なため、リアルタイム計算実行")
+            # return self.fetch_ranking_data_realtime(limit)
             
         except Exception as e:
             print(f"[ERROR] ランキングデータ取得エラー: {e}")
@@ -762,7 +893,7 @@ class FirestoreManager:
 
 
 # グローバルインスタンス
-@st.cache_resource
+@st.cache_resource  # キャッシュを再有効化
 def get_firestore_manager():
     """FirestoreManagerのシングルトンインスタンスを取得"""
     print("[DEBUG] FirestoreManagerインスタンスを作成中...")

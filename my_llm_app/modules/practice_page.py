@@ -22,41 +22,6 @@ from typing import Dict, Any, List, Optional, Tuple
 # 日本時間用のタイムゾーン
 JST = pytz.timezone('Asia/Tokyo')
 
-def get_japan_now() -> datetime.datetime:
-    """日本時間の現在時刻を取得"""
-    return datetime.datetime.now(JST)
-
-def get_japan_today() -> datetime.date:
-    """
-    日本時間の今日の日付を取得
-    
-    新規学習目標のリセットタイミング：
-    - 日本時間の0時にカウントがリセットされる
-    - ユーザーが日本にいることを想定したタイムゾーン設定
-    """
-    return get_japan_now().date()
-
-def get_japan_datetime_from_timestamp(timestamp) -> datetime.datetime:
-    """タイムスタンプから日本時間のdatetimeオブジェクトを取得"""
-    try:
-        if isinstance(timestamp, str):
-            # ISO文字列をパース
-            dt = datetime.datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-            return dt.astimezone(JST)
-        elif hasattr(timestamp, 'replace'):
-            # DatetimeWithNanoseconds または datetime オブジェクト
-            if hasattr(timestamp, 'tzinfo') and timestamp.tzinfo is None:
-                # ナイーブなdatetimeの場合、UTCとして扱って日本時間に変換
-                return pytz.UTC.localize(timestamp).astimezone(JST)
-            else:
-                return timestamp.astimezone(JST)
-        else:
-            # その他の場合は現在時刻を返す
-            return get_japan_now()
-    except Exception as e:
-        print(f"[DEBUG] タイムスタンプ変換エラー詳細: {timestamp}, type: {type(timestamp)}, error: {e}")
-        # パースに失敗した場合は現在時刻を返す
-        return get_japan_now()
 
 
 def inject_choice_selectable_css():
@@ -136,58 +101,20 @@ from utils import (
     HISSHU_Q_NUMBERS_SET, GAKUSHI_HISSHU_Q_NUMBERS_SET,
     KOKUSHI_GENERAL_Q_NUMBERS_SET, KOKUSHI_CLINICAL_Q_NUMBERS_SET,
     GAKUSHI_GENERAL_Q_NUMBERS_SET, GAKUSHI_CLINICAL_Q_NUMBERS_SET,
-    get_natural_sort_key
+    get_natural_sort_key, get_japan_now, get_japan_today, get_japan_datetime_from_timestamp
 )
 # UserDataExtractor インポート
 from user_data_extractor import UserDataExtractor
+from modules.components.question_display import QuestionComponent, inject_image_quality_css
+from modules.components.answer_form import AnswerModeComponent
+from modules.state.practice_state import PracticeSessionState
+from modules.state.practice_state import PracticeSessionState
+from modules.logic.question_filter import QuestionFilter
+from modules.logic.practice_engine import PracticeEngine
 
 
 # 高画質画像表示用のCSS
-def inject_image_quality_css():
-    """画像表示品質向上のためのCSSを追加"""
-    st.markdown("""
-    <style>
-    /* 画像のレスポンシブ表示設定 */
-    .stImage > img {
-        image-rendering: -webkit-optimize-contrast;
-        image-rendering: crisp-edges;
-        max-width: 100% !important;
-        width: auto !important;
-        height: auto;
-        border-radius: 8px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        transition: transform 0.2s ease;
-        object-fit: contain;
-    }
-    
-    /* 画像のホバー効果 */
-    .stImage > img:hover {
-        transform: scale(1.02);
-        box-shadow: 0 4px 16px rgba(0,0,0,0.15);
-    }
-    
-    /* エクスパンダー内の画像調整 */
-    .streamlit-expanderContent .stImage {
-        margin: 10px 0;
-        width: 100%;
-    }
-    
-    /* 画像コンテナのレスポンシブ対応 */
-    .stImage {
-        width: 100%;
-        max-width: 100%;
-        overflow: hidden;
-    }
-    
-    /* 画像キャプションのスタイル改善 */
-    .stImage > div {
-        text-align: center;
-        font-size: 14px;
-        color: #666;
-        margin-top: 8px;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+
 
 
 def _normalize_target_label(label: Optional[str]) -> str:
@@ -200,6 +127,94 @@ def _normalize_target_label(label: Optional[str]) -> str:
     if normalized in ("国試", "国試対策", "国試トラッカー"):
         return "国試"
     return normalized
+
+
+def _get_cached_daily_stats(cards: Dict, today: datetime.date) -> Dict[str, int]:
+    """日次統計を計算してキャッシュする"""
+    # キャッシュキーの生成（日付とカード数の組み合わせで簡易的に判定）
+    cache_key = f"daily_stats_{today}_{len(cards)}"
+    
+    # セッション状態にキャッシュがあればそれを返す
+    cached_result = PracticeSessionState.get(cache_key)
+    if cached_result is not None:
+        return cached_result
+    
+    # 以下、計算ロジック
+    today_reviews_done = 0
+    today_new_done = 0
+    processed_cards = set()
+    
+    try:
+        for q_num, card in cards.items():
+            if not isinstance(card, dict) or q_num in processed_cards:
+                continue
+
+            history = card.get('history', [])
+            if not history:
+                continue
+
+            # 本日の学習履歴があるかチェック
+            has_today_session = False
+            for review in history:
+                if isinstance(review, dict):
+                    review_timestamp = review.get('timestamp', '')
+                    try:
+                        review_datetime_jst = get_japan_datetime_from_timestamp(review_timestamp)
+                        if review_datetime_jst.date() == today:
+                            has_today_session = True
+                            break
+                    except Exception:
+                        continue
+            
+            if has_today_session:
+                processed_cards.add(q_num)
+                
+                # 新規/復習の判定
+                has_previous_learning = False
+                for review in history:
+                    if isinstance(review, dict):
+                        timestamp = review.get('timestamp', '')
+                        try:
+                            review_datetime_jst = get_japan_datetime_from_timestamp(timestamp)
+                            if review_datetime_jst.date() < today:
+                                has_previous_learning = True
+                                break
+                        except Exception:
+                            continue
+
+                if has_previous_learning:
+                    today_reviews_done += 1
+                else:
+                    today_new_done += 1
+                    
+    except Exception:
+        today_reviews_done = 0
+        today_new_done = 0
+
+    # result_logからも本日のデータを取得（補完用）
+    result_log = PracticeSessionState.get_result_log()
+    for q_id, result_data in result_log.items():
+        if q_id in processed_cards:
+            continue
+            
+        timestamp = result_data.get('timestamp', '')
+        if isinstance(timestamp, str):
+            try:
+                result_date = datetime.datetime.fromisoformat(timestamp.replace('Z', '+00:00')).date()
+                if result_date == today:
+                    today_new_done += 1
+                    processed_cards.add(q_id)
+            except:
+                pass
+    
+    result = {
+        "today_reviews_done": today_reviews_done,
+        "today_new_done": today_new_done
+    }
+    
+    # 結果をキャッシュに保存
+    PracticeSessionState.set(cache_key, result)
+    return result
 
 
 def _get_review_plan_for_target(target_label: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -371,901 +386,15 @@ def _determine_optimal_learning_mode(detailed_stats: Dict, review_count: int, ne
         return "バランス学習", "学習データの分析中にエラーが発生したため、バランス学習で進めます"
 
 
-class QuestionComponent:
-    """問題表示コンポーネント（Reactライクな設計）"""
-    
-    @staticmethod
-    def format_chemical_formula(text: str) -> str:
-        """化学式をLaTeX形式に変換"""
-        if not text:
-            return text
-        
-        # よく使われる化学式パターンの変換
-        replacements = {
-            'Ca2+': r'$\mathrm{Ca^{2+}}$',
-            'Mg2+': r'$\mathrm{Mg^{2+}}$',
-            'H2O': r'$\mathrm{H_2O}$',
-            'CO2': r'$\mathrm{CO_2}$',
-            'OH-': r'$\mathrm{OH^-}$',
-            'HCO3-': r'$\mathrm{HCO_3^-}$',
-            'PO4-': r'$\mathrm{PO_4^-}$'
-        }
-        
-        for pattern, replacement in replacements.items():
-            text = text.replace(pattern, replacement)
-        
-        return text
-    
-    @staticmethod
-    def get_image_source(question_data: Dict) -> Optional[str]:
-        """
-        問題データから画像ソースを取得する
-        
-        Args:
-            question_data (Dict): 問題データの辞書
-            
-        Returns:
-            Optional[str]: 画像URL/パス、または None
-        """
-        # まず image_urls をチェック
-        image_urls = question_data.get('image_urls')
-        if image_urls and len(image_urls) > 0:
-            return image_urls[0]
-        
-        # 次に image_paths をチェック
-        image_paths = question_data.get('image_paths')
-        if image_paths and len(image_paths) > 0:
-            return image_paths[0]
-        
-        # 両方とも空またはNoneの場合はNoneを返す
-        return None
-    
-    @staticmethod
-    def render_question_display(questions: List[Dict], case_data: Dict = None):
-        """問題表示コンポーネント"""
-        # CSSで余白を削除
-        st.markdown("""
-        <style>
-        .st-emotion-cache-r44huj {
-            margin-bottom: 0 !important;
-            padding-bottom: 0 !important;
-        }
-        div[style*="background-color: rgb(250, 250, 250)"] {
-            margin-top: 0 !important;
-            padding-top: 12px !important;
-        }
-        [data-testid="stElementContainer"] {
-            margin-top: 0 !important;
-            margin-bottom: 0.25rem !important;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-        
-        # 症例情報エリア（連問の場合）
-        if case_data and case_data.get('scenario_text'):
-            with st.container():
-                st.markdown(
-                    f"""
-                    <div style="
-                        background-color: #e3f2fd; 
-                        padding: 12px 16px; 
-                        border-radius: 8px; 
-                        border-left: 4px solid #2196f3; 
-                        margin-bottom: 16px;
-                    ">
-                        📋 <strong>症例:</strong> {case_data['scenario_text']}
-                    </div>
-                    """, 
-                    unsafe_allow_html=True
-                )
-            st.markdown("---")
-        
-        # 問題表示エリア
-        for i, question in enumerate(questions):
-            with st.container():
-                # 問題ID
-                question_number = question.get('number', '')
-                if question_number:
-                    st.markdown(f"#### {question_number}")
-                
-                # 問題文（化学式対応）
-                question_text = QuestionComponent.format_chemical_formula(
-                    question.get('question', '')
-                )
-                st.markdown(question_text)
-                
-                # 画像表示（問題文の後）
-                image_urls = question.get('image_urls', []) or []
-                image_paths = question.get('image_paths', []) or []
-                all_images = image_urls + image_paths  # 両方のキーから画像を取得
-                
-                if all_images:
-                    # 高画質表示用CSSを適用
-                    inject_image_quality_css()
-                    
-                    # デバッグ情報
-                    if st.session_state.get("debug_mode", False):
-                        st.write(f"🔍 画像パス検出: {all_images}")
-                    
-                    for img_index, img_url in enumerate(all_images):
-                        try:
-                            # デバッグ情報
-                            if st.session_state.get("debug_mode", False):
-                                st.write(f"🔍 画像 {img_index + 1} 処理中: '{img_url}'")
-                            
-                            # Firebase Storageのパスを署名付きURLに変換
-                            from utils import get_secure_image_url
-                            secure_url = get_secure_image_url(img_url)
-                            
-                            # デバッグ情報
-                            if st.session_state.get("debug_mode", False):
-                                if secure_url:
-                                    st.write(f"✅ 署名付きURL生成成功: {secure_url[:100]}...")
-                                else:
-                                    st.write(f"❌ 署名付きURL生成失敗: {img_url}")
-                            
-                            if secure_url:
-                                # 画像を高品質で表示（レスポンシブ対応）
-                                with st.expander(f"📸 問題 {question_number} の図 {img_index + 1}", expanded=True):
-                                    st.image(
-                                        secure_url, 
-                                        caption=f"問題 {question_number} の図 {img_index + 1}",
-                                        use_container_width=True  # コンテナ幅に合わせてレスポンシブ表示
-                                    )
-                            else:
-                                st.warning(f"画像URLの生成に失敗しました: {img_url}")
-                                if st.session_state.get("debug_mode", False):
-                                    st.error(f"🚨 詳細: パス '{img_url}' から署名付きURLを生成できませんでした")
-                        except Exception as e:
-                            st.warning(f"画像を読み込めませんでした: {img_url}")
-                            if st.session_state.get("debug_mode", False):
-                                st.error(f"🚨 例外発生: {str(e)}")
-                                st.exception(e)
-                
-                # 問題間の区切り
-                if i < len(questions) - 1:
-                    st.markdown("---")
-    
-    @staticmethod
-    def shuffle_choices_with_mapping(choices: List[str]) -> tuple[List[str], dict]:
-        """選択肢をシャッフルし、元のインデックスとの対応マップを返す"""
-        if not choices:
-            return [], {}
-        
-        # 元のインデックスとのマッピングを作成
-        indexed_choices = [(i, choice) for i, choice in enumerate(choices)]
-        random.shuffle(indexed_choices)
-        
-        shuffled_choices = [choice for _, choice in indexed_choices]
-        # 新しいラベル → 元のラベルのマッピング
-        label_mapping = {}
-        for new_index, (original_index, _) in enumerate(indexed_choices):
-            new_label = chr(ord('A') + new_index)
-            original_label = chr(ord('A') + original_index)
-            label_mapping[new_label] = original_label
-        
-        return shuffled_choices, label_mapping
-    
-    @staticmethod
-    def get_choice_label(index: int) -> str:
-        """選択肢のラベル生成 (A, B, C...)"""
-        return chr(65 + index)
 
-
-class AnswerModeComponent:
-    """解答、結果表示、自己評価のUIをすべて管理する統合コンポーネント"""
-
-    @staticmethod
-    def _normalize_question_text(text: Optional[str]) -> str:
-        """改行や空白を除去したテキストを返す"""
-        if not text:
-            return ""
-        return re.sub(r'\s+', '', text)
-
-    @staticmethod
-    def _get_input_mode(question: Dict[str, Any]) -> str:
-        """選択肢方式か入力方式かを判定"""
-        choices = question.get('choices') or []
-        question_text = question.get('question', '') or ''
-
-        # 並べ替え系の問題は入力方式を優先
-        if QuestionUtils.is_ordering_question(question):
-            return 'text'
-
-        if not choices:
-            return 'text'
-
-        normalized_text = AnswerModeComponent._normalize_question_text(question_text)
-        selection_pattern = re.compile(r'([一二三四五六七八九十]|[0-9０-９])+つ選べ')
-
-        if selection_pattern.search(normalized_text):
-            return 'choices'
-
-        return 'text'
-
-    @staticmethod
-    def _get_text_input_placeholder(question: Dict[str, Any]) -> str:
-        """入力欄のプレースホルダーを決定"""
-        question_text = question.get('question', '') or ''
-        answer = (question.get('answer', '') or '').strip()
-
-        if QuestionUtils.is_ordering_question(question):
-            return '例: ABDCE （順番通りに入力）'
-
-        numeric_pattern = re.compile(r'^[-+]?\d+(?:\.\d+)?$')
-        translation_table = str.maketrans({
-            '０': '0', '１': '1', '２': '2', '３': '3', '４': '4',
-            '５': '5', '６': '6', '７': '7', '８': '8', '９': '9',
-            '．': '.', '－': '-', '＋': '+'
-        })
-        normalized_answer = answer.translate(translation_table)
-
-        if numeric_pattern.match(answer) or numeric_pattern.match(normalized_answer):
-            return '数値を入力（例: 60）'
-
-        return '解答を入力（例: ABC）'
-
-    @staticmethod
-    def _render_text_answer_field(question: Dict[str, Any], qid: str, group_id: str, is_checked: bool) -> str:
-        """入力形式の回答欄を描画し、入力値を返す"""
-        raw_choices = question.get('choices') or []
-        if raw_choices:
-            st.markdown("**選択肢**")
-            for idx, choice_text in enumerate(raw_choices):
-                label = QuestionComponent.get_choice_label(idx)
-                st.markdown(f"- {label}. {choice_text}")
-
-        text_key = f"text_answer_{qid}_{group_id}"
-        placeholder = AnswerModeComponent._get_text_input_placeholder(question)
-        st.text_input(
-            "解答を入力",
-            key=text_key,
-            placeholder=placeholder,
-            disabled=is_checked
-        )
-        return st.session_state.get(text_key, '')
-
-    @staticmethod
-    def render(questions: List[Dict], group_id: str, case_data: Dict = None) -> Dict[str, Any]:
-        user_selections = {}
-        action_result = {}
-        
-        is_checked = st.session_state.get(f"checked_{group_id}", False)
-        
-        # 連問（同じcase_idを持つ問題）の場合の特別処理
-        if len(questions) > 1 and all(q.get('case_id') for q in questions):
-            case_id = questions[0].get('case_id')
-            if all(q.get('case_id') == case_id for q in questions):
-                # 連問として表示
-                return AnswerModeComponent._render_consecutive_questions(
-                    questions, group_id, case_data, is_checked, user_selections, action_result
-                )
-        
-        # 従来の単一問題または異なるcase_idの問題の処理
-        if case_data and case_data.get('scenario_text'):
-            st.info(f"📋 **症例:** {case_data['scenario_text']}")
-        
-        with st.form(key=f"answer_form_{group_id}"):
-            for q_index, question in enumerate(questions):
-                qid = question.get('number', '')
-                st.markdown(f"#### {qid}")
-                st.markdown(question.get('question', ''))
-                
-                input_mode = AnswerModeComponent._get_input_mode(question)
-
-                if input_mode == 'choices':
-                    # 選択肢のシャッフルとマッピング情報の保存
-                    shuffled_choices, label_mapping = st.session_state.setdefault(
-                        f"shuffled_mapping_{qid}_{group_id}", 
-                        QuestionComponent.shuffle_choices_with_mapping(question.get('choices', []))
-                    )
-                    st.session_state[f"label_mapping_{qid}_{group_id}"] = label_mapping
-
-                    # 選択肢の描画とユーザー選択の取得
-                    selected_labels = []
-                    for choice_index, choice_text in enumerate(shuffled_choices):
-                        label = QuestionComponent.get_choice_label(choice_index)
-                        is_selected = st.checkbox(
-                            f"{label}. {choice_text}",
-                            key=f"choice_{qid}_{choice_index}_{group_id}",
-                            disabled=is_checked
-                        )
-                        if is_selected:
-                            selected_labels.append(label)
-                    user_selections[qid] = selected_labels
-                else:
-                    # 入力形式の問題
-                    st.session_state.pop(f"shuffled_mapping_{qid}_{group_id}", None)
-                    st.session_state.pop(f"label_mapping_{qid}_{group_id}", None)
-                    user_input = AnswerModeComponent._render_text_answer_field(
-                        question, qid, group_id, is_checked
-                    )
-                    user_selections[qid] = user_input
-
-                if q_index < len(questions) - 1:
-                    st.markdown("---")
-
-            # --- ▼▼▼【重要】ここからが修正箇所▼▼▼ ---
-            
-            # フォームの内側で状態に応じて表示を切り替える
-            if not is_checked:
-                # 【解答中のUI】
-                st.markdown("---")
-                col1, col2 = st.columns(2)
-                with col1:
-                    action_result['check_submitted'] = st.form_submit_button("回答をチェック", type="primary", use_container_width=True)
-                with col2:
-                    action_result['skip_submitted'] = st.form_submit_button("スキップ", use_container_width=True)
-            else:
-                # 【結果表示中のUI】
-                result_data = st.session_state.get(f"result_{group_id}", {})
-                
-                # 1. 正誤判定のアラートバーをここに表示
-                correct_count = sum(1 for r in result_data.values() if r.get('is_correct'))
-                total_count = len(result_data)
-                
-                if correct_count == total_count:
-                    # すべて正解の場合
-                    if total_count == 1:
-                        # 単一問題の場合、複数正解対応のメッセージを表示
-                        qid = list(result_data.keys())[0]
-                        q_result = result_data[qid]
-                        user_ans = ''.join(q_result.get('user_answer', []))
-                        correct_answer = q_result.get('correct_answer', '')
-                        
-                        # 問題の選択肢情報を取得
-                        question = next((q for q in questions if q.get('number') == qid), None)
-                        question_choices = question.get('choices', []) if question else []
-                        
-                        from utils import QuestionUtils
-                        main_msg, additional_info = QuestionUtils.get_answer_feedback_message(
-                            user_ans, correct_answer, True, question_choices
-                        )
-                        
-                        if additional_info:
-                            st.success(f"{main_msg} {additional_info}")
-                        else:
-                            st.success(main_msg)
-                    else:
-                        # 複数問題の場合
-                        st.success("✅ 全問正解！")
-                else:
-                    # 不正解の場合
-                    if total_count == 1:
-                        # 単一問題の場合、シンプルな表示
-                        qid = list(result_data.keys())[0]
-                        q_result = result_data[qid]
-                        user_ans = ''.join(q_result.get('user_answer', [])) or '無回答'
-                        correct_answer = q_result.get('correct_answer', '')
-                        
-                        # 問題の選択肢情報を取得
-                        question = next((q for q in questions if q.get('number') == qid), None)
-                        question_choices = question.get('choices', []) if question else []
-                        
-                        from utils import QuestionUtils
-                        main_msg, additional_info = QuestionUtils.get_answer_feedback_message(
-                            user_ans, correct_answer, False, question_choices
-                        )
-                        
-                        # 連問でもシャッフル後の正解を使用
-                        # シャッフル後の正解ラベルと選択肢テキストを取得
-                        shuffled_labels = q_result.get('shuffled_correct_answer_labels', [])
-                        shuffled_texts = q_result.get('shuffled_correct_answer_texts', [])
-                        
-                        # シャッフル後の正解表示を優先使用
-                        if shuffled_labels and shuffled_texts:
-                            # シャッフル後のラベルと選択肢テキストで表示
-                            correct_display_parts = []
-                            for label, text in zip(shuffled_labels, shuffled_texts):
-                                correct_display_parts.append(f"{label}. {text}")
-                            correct_display = " または ".join(correct_display_parts)
-                            st.error(f"{main_msg} 正解：{correct_display}")
-                        elif additional_info:
-                            st.error(f"{main_msg} {additional_info}")
-                        else:
-                            st.error(f"{main_msg} 正解：{correct_answer}")
-                    else:
-                        # 複数問題の場合は詳細表示
-                        incorrect_details = []
-                        for qid, q_result in result_data.items():
-                            if not q_result.get('is_correct'):
-                                user_ans = ''.join(q_result.get('user_answer', [])) or '無回答'
-                                correct_answer = q_result.get('correct_answer', '')
-                                
-                                from utils import QuestionUtils
-                                # 問題の選択肢情報を取得
-                                question = next((q for q in questions if q.get('number') == qid), None)
-                                question_choices = question.get('choices', []) if question else []
-                                
-                                _, additional_info = QuestionUtils.get_answer_feedback_message(
-                                    user_ans, correct_answer, False, question_choices
-                                )
-                                
-                                # シャッフル後の正解ラベルと選択肢テキストを取得
-                                shuffled_labels = q_result.get('shuffled_correct_answer_labels', [])
-                                shuffled_texts = q_result.get('shuffled_correct_answer_texts', [])
-                                
-                                if shuffled_labels and shuffled_texts:
-                                    # シャッフル後のラベルと選択肢テキストで表示
-                                    correct_display_parts = []
-                                    for label, text in zip(shuffled_labels, shuffled_texts):
-                                        correct_display_parts.append(f"{label}. {text}")
-                                    correct_display = ", ".join(correct_display_parts)
-                                else:
-                                    # フォールバック: 元の正解ラベルを表示
-                                    correct_display = additional_info or f"正解：{correct_answer}"
-                                
-                                incorrect_details.append(f"**{qid}**: あなたの解答: `{user_ans}` | {correct_display}")
-                        st.error("❌ 不正解の問題がありました。\n\n" + "\n\n".join(incorrect_details))
-
-                # 2. その下に自己評価フォームを表示
-                st.markdown("---")
-                st.markdown("#### 自己評価")
-                quality_options = ["× もう一度", "△ 難しい", "○ 普通", "◎ 簡単"]
-                default_index = 2 if correct_count == total_count else 1
-                
-                quality = st.radio(
-                    "学習評価", options=quality_options, index=default_index,
-                    key=f"quality_{group_id}", horizontal=True, label_visibility="collapsed"
-                )
-                action_result['quality'] = quality
-                action_result['next_submitted'] = st.form_submit_button("次の問題へ", type="primary", use_container_width=True)
-        
-        # --- ▲▲▲ここまで▲▲▲ ---
-
-        action_result['user_selections'] = user_selections
-        
-        # メモセクションを自己評価後に表示
-        if is_checked:
-            AnswerModeComponent._render_notes_section(questions, group_id)
-        
-        # 画像はフォームの外（常に最後）に表示
-        for question in questions:
-            all_images = (question.get('image_urls', []) or []) + (question.get('image_paths', []) or [])
-            if all_images:
-                with st.expander(f"📸 {question.get('number', '')}の図を見る", expanded=is_checked):
-                    for img_url in all_images:
-                        from utils import get_secure_image_url
-                        secure_url = get_secure_image_url(img_url)
-                        if secure_url:
-                            st.image(
-                                secure_url, 
-                                use_container_width=True  # コンテナ幅に合わせてレスポンシブ表示
-                            )
-                            
-        return action_result
-
-    @staticmethod
-    def _render_consecutive_questions(questions: List[Dict], group_id: str, case_data: Dict, 
-                                    is_checked: bool, user_selections: Dict, action_result: Dict) -> Dict[str, Any]:
-        """連問の統合表示"""
-        
-        # 症例文がある場合は最初に表示（症例:ラベルを削除）
-        if case_data and case_data.get('scenario_text'):
-            st.info(case_data['scenario_text'])
-        
-        with st.form(key=f"answer_form_{group_id}"):
-            # 連問を順番に表示
-            for q_index, question in enumerate(questions):
-                qid = question.get('number', '')
-                
-                # 問題番号と問題文を表示
-                st.markdown(f"#### {qid}")
-                st.markdown(question.get('question', ''))
-                
-                input_mode = AnswerModeComponent._get_input_mode(question)
-
-                if input_mode == 'choices':
-                    # 選択肢のシャッフルとマッピング情報の保存
-                    shuffled_choices, label_mapping = st.session_state.setdefault(
-                        f"shuffled_mapping_{qid}_{group_id}", 
-                        QuestionComponent.shuffle_choices_with_mapping(question.get('choices', []))
-                    )
-                    st.session_state[f"label_mapping_{qid}_{group_id}"] = label_mapping
-
-                    # 選択肢の描画とユーザー選択の取得
-                    selected_labels = []
-                    for choice_index, choice_text in enumerate(shuffled_choices):
-                        label = QuestionComponent.get_choice_label(choice_index)
-                        is_selected = st.checkbox(
-                            f"{label}. {choice_text}",
-                            key=f"choice_{qid}_{choice_index}_{group_id}",
-                            disabled=is_checked
-                        )
-                        if is_selected:
-                            selected_labels.append(label)
-                    user_selections[qid] = selected_labels
-                else:
-                    st.session_state.pop(f"shuffled_mapping_{qid}_{group_id}", None)
-                    st.session_state.pop(f"label_mapping_{qid}_{group_id}", None)
-                    user_input = AnswerModeComponent._render_text_answer_field(
-                        question, qid, group_id, is_checked
-                    )
-                    user_selections[qid] = user_input
-
-                # 問題間の区切り線
-                if q_index < len(questions) - 1:
-                    st.markdown("---")
-
-            # フォームの内側で状態に応じて表示を切り替える
-            if not is_checked:
-                # 【解答中のUI】
-                st.markdown("---")
-                col1, col2 = st.columns(2)
-                with col1:
-                    action_result['check_submitted'] = st.form_submit_button("回答をチェック", type="primary", use_container_width=True)
-                with col2:
-                    action_result['skip_submitted'] = st.form_submit_button("スキップ", use_container_width=True)
-            else:
-                # 【結果表示中のUI】
-                result_data = st.session_state.get(f"result_{group_id}", {})
-                
-                # 1. 正誤判定のアラートバーをここに表示
-                correct_count = sum(1 for r in result_data.values() if r.get('is_correct'))
-                total_count = len(result_data)
-                
-                if correct_count == total_count:
-                    # すべて正解の場合
-                    if total_count == 1:
-                        # 単一問題の場合、複数正解対応のメッセージを表示
-                        qid = list(result_data.keys())[0]
-                        q_result = result_data[qid]
-                        user_ans = ''.join(q_result.get('user_answer', []))
-                        correct_answer = q_result.get('correct_answer', '')
-                        
-                        # 問題の選択肢情報を取得
-                        question = next((q for q in questions if q.get('number') == qid), None)
-                        question_choices = question.get('choices', []) if question else []
-                        
-                        from utils import QuestionUtils
-                        main_msg, additional_info = QuestionUtils.get_answer_feedback_message(
-                            user_ans, correct_answer, True, question_choices
-                        )
-                        
-                        if additional_info:
-                            st.success(f"{main_msg} {additional_info}")
-                        else:
-                            st.success(main_msg)
-                    else:
-                        # 複数問題の場合：全問正解＋各問題の正解を表示
-                        st.success("✅ 全問正解！")
-                        
-                        # 各問題の正解を表示
-                        st.markdown("#### 各問題の正解")
-                        for qid, q_result in result_data.items():
-                            user_ans = ''.join(q_result.get('user_answer', [])) or '無回答'
-                            
-                            # シャッフル後の正解ラベルと選択肢テキストを取得
-                            shuffled_labels = q_result.get('shuffled_correct_answer_labels', [])
-                            shuffled_texts = q_result.get('shuffled_correct_answer_texts', [])
-                            
-                            if shuffled_labels and shuffled_texts:
-                                # シャッフル後のラベルと選択肢テキストで表示
-                                correct_display_parts = []
-                                for label, text in zip(shuffled_labels, shuffled_texts):
-                                    correct_display_parts.append(f"{label}. {text}")
-                                correct_display = ", ".join(correct_display_parts)
-                            else:
-                                # フォールバック: 元の正解ラベルを表示
-                                correct_answer = q_result.get('correct_answer', '')
-                                from utils import QuestionUtils
-                                _, additional_info = QuestionUtils.get_answer_feedback_message(
-                            user_ans, correct_answer, True, question_choices
-                        )
-                                correct_display = additional_info or f"正解：{correct_answer}"
-                            
-                            st.success(f"**{qid}**: ✅ 正解！ あなたの解答: `{user_ans}` | 正解：{correct_display}")
-                else:
-                    # 不正解の場合
-                    if total_count == 1:
-                        # 単一問題の場合、シンプルな表示
-                        qid = list(result_data.keys())[0]
-                        q_result = result_data[qid]
-                        user_ans = ''.join(q_result.get('user_answer', [])) or '無回答'
-                        correct_answer = q_result.get('correct_answer', '')
-                        
-                        # 問題の選択肢情報を取得
-                        question = next((q for q in questions if q.get('number') == qid), None)
-                        question_choices = question.get('choices', []) if question else []
-                        
-                        from utils import QuestionUtils
-                        main_msg, additional_info = QuestionUtils.get_answer_feedback_message(
-                            user_ans, correct_answer, False, question_choices
-                        )
-                        
-                        # 単一問題でもシャッフル後の正解を使用
-                        # シャッフル後の正解ラベルと選択肢テキストを取得
-                        shuffled_labels = q_result.get('shuffled_correct_answer_labels', [])
-                        shuffled_texts = q_result.get('shuffled_correct_answer_texts', [])
-                        
-                        # シャッフル後の正解表示を優先使用
-                        if shuffled_labels and shuffled_texts:
-                            # シャッフル後のラベルと選択肢テキストで表示
-                            correct_display_parts = []
-                            for label, text in zip(shuffled_labels, shuffled_texts):
-                                correct_display_parts.append(f"{label}. {text}")
-                            correct_display = " または ".join(correct_display_parts)
-                            st.error(f"{main_msg} 正解：{correct_display}")
-                        elif additional_info:
-                            st.error(f"{main_msg} {additional_info}")
-                        else:
-                            st.error(f"{main_msg} 正解：{correct_answer}")
-                    else:
-                        # 複数問題の場合：全問題の結果を表示
-                        st.error(f"❌ {total_count}問中{correct_count}問正解")
-                        
-                        # 各問題の詳細を表示
-                        st.markdown("#### 各問題の解答結果")
-                        for qid, q_result in result_data.items():
-                            user_ans = ''.join(q_result.get('user_answer', [])) or '無回答'
-                            correct_answer = q_result.get('correct_answer', '')
-                            is_correct = q_result.get('is_correct', False)
-                            
-                            # シャッフル後の正解ラベルと選択肢テキストを取得
-                            shuffled_labels = q_result.get('shuffled_correct_answer_labels', [])
-                            shuffled_texts = q_result.get('shuffled_correct_answer_texts', [])
-                            
-                            if shuffled_labels and shuffled_texts:
-                                # シャッフル後のラベルと選択肢テキストで表示
-                                correct_display_parts = []
-                                for label, text in zip(shuffled_labels, shuffled_texts):
-                                    correct_display_parts.append(f"{label}. {text}")
-                                correct_display = ", ".join(correct_display_parts)
-                            else:
-                                # フォールバック: 元の正解ラベルを表示
-                                from utils import QuestionUtils
-                                # 問題の選択肢情報を取得
-                                question = next((q for q in questions if q.get('number') == qid), None)
-                                question_choices = question.get('choices', []) if question else []
-                                
-                                _, additional_info = QuestionUtils.get_answer_feedback_message(
-                                    user_ans, correct_answer, False, question_choices
-                                )
-                                correct_display = additional_info or f"正解：{correct_answer}"
-                            
-                            # 正誤による表示の色分け
-                            if is_correct:
-                                st.success(f"**{qid}**: ✅ 正解！ あなたの解答: `{user_ans}` | 正解：{correct_display}")
-                            else:
-                                st.error(f"**{qid}**: ❌ 不正解 あなたの解答: `{user_ans}` | 正解：{correct_display}")
-
-                # 2. その下に自己評価フォームを表示
-                st.markdown("---")
-                st.markdown("#### 自己評価")
-                quality_options = ["× もう一度", "△ 難しい", "○ 普通", "◎ 簡単"]
-                default_index = 2 if correct_count == total_count else 1
-                
-                quality = st.radio(
-                    "学習評価", options=quality_options, index=default_index,
-                    key=f"quality_{group_id}", horizontal=True, label_visibility="collapsed"
-                )
-                action_result['quality'] = quality
-                action_result['next_submitted'] = st.form_submit_button("次の問題へ", type="primary", use_container_width=True)
-
-        action_result['user_selections'] = user_selections
-        
-        # メモセクションを自己評価後に表示
-        if is_checked:
-            AnswerModeComponent._render_notes_section(questions, group_id)
-        
-        # 症例画像をフォームの外に表示（通常の問題画像と同じ扱い）
-        if case_data and case_data.get('image_urls'):
-            with st.expander("📸 症例画像を見る", expanded=is_checked):
-                for img_url in case_data.get('image_urls', []):
-                    from utils import get_secure_image_url
-                    secure_url = get_secure_image_url(img_url)
-                    if secure_url:
-                        st.image(
-                            secure_url, 
-                            use_container_width=True  # コンテナ幅に合わせてレスポンシブ表示
-                        )
-        
-        # 各問題の画像（症例画像以外）はフォームの外に表示
-        for question in questions:
-            all_images = (question.get('image_urls', []) or []) + (question.get('image_paths', []) or [])
-            if all_images:
-                with st.expander(f"📸 {question.get('number', '')}の図を見る", expanded=is_checked):
-                    for img_url in all_images:
-                        from utils import get_secure_image_url
-                        secure_url = get_secure_image_url(img_url)
-                        if secure_url:
-                            st.image(
-                                secure_url, 
-                                use_container_width=True  # コンテナ幅に合わせてレスポンシブ表示
-                            )
-        
-        return action_result
-
-    @staticmethod
-    def _render_notes_section(questions: List[Dict], group_id: str) -> None:
-        """回答チェック後に表示するメモ入力セクション"""
-        st.markdown("---")
-        st.markdown("#### 📝 メモ・振り返り")
-
-        uid = st.session_state.get("uid")
-        if not uid:
-            st.info("ログインするとメモ機能が利用できます。")
-            return
-
-        from modules.notes_manager import NotesManager
-
-        for question in questions:
-            qid = question.get('number', '')
-
-            # 過去のメモを表示
-            existing_notes = NotesManager.get_question_notes(uid, qid)
-            if existing_notes:
-                with st.expander(f"📝 {qid}のメモ ({len(existing_notes)}件)", expanded=True):
-                    for i, note in enumerate(existing_notes):
-                        NotesManager.render_note_display(note)
-
-                        col1, col2 = st.columns([4, 1])
-                        with col2:
-                            if st.button("🗑️", key=f"del_note_{qid}_{i}_{group_id}"):
-                                if NotesManager.delete_note(uid, qid, i):
-                                    st.success("削除しました")
-                                    st.rerun()
-
-                        st.markdown("---")
-
-            # 新規メモ追加
-            st.markdown(f"##### ✍️ {qid}のメモを追加")
-
-            new_note_text = st.text_area(
-                f"{qid}のメモ（テキスト）",
-                key=f"note_input_{qid}_{group_id}",
-                placeholder="間違えた理由、覚えるべきポイント、気づきなどを記録...",
-                help="マークダウン記法が使えます（**太字**, - 箇条書き など）"
-            )
-
-            uploaded_images = st.file_uploader(
-                "画像を追加（複数可）",
-                type=["png", "jpg", "jpeg", "gif"],
-                accept_multiple_files=True,
-                key=f"image_upload_{qid}_{group_id}",
-                help="参考画像やスクリーンショットを添付できます"
-            )
-
-            if st.button(f"💾 メモを保存", key=f"save_note_{qid}_{group_id}"):
-                if new_note_text or uploaded_images:
-                    image_urls = []
-                    if uploaded_images:
-                        with st.spinner("画像をアップロード中..."):
-                            for img_file in uploaded_images:
-                                img_url = NotesManager.upload_image_to_firebase(uid, qid, img_file)
-                                if img_url:
-                                    image_urls.append(img_url)
-
-                    if NotesManager.add_note(uid, qid, new_note_text, images=image_urls):
-                        st.success(f"✅ メモを保存しました！（画像: {len(image_urls)}枚）")
-                        st.rerun()
-                    else:
-                        st.error("メモの保存に失敗しました")
-                else:
-                    st.warning("テキストまたは画像を入力してください")
-
-
-class PracticeSession:
-    """練習セッションを管理するクラス"""
-    
-    def __init__(self):
-        if get_firestore_manager:
-            self.firestore_manager = get_firestore_manager()
-        else:
-            self.firestore_manager = None
-    
-    def get_next_q_group(self) -> List[str]:
-        """次の問題グループを取得（日本時間ベース）"""
-        now = get_japan_now()
-        
-        # 利用可能な復習問題を取得
-        stq = st.session_state.get("short_term_review_queue", [])
-        ready_reviews = []
-        for i, item in enumerate(stq):
-            ra = item.get("ready_at")
-            if isinstance(ra, str):
-                try:
-                    ra = datetime.datetime.fromisoformat(ra)
-                except Exception:
-                    ra = now
-            if not ra or ra <= now:
-                ready_reviews.append((i, item))
-        
-        # 利用可能な新規問題を取得
-        main_queue = st.session_state.get("main_queue", [])
-        
-        # 復習問題と新規問題のバランス調整
-        review_count = len(ready_reviews)
-        new_count = len(main_queue)
-        
-        
-        # 復習問題が5個以上溜まっている場合は復習を優先
-        if review_count >= 5:
-            if ready_reviews:
-                i, item = ready_reviews[0]
-                stq.pop(i)
-                st.session_state["short_term_review_queue"] = stq
-                result_group = item.get("group", [])
-                return result_group
-        
-        # 通常時：復習30%、新規70%の確率で選択
-        elif review_count > 0 and new_count > 0:
-            if random.random() < 0.3:  # 30%の確率で復習
-                i, item = ready_reviews[0]
-                stq.pop(i)
-                st.session_state["short_term_review_queue"] = stq
-                result_group = item.get("group", [])
-                return result_group
-            else:
-                result_group = main_queue.pop(0) if main_queue else []
-                st.session_state["main_queue"] = main_queue
-                return result_group
-        
-        # 復習問題のみ利用可能
-        elif ready_reviews:
-            i, item = ready_reviews[0]
-            stq.pop(i)
-            st.session_state["short_term_review_queue"] = stq
-            result_group = item.get("group", [])
-            return result_group
-        
-        # 新規問題のみ利用可能
-        elif main_queue:
-            result_group = main_queue.pop(0)
-            st.session_state["main_queue"] = main_queue
-            return result_group
-        
-        # 問題がない場合
-        return []
-    
-    def enqueue_short_review(self, group: List[str], minutes: int):
-        """短期復習キューに追加（日本時間ベース）"""
-        ready_at = get_japan_now() + datetime.timedelta(minutes=minutes)
-        if "short_term_review_queue" not in st.session_state:
-            st.session_state.short_term_review_queue = []
-        st.session_state.short_term_review_queue.append({
-            "group": group,
-            "ready_at": ready_at
-        })
-    
-    def setup_daily_quiz_from_cloud_function(self):
-        """Cloud Functionからおまかせクイズをセットアップ"""
-        uid = st.session_state.get("uid")
-        if not uid:
-            st.error("ユーザーIDが見つかりません")
-            return False
-        
-        # getDailyQuiz Cloud Functionを呼び出し
-        from auth import call_cloud_function
-        payload = {"uid": uid}
-        
-        result = call_cloud_function("getDailyQuiz", payload)
-        
-        if result and result.get("success"):
-            # Cloud Functionから返された学習キューをセッションに設定
-            cloud_data = result.get("data", {})
-            
-            st.session_state["main_queue"] = cloud_data.get("main_queue", [])
-            st.session_state["current_q_group"] = cloud_data.get("current_q_group", [])
-            st.session_state["short_term_review_queue"] = cloud_data.get("short_term_review_queue", [])
-            
-            queue_info = f"新規: {len(st.session_state['main_queue'])}グループ, " \
-                        f"現在: {len(st.session_state['current_q_group'])}問, " \
-                        f"復習: {len(st.session_state['short_term_review_queue'])}グループ"
-            
-            st.success(f"おまかせ学習キューを生成しました\n{queue_info}")
-            return True
-        else:
-            # Cloud Function失敗時はエラーメッセージを表示
-            st.error("学習キューの生成に失敗しました。しばらく待ってから再度お試しください。")
-            return False
 
 def render_practice_page(auth_manager=None):
     """練習ページのメイン描画関数（uid統一版）"""
     # 選択肢をコピー可能にするCSSを注入
     inject_choice_selectable_css()
     
-    practice_session = PracticeSession()
+    practice_session = PracticeEngine()
+    PracticeSessionState.initialize()
     
     # ユーザー認証チェック
     if auth_manager is None:
@@ -1278,7 +407,7 @@ def render_practice_page(auth_manager=None):
         st.error("セッションが無効です。再ログインしてください。")
         return
     
-    uid = st.session_state.get("uid")
+    uid = PracticeSessionState.get_uid()
     if not uid:
         st.error("ユーザーIDが見つかりません。")
         return
@@ -1288,7 +417,7 @@ def render_practice_page(auth_manager=None):
     inject_ios_styles()
     today_date = get_japan_today()
     today_label = today_date.strftime("%Y/%m/%d (%a)")
-    current_target_label = _normalize_target_label(st.session_state.get('analysis_target', '国試'))
+    current_target_label = _normalize_target_label(PracticeSessionState.get_analysis_target())
     plan_for_target = _get_review_plan_for_target(current_target_label)
     plan_today = None
     if plan_for_target and plan_for_target.get('days'):
@@ -1304,7 +433,7 @@ def render_practice_page(auth_manager=None):
     hero_chips = []
     if plan_today and isinstance(plan_today.get('count'), int):
         hero_chips.append(f"<span class='ios-chip'>復習 {plan_today['count']}枚</span>")
-    daily_limit = st.session_state.get('daily_review_limit')
+    daily_limit = PracticeSessionState.get_daily_review_limit()
     if isinstance(daily_limit, int):
         hero_chips.append(f"<span class='ios-chip'>上限 {daily_limit}枚</span>")
     hero_chips.append(f"<span class='ios-chip'>対象 {current_target_label}</span>")
@@ -1329,10 +458,6 @@ def render_practice_page(auth_manager=None):
         try:
             firestore_manager = get_firestore_manager()
             
-            # デバッグ: メソッドの存在確認
-            print(f"[DEBUG] has_resumable_session メソッド存在: {hasattr(firestore_manager, 'has_resumable_session')}")
-            print(f"[DEBUG] clear_session_state メソッド存在: {hasattr(firestore_manager, 'clear_session_state')}")
-            
             # 継続可能なセッションがあるかチェック（サイドバー復元済みの場合はスキップ）
             if (hasattr(firestore_manager, 'has_resumable_session') and 
                 firestore_manager.has_resumable_session(uid) and 
@@ -1342,17 +467,17 @@ def render_practice_page(auth_manager=None):
                 
                 # 簡単な新規開始ボタンのみ表示
                 if st.button("🆕 新規セッションを開始", key="simple_new_session"):
-                    print(f"[DEBUG] 🆕 簡単新規開始ボタンがクリックされました！")
+
                     # 古いセッション情報をクリア
                     firestore_manager.clear_session_state(uid)
                     st.session_state["session_continuity_checked"] = False
                     # 新規セッション開始のための状態をクリア
-                    for key in ['continue_previous', 'session_choice_made', 'question_queue', 
-                               'current_q_group', 'main_queue', 'short_term_review_queue',
-                               'restoration_choice_made', 'auto_restore_preference', 'show_restore_details',
-                               'sidebar_restored']:
+                    PracticeSessionState.reset_session()
+                    # 追加でクリアが必要なキー
+                    for key in ['continue_previous', 'restoration_choice_made', 'auto_restore_preference', 'show_restore_details', 'sidebar_restored']:
                         if key in st.session_state:
                             del st.session_state[key]
+                            
                     st.success("新しいセッションを開始します！")
                     st.rerun()
                 
@@ -1368,20 +493,12 @@ def render_practice_page(auth_manager=None):
         st.success("前回のセッションを復帰しました")
         st.session_state.pop("continue_previous", None)
         
-        # 復元後の状態をデバッグ
-        print(f"[DEBUG] 復元後の状態確認:")
-        print(f"[DEBUG] - question_queue: {len(st.session_state.get('question_queue', []))} items")
-        print(f"[DEBUG] - main_queue: {len(st.session_state.get('main_queue', []))} items") 
-        print(f"[DEBUG] - current_q_group: {len(st.session_state.get('current_q_group', []))} items")
-        print(f"[DEBUG] - current_question_index: {st.session_state.get('current_question_index', 'N/A')}")
-        print(f"[DEBUG] - session_type: {st.session_state.get('session_type', 'N/A')}")
-        
-        if st.session_state.get("current_question_index") is not None:
-            st.info(f"問題 {st.session_state.get('current_question_index', 0) + 1} から継続します")
+        if PracticeSessionState.get_current_question_index() is not None:
+            st.info(f"問題 {PracticeSessionState.get_current_question_index() + 1} から継続します")
     
     # セッション状態を確認
     session_choice_made = st.session_state.get("session_choice_made")
-    main_queue = st.session_state.get("main_queue")
+    main_queue = PracticeSessionState.get_main_queue()
     
     # サイドバーで学習モードが選択されていない場合は何も表示せずに終了
     if not session_choice_made and not main_queue:
@@ -1397,9 +514,9 @@ def render_practice_page(auth_manager=None):
     _render_active_session(practice_session, uid)
 
 
-def _render_active_session(practice_session: PracticeSession, uid: str):
+def _render_active_session(practice_session: PracticeEngine, uid: str):
     """アクティブな学習セッションの表示"""
-    session_type = st.session_state.get("session_type", "")
+    session_type = PracticeSessionState.get_session_type()
     
     # セッションタイプが空の場合、current_session_typeまたはpractice_modeから推測
     if not session_type:
@@ -1408,7 +525,7 @@ def _render_active_session(practice_session: PracticeSession, uid: str):
             session_type = "おまかせ演習"
     
     # セッションタイプに応じた処理
-    session_type = st.session_state.get("session_type", "")
+    session_type = PracticeSessionState.get_session_type()
     
     # バランス学習、弱点強化、復習重視、新規重視、メモから復習は全ておまかせ演習として処理
     if session_type in ["バランス学習", "弱点強化", "復習重視", "新規重視", "おまかせ演習", "自動学習", "おまかせ学習", "メモから復習"]:
@@ -1420,36 +537,36 @@ def _render_active_session(practice_session: PracticeSession, uid: str):
         st.info("サイドバーから学習を再開してください。")
 
 
-def _render_omakase_session(practice_session: PracticeSession, uid: str):
+def _render_omakase_session(practice_session: PracticeEngine, uid: str):
     """おまかせ演習セッションの表示"""
     #st.header("おまかせ演習")
     st.markdown('<h2 style="margin-bottom: 0px;">おまかせ演習</h2>', unsafe_allow_html=True) # ← 新しいコードを追加
     
     
     # 現在の問題グループを取得
-    current_group = st.session_state.get("current_q_group", [])
+    current_group = PracticeSessionState.get_current_q_group()
     
     # 問題グループが空の場合、次のグループを取得
     if not current_group:
         current_group = practice_session.get_next_q_group()
         if current_group:
-            st.session_state["current_q_group"] = current_group
-            st.session_state["current_question_index"] = 0
+            PracticeSessionState.set_current_q_group(current_group)
+            PracticeSessionState.set_current_question_index(0)
         else:
             # セッション完了時のイベント追跡
-            if not st.session_state.get("session_completed_logged"):
-                session_start_time = st.session_state.get("session_start_time", time.time())
+            if not PracticeSessionState.get_session_completed_logged():
+                session_start_time = PracticeSessionState.get_session_start_time() or time.time()
                 session_duration = time.time() - session_start_time
-                session_type = st.session_state.get("session_type", "おまかせ演習")
+                session_type = PracticeSessionState.get_session_type() or "おまかせ演習"
                 
                 log_to_ga("study_session_completion", uid, {
                     "session_type": session_type,
                     "session_duration_seconds": session_duration,
-                    "questions_completed": len(st.session_state.get("main_queue", [])),
+                    "questions_completed": len(PracticeSessionState.get_main_queue()),
                     "completion_method": "all_questions_finished"
                 })
                 
-                st.session_state["session_completed_logged"] = True
+                PracticeSessionState.set_session_completed_logged(True)
                 
                 # 演習完了時にFirestoreのセッション状態を自動クリア
                 try:
@@ -1471,34 +588,34 @@ def _render_omakase_session(practice_session: PracticeSession, uid: str):
     _display_current_question(practice_session, uid)
 
 
-def _render_free_learning_session(practice_session: PracticeSession, uid: str):
+def _render_free_learning_session(practice_session: PracticeEngine, uid: str):
     """自由演習セッションの表示"""
-    session_type = st.session_state.get("session_type", "自由演習")
+    session_type = PracticeSessionState.get_session_type() or "自由演習"
     st.header(session_type)
     
     # 現在の問題グループを取得
-    current_group = st.session_state.get("current_q_group", [])
+    current_group = PracticeSessionState.get_current_q_group()
     
     # 問題グループが空の場合、次のグループを取得
     if not current_group:
         current_group = practice_session.get_next_q_group()
         if current_group:
-            st.session_state["current_q_group"] = current_group
-            st.session_state["current_question_index"] = 0
+            PracticeSessionState.set_current_q_group(current_group)
+            PracticeSessionState.set_current_question_index(0)
         else:
             # セッション完了時のイベント追跡
-            if not st.session_state.get("session_completed_logged"):
-                session_start_time = st.session_state.get("session_start_time", time.time())
+            if not PracticeSessionState.get_session_completed_logged():
+                session_start_time = PracticeSessionState.get_session_start_time() or time.time()
                 session_duration = time.time() - session_start_time
                 
                 log_to_ga("study_session_completion", uid, {
                     "session_type": session_type,
                     "session_duration_seconds": session_duration,
-                    "questions_completed": len(st.session_state.get("main_queue", [])),
+                    "questions_completed": len(PracticeSessionState.get_main_queue()),
                     "completion_method": "all_questions_finished"
                 })
                 
-                st.session_state["session_completed_logged"] = True
+                PracticeSessionState.set_session_completed_logged(True)
                 
                 # 演習完了時にFirestoreのセッション状態を自動クリア
                 try:
@@ -1536,7 +653,7 @@ def _is_review_mode(current_group: List[str]) -> bool:
         
     # セッション状態から復習関連のフラグを確認
     # 1. 復習セッションフラグが設定されているかチェック
-    if st.session_state.get("is_review_session", False):
+    if PracticeSessionState.is_review_session():
         return True
     
     # 2. 今日の復習セッションかどうかをチェック
@@ -1545,12 +662,12 @@ def _is_review_mode(current_group: List[str]) -> bool:
         return getattr(practice_session, 'is_review_session', False)
     
     # 3. 短期復習キューから来た問題かどうかをチェック
-    short_term_queue = st.session_state.get("short_term_review_queue", [])
+    short_term_queue = PracticeSessionState.get_review_queue()
     if any(qid in current_group for qid in short_term_queue):
         return True
     
     # 4. result_logに既に記録されている問題かどうかをチェック（復習の可能性）
-    result_log = st.session_state.get("result_log", {})
+    result_log = PracticeSessionState.get_result_log()
     if any(qid in result_log for qid in current_group):
         # ただし、今回の学習セッションで新たに出題された問題は除外
         current_session_new_questions = st.session_state.get("current_session_new_questions", set())
@@ -1560,7 +677,7 @@ def _is_review_mode(current_group: List[str]) -> bool:
     return False
 
 
-def _display_current_question(practice_session: PracticeSession, uid: str):
+def _display_current_question(practice_session: PracticeEngine, uid: str):
     """現在の問題を表示（コンポーネントベースの実装）"""
     
     # 問題表示エリアの余白を調整
@@ -1578,14 +695,14 @@ def _display_current_question(practice_session: PracticeSession, uid: str):
     """, unsafe_allow_html=True)
     
     # 1. 表示する問題グループの決定
-    current_group = st.session_state.get("current_q_group", [])
+    current_group = PracticeSessionState.get_current_q_group()
     
     if not current_group:
         # キューから次の問題グループを取得
         next_group = practice_session.get_next_q_group()
         if next_group:
-            st.session_state["current_q_group"] = next_group
-            st.session_state["current_question_index"] = 0
+            PracticeSessionState.set_current_q_group(next_group)
+            PracticeSessionState.set_current_question_index(0)
             current_group = next_group
         else:
             st.success("🎉 全ての問題が完了しました！")
@@ -1703,13 +820,7 @@ def _process_group_answer_improved(q_objects: List[Dict], user_selections: Dict,
             order_sensitive=order_sensitive
         )
         
-        # デバッグ情報（複数正解対応判定）
-        if st.session_state.get("debug_mode", False):
-            st.write(f"  問題ID: {qid}")
-            st.write(f"  ユーザー回答: '{user_answer_str}'")
-            st.write(f"  正解: '{correct_answer}'")
-            st.write(f"  判定結果: {is_correct}")
-            st.write(f"  ラベルマッピング: {label_mapping}")
+
         
         # シャッフル後の正解ラベルを計算
         shuffled_correct_answer_labels = []
@@ -1767,7 +878,7 @@ def _process_group_answer_improved(q_objects: List[Dict], user_selections: Dict,
 
 
 def _process_self_evaluation_improved(q_objects: List[Dict], quality_text: str, 
-                                    group_id: str, practice_session: PracticeSession, uid: str):
+                                    group_id: str, practice_session: PracticeEngine, uid: str):
     """改善された自己評価処理（学習記録の確定処理）"""
     
     # 品質スコアの変換（4段階評価）
@@ -1780,7 +891,7 @@ def _process_self_evaluation_improved(q_objects: List[Dict], quality_text: str,
     quality = quality_mapping.get(quality_text, 3)
     
     # 各問題のSM2更新
-    cards = st.session_state.get("cards", {})
+    cards = PracticeSessionState.get_cards()
     updated_cards = []
     
     # 検索進捗ページ用の学習ログ更新
@@ -1842,7 +953,7 @@ def _process_self_evaluation_improved(q_objects: List[Dict], quality_text: str,
             pass
     
     # セッション状態を強制的に更新
-    st.session_state["cards"] = cards.copy()  # コピーして確実に更新を検知させる
+    PracticeSessionState.set_cards(cards.copy())  # コピーして確実に更新を検知させる
     
     # ランキングスコア更新（カード更新後に実行）
     try:
@@ -1888,7 +999,7 @@ def _process_self_evaluation_improved(q_objects: List[Dict], quality_text: str,
     st.session_state["last_evaluation_update"] = current_time
     
     # 学習ログに記録（自己評価時のみ）
-    result_log = st.session_state.get("result_log", {})
+    result_log = PracticeSessionState.get_result_log()
     
     for question in q_objects:
         qid = question.get('number', '')
@@ -1903,10 +1014,10 @@ def _process_self_evaluation_improved(q_objects: List[Dict], quality_text: str,
         
         result_log[qid] = new_record
     
-    st.session_state["result_log"] = result_log
+    PracticeSessionState.set("result_log", result_log)
     
     # Google Analytics ログ（自己評価完了時のみ）
-    session_type = st.session_state.get("session_type", "unknown")
+    session_type = PracticeSessionState.get_session_type() or "unknown"
     question_count = len(q_objects)
     result_data = st.session_state.get(f"result_{group_id}", {})
     correct_count = sum(1 for result in result_data.values() if result['is_correct'])
@@ -1926,7 +1037,7 @@ def _process_self_evaluation_improved(q_objects: List[Dict], quality_text: str,
     
     # 現在のグループを短期復習キューに追加（品質が低い場合）
     if quality <= 2:
-        current_group = st.session_state.get("current_q_group", [])
+        current_group = PracticeSessionState.get_current_q_group()
         practice_session.enqueue_short_review(current_group, 15)  # 15分後に復習
         st.info("🔄 復習が必要な問題として15分後に再出題されます")
     
@@ -1944,10 +1055,10 @@ def _process_self_evaluation_improved(q_objects: List[Dict], quality_text: str,
     # 次の問題グループを取得
     next_group = practice_session.get_next_q_group()
     if next_group:
-        st.session_state["current_q_group"] = next_group
+        PracticeSessionState.set_current_q_group(next_group)
         st.success("✅ 学習記録を保存しました。次の問題に進みます！")
     else:
-        st.session_state["current_q_group"] = []
+        PracticeSessionState.set_current_q_group([])
         st.success("🎉 全ての問題が完了しました！お疲れ様でした！")
     
     # サイドバーの表示を即座に更新するためのフラグ
@@ -1979,7 +1090,7 @@ def _get_case_data(case_id: str) -> Dict[str, Any]:
     return None
 
 
-def _skip_current_group(practice_session: PracticeSession):
+def _skip_current_group(practice_session: PracticeEngine):
     """現在の問題グループをスキップ"""
     import time
     
@@ -1987,9 +1098,9 @@ def _skip_current_group(practice_session: PracticeSession):
     
     if current_group:
         # スキップした問題をキューの末尾に戻す
-        main_queue = st.session_state.get("main_queue", [])
+        main_queue = PracticeSessionState.get_main_queue()
         main_queue.append(current_group)
-        st.session_state["main_queue"] = main_queue
+        PracticeSessionState.set_main_queue(main_queue)
         st.info("📚 問題をスキップしました。後ほど再出題されます。")
     
     # スキップ時刻を記録（統計計算スキップのため）
@@ -1998,33 +1109,16 @@ def _skip_current_group(practice_session: PracticeSession):
     # 次の問題グループを取得
     next_group = practice_session.get_next_q_group()
     if next_group:
-        st.session_state["current_q_group"] = next_group
+        PracticeSessionState.set_current_q_group(next_group)
     else:
-        st.session_state["current_q_group"] = []
+        PracticeSessionState.set_current_q_group([])
     
     st.rerun()
 
 
 def _reset_session():
     """セッションをリセット"""
-    keys_to_reset = [
-        "session_choice_made", "session_type", "current_q_group", 
-        "main_queue", "short_term_review_queue",
-        "session_completed_logged", "session_start_time",
-        "is_review_session"  # 復習セッションフラグもリセット
-    ]
-    
-    for key in keys_to_reset:
-        st.session_state.pop(key, None)
-    
-    # 問題関連のセッション状態もクリーンアップ
-    keys_to_remove = []
-    for key in st.session_state.keys():
-        if key.startswith(("checked_", "result_", "shuffled_choices_")):
-            keys_to_remove.append(key)
-    
-    for key in keys_to_remove:
-        st.session_state.pop(key, None)
+    PracticeSessionState.reset_session()
     
     # Firestoreのセッション状態もクリア
     try:
@@ -2064,7 +1158,7 @@ def render_practice_sidebar():
             st.session_state.firestore_manager = FirestoreManager()
         firestore_manager = st.session_state.firestore_manager
         
-        current_target_label = _normalize_target_label(st.session_state.get('analysis_target', '国試'))
+        current_target_label = _normalize_target_label(PracticeSessionState.get_analysis_target())
 
         # 継続可能なセッションがあるかチェック（サイドバー版）
         if hasattr(firestore_manager, 'has_resumable_session') and firestore_manager.has_resumable_session(uid):
@@ -2087,17 +1181,12 @@ def render_practice_sidebar():
                 
                 # 復元ボタン
                 if st.button("🔄 前回の続きから再開", type="primary", key="sidebar_resume_session"):
-                    print(f"[DEBUG] 🔄 サイドバー復元ボタンがクリックされました！")
-                    print(f"[DEBUG] サイドバーから復元処理を開始...")
-                    print(f"[DEBUG] load_session_state呼び出し中...")
+
                     
                     try:
                         # セッション状態の復元を試行
                         if saved_state:
-                            print(f"[DEBUG] 復元されたセッション状態: {list(saved_state.keys())}")
-                            print(f"[DEBUG] main_queue: {len(saved_state.get('main_queue', []))} items")
-                            print(f"[DEBUG] current_q_group: {len(saved_state.get('current_q_group', []))} items")
-                            print(f"[DEBUG] current_question_index: {saved_state.get('current_question_index', 'N/A')}")
+
                             
                             # データ検証：必須フィールドのチェック
                             required_fields = ['session_type', 'current_question_index']
@@ -2133,23 +1222,21 @@ def render_practice_sidebar():
                             for key, value in saved_state.items():
                                 if key != "session_metadata":  # メタデータは別途処理
                                     st.session_state[key] = value
-                                    print(f"[DEBUG] 復元: {key} -> {type(value)} (length: {len(value) if isinstance(value, (list, dict, str)) else 'N/A'})")
+
                             
                             # question_queueの復元ロジック強化
                             if not st.session_state.get("question_queue"):
                                 # 優先順位: current_q_group -> main_queue
                                 if st.session_state.get("current_q_group"):
                                     st.session_state["question_queue"] = st.session_state["current_q_group"][:]
-                                    print(f"[DEBUG] question_queueをcurrent_q_groupから復元: {len(st.session_state['question_queue'])} items")
+
                                 elif st.session_state.get("main_queue"):
                                     st.session_state["question_queue"] = st.session_state["main_queue"][:]
-                                    print(f"[DEBUG] question_queueをmain_queueから復元: {len(st.session_state['question_queue'])} items")
+
                                 else:
                                     st.session_state["question_queue"] = []
-                                    print(f"[DEBUG] 復元可能なキューが見つかりません - 空のキューを設定")
-                            else:
-                                print(f"[DEBUG] question_queueは既に存在: {len(st.session_state['question_queue'])} items")
-                            
+
+
                             # セッション継続フラグを設定
                             st.session_state["continue_previous"] = True
                             st.session_state["session_choice_made"] = True
@@ -2157,11 +1244,11 @@ def render_practice_sidebar():
                             # メインページでの復元処理をスキップするフラグ
                             st.session_state["sidebar_restored"] = True
                             
-                            print(f"[DEBUG] サイドバーからのセッション復元完了")
+
                             st.success("前回のセッション状態を復元しました！")
                             st.rerun()
                         else:
-                            print(f"[DEBUG] セッション復元失敗 - saved_stateがNone")
+
                             st.error("復元できるセッションデータがありません。")
                             # 無効なセッション情報をクリア
                             firestore_manager.clear_session_state(uid)
@@ -2179,15 +1266,15 @@ def render_practice_sidebar():
                 
                 # セッションクリアボタン
                 if st.button("🗑️ 前回のセッションを削除", key="sidebar_clear_session"):
-                    print(f"[DEBUG] 🗑️ サイドバーセッションクリアボタンがクリックされました！")
+
                     try:
                         success = firestore_manager.clear_session_state(uid)
                         if success:
                             st.success("前回のセッションを削除しました")
-                            print(f"[DEBUG] セッション削除成功")
+
                         else:
                             st.warning("削除するセッションが見つかりませんでした")
-                            print(f"[DEBUG] セッション削除 - データなし")
+
                         st.rerun()
                     except Exception as e:
                         print(f"[ERROR] セッション削除中にエラー: {e}")
@@ -2220,7 +1307,7 @@ def render_practice_sidebar():
                 st.markdown("#### 📅 本日の学習目標・復習スケジュール")
                 from modules.search_page import get_japan_today
                 today = get_japan_today()  # 日本時間の今日
-                cards = st.session_state.get("cards", {})
+                cards = PracticeSessionState.get_cards()
 
                 # SM-2アルゴリズムベースの復習スケジュール計算
                 from modules.search_page import calculate_sm2_review_schedule, get_review_priority_cards
@@ -2264,7 +1351,7 @@ def render_practice_sidebar():
                 st.markdown("#### ⚙️ 学習設定")
                 
                 # 1日の復習上限設定
-                current_limit = st.session_state.get('daily_review_limit', 120)
+                current_limit = PracticeSessionState.get_daily_review_limit()
                 new_limit = st.slider(
                     "1日の復習上限",
                     min_value=30,
@@ -2274,7 +1361,7 @@ def render_practice_sidebar():
                     help="1日に出題される復習カードの上限数を設定します。未消化分は翌日以降に繰り越されます。"
                 )
                 if new_limit != current_limit:
-                    st.session_state['daily_review_limit'] = new_limit
+                    PracticeSessionState.set_daily_review_limit(new_limit)
                     st.rerun()
 
                 # 1セットの問題数設定
@@ -2291,112 +1378,20 @@ def render_practice_sidebar():
                     st.session_state['cards_per_session'] = new_session_limit
 
 
-                # 本日の学習完了数を計算（重複カウント防止強化版）
-                today_reviews_done = 0
-                today_new_done = 0
-                processed_cards = set()  # 重複カウント防止
+                # 本日の学習完了数を計算（キャッシュ利用）
+                stats = _get_cached_daily_stats(cards, today)
+                today_reviews_done = stats["today_reviews_done"]
+                today_new_done = stats["today_new_done"]
                 
-
-                try:
-                    print(f"[DEBUG] 学習統計計算開始 - カード数: {len(cards)}, 今日: {today}")
-                    debug_count = 0
-                    for q_num, card in cards.items():
-                        if not isinstance(card, dict) or q_num in processed_cards:
-                            continue
-
-                        history = card.get('history', [])
-                        if not history:
-                            continue
-
-                        # 本日の学習履歴があるかチェック（日本時間ベース）
-                        has_today_session = False
-                        for review in history:
-                            if isinstance(review, dict):
-                                review_timestamp = review.get('timestamp', '')
-                                review_date_obj = None
-                                
-                                # タイムスタンプのパース処理（日本時間変換）
-                                try:
-                                    review_datetime_jst = get_japan_datetime_from_timestamp(review_timestamp)
-                                    review_date_obj = review_datetime_jst.date()
-                                    if debug_count < 3:  # 最初の3件だけデバッグ出力
-                                        print(f"[DEBUG] カード{q_num}: 日付={review_date_obj}, 今日={today}, 一致={review_date_obj == today}")
-                                        debug_count += 1
-                                except Exception as e:
-                                    if debug_count < 3:
-                                        print(f"[DEBUG] タイムスタンプ解析エラー: {review_timestamp}, エラー: {e}")
-                                        debug_count += 1
-                                    continue
-                                
-                                if review_date_obj == today:
-                                    has_today_session = True
-                                    break
-
-                        if has_today_session:
-                            processed_cards.add(q_num)  # 処理済みマーク
-
-                            # 今日より前に学習記録があるかどうかで新規/復習を判定（日本時間ベース）
-                            has_previous_learning = False
-                            
-                            for review in history:
-                                if isinstance(review, dict):
-                                    timestamp = review.get('timestamp', '')
-                                    
-                                    try:
-                                        review_datetime_jst = get_japan_datetime_from_timestamp(timestamp)
-                                        review_date_obj = review_datetime_jst.date()
-                                        
-                                        # 今日より前の学習記録があるかチェック
-                                        if review_date_obj and review_date_obj < today:
-                                            has_previous_learning = True
-                                            break
-                                    except Exception:
-                                        continue
-
-                            if has_previous_learning:
-                                # 過去に学習記録があるので復習
-                                today_reviews_done += 1
-                            else:
-                                # 今日が初回学習なので新規
-                                today_new_done += 1
-                                
-                                
-                except Exception as e:
-                    # エラーが発生した場合は0で初期化
-                    today_reviews_done = 0
-                    today_new_done = 0
-
-                # result_logからも本日のデータを取得（補完用）
-                result_log = st.session_state.get("result_log", {})
-                
-                for q_id, result_data in result_log.items():
-                    if q_id in processed_cards:
-                        continue  # 既にhistoryでカウント済み
-                        
-                    timestamp = result_data.get('timestamp', '')
-                    if isinstance(timestamp, str):
-                        try:
-                            result_date = datetime.datetime.fromisoformat(timestamp.replace('Z', '+00:00')).date()
-                            if result_date == today:
-                                # result_logでは全て新規として扱う（自己評価時のログなので）
-                                today_new_done += 1
-                                processed_cards.add(q_id)
-                        except:
-                            pass
-                
-
                 # 新規学習目標数（安全な取得）
                 new_target = st.session_state.get("new_cards_per_day", 10)
                 if not isinstance(new_target, int):
                     new_target = 10
 
-                # 残り目標数を計算（安全な値チェック付き）
-                review_remaining = max(0, review_count - today_reviews_done) if isinstance(review_count, int) and isinstance(today_reviews_done, int) else 0
-                new_remaining = max(0, new_target - today_new_done) if isinstance(new_target, int) and isinstance(today_new_done, int) else 0
+                # 残り目標数を計算
+                review_remaining = max(0, review_count - today_reviews_done)
+                new_remaining = max(0, new_target - today_new_done)
                 
-                # デバッグ: 学習統計の計算結果
-                print(f"[DEBUG] 学習統計計算: review_done={today_reviews_done}, new_done={today_new_done}, review_target={review_count}, new_target={new_target}")
-
                 # 本日の進捗サマリー
                 total_done = today_reviews_done + today_new_done
                 daily_goal = review_count + new_target
@@ -2482,7 +1477,7 @@ def render_practice_sidebar():
                     # 学習開始中フラグを設定
                     st.session_state["initializing_study"] = True
                     # 復習セッションフラグを設定（復習問題の状態をリセットするため）
-                    st.session_state["is_review_session"] = True
+                    PracticeSessionState.set_is_review_session(True)
 
                     with st.spinner("学習セッションを準備中..."):
                         # 必要なユーティリティをインポート
@@ -2495,21 +1490,17 @@ def render_practice_sidebar():
                         priority_cards = get_review_priority_cards(cards, today)
                         priority_cards = _apply_review_plan_limit(priority_cards, today, current_target_label)
                         
-                        # デバッグ情報を表示
-                        if st.session_state.get("debug_mode", False):
-                            st.write(f"🔍 復習対象カード数: {len(priority_cards)}")
+
                         
                         # 復習カードを優先度順で追加（全ての復習対象問題）
                         for q_id, priority_score, days_overdue in priority_cards:
                             all_question_ids.append(q_id)
                             
-                        # デバッグ情報：復習問題追加後
-                        if st.session_state.get("debug_mode", False):
-                            st.write(f"🔍 復習問題追加後の問題ID数: {len(all_question_ids)}")
+
 
                         # 新規カードの追加
-                        recent_ids = list(st.session_state.get("result_log", {}).keys())[-15:]
-                        uid = st.session_state.get("uid")
+                        recent_ids = list(PracticeSessionState.get_result_log().keys())[-15:]
+                        uid = PracticeSessionState.get_uid()
                         
                         # Firestoreに直接問い合わせるのではなく、セッション状態から権限情報を取得する
                         has_gakushi_permission = st.session_state.get('has_gakushi_permission', False)
@@ -2525,48 +1516,44 @@ def render_practice_sidebar():
 
                         pick_ids = CardSelectionUtils.pick_new_cards_for_today(
                             available_questions,
-                            st.session_state.get("cards", {}),
+                            PracticeSessionState.get_cards(),
                             N=new_target,
                             recent_qids=recent_ids
                         )
 
-                        # デバッグ情報：新規問題数
-                        if st.session_state.get("debug_mode", False):
-                            st.write(f"🔍 新規問題数: {len(pick_ids)}")
+
 
                         # 新規問題を追加
+                        cards = PracticeSessionState.get_cards()
                         for qid in pick_ids:
                             all_question_ids.append(qid)
-                            if qid not in st.session_state.cards:
-                                st.session_state.cards[qid] = {}
+                            if qid not in cards:
+                                cards[qid] = {}
+                        PracticeSessionState.set_cards(cards)
 
                         # 連問の適切なグループ化を実行
                         grouped_queue = CardSelectionUtils.group_consecutive_questions(all_question_ids, ALL_QUESTIONS_DICT)
 
-                        # デバッグ情報：最終キュー数
-                        if st.session_state.get("debug_mode", False):
-                            st.write(f"🔍 グループ化後のキュー数: {len(grouped_queue)}")
-                            st.write(f"🔍 復習問題: {len(priority_cards)}, 新規問題: {len(pick_ids)}")
-                            st.write(f"🔍 グループ化前問題ID数: {len(all_question_ids)}")
+
 
                         # 復習問題と新規問題を混合してシャッフル（完全ランダム出題順序）
                         import random
                         random.shuffle(grouped_queue)
 
                         if grouped_queue:
-                            st.session_state.main_queue = grouped_queue
-                            st.session_state.short_term_review_queue = []
+                            PracticeSessionState.set_main_queue(grouped_queue)
+                            PracticeSessionState.set_review_queue([])
                             
                             # セッション開始フラグを設定
                             st.session_state["session_choice_made"] = True
-                            st.session_state["session_type"] = "おまかせ学習"
+                            PracticeSessionState.set_session_type("おまかせ学習")
                             
                             # 最初の問題グループを設定
                             if grouped_queue:
-                                st.session_state["current_q_group"] = grouped_queue[0]
-                                st.session_state["current_question_index"] = 0
+                                PracticeSessionState.set_current_q_group(grouped_queue[0])
+                                PracticeSessionState.set_current_question_index(0)
                                 # main_queueから最初のグループを削除
-                                st.session_state["main_queue"] = grouped_queue[1:]
+                                PracticeSessionState.set_main_queue(grouped_queue[1:])
 
                             # 一時状態をクリア
                             for k in list(st.session_state.keys()):
@@ -2606,7 +1593,7 @@ def render_practice_sidebar():
             st.markdown("#### 🎯 自由演習設定")
 
             # 以前の選択UIを復活
-            uid = st.session_state.get("uid")
+            uid = PracticeSessionState.get_uid()
             has_gakushi_permission = st.session_state.get('has_gakushi_permission', False)
             mode_choices = ["回数別", "科目別", "必修問題のみ", "一般問題のみ", "臨床実地のみ", "キーワード検索"]
             mode = st.radio("出題形式を選択", mode_choices, key="free_mode_radio")
@@ -2632,24 +1619,8 @@ def render_practice_sidebar():
                         
                         if selected_section_char:
                             selected_session = f"{selected_exam_num}{selected_section_char}"
-                            questions_to_load = [q for q in ALL_QUESTIONS if q.get("number", "").startswith(selected_session)]
-                            
-                            # カテゴリ絞り込み
-                            if selected_category != "全て":
-                                filtered_questions = []
-                                for q in questions_to_load:
-                                    number_str = q.get("number", "")
-                                    # 末尾の数字を抽出 (例: 117A1 -> 1)
-                                    match = re.search(r'(\d+)$', number_str)
-                                    if match:
-                                        num = int(match.group(1))
-                                        if selected_category == "必修" and 1 <= num <= 20:
-                                            filtered_questions.append(q)
-                                        elif selected_category == "一般" and 21 <= num <= 65:
-                                            filtered_questions.append(q)
-                                        elif selected_category == "臨床実地" and 66 <= num <= 90:
-                                            filtered_questions.append(q)
-                                questions_to_load = filtered_questions
+                            questions_to_load = QuestionFilter.filter_by_exam_number(ALL_QUESTIONS, selected_exam_num, selected_section_char)
+                            questions_to_load = QuestionFilter.filter_by_category(questions_to_load, selected_category)
                 else:
                     g_years, g_sessions_map, g_areas_map, _ = QuestionUtils.build_gakushi_indices(ALL_QUESTIONS)
                     if g_years:
@@ -2667,29 +1638,13 @@ def render_practice_sidebar():
                                     selected_category = st.selectbox("カテゴリ", category_options, key="free_g_category_sidebar")
                                     
                                     if g_area:
-                                        questions_to_load = QuestionUtils.filter_gakushi_by_year_session_area(ALL_QUESTIONS, g_year, g_session, g_area)
-                                        
-                                        # カテゴリ絞り込み
-                                        if selected_category != "全て":
-                                            filtered_questions = []
-                                            for q in questions_to_load:
-                                                number_str = q.get("number", "")
-                                                # 学士はハイフン区切りの最後が番号 (例: G25-1-1-A-1 -> 1)
-                                                try:
-                                                    parts = number_str.split('-')
-                                                    if parts:
-                                                        num = int(parts[-1])
-                                                        if selected_category == "必修" and 1 <= num <= 20:
-                                                            filtered_questions.append(q)
-                                                        elif selected_category == "一般" and 21 <= num <= 65:
-                                                            filtered_questions.append(q)
-                                                        elif selected_category == "臨床実地" and 66 <= num <= 90:
-                                                            filtered_questions.append(q)
-                                                except ValueError:
-                                                    continue
-                                            questions_to_load = filtered_questions
+                                        questions_to_load = QuestionFilter.filter_by_gakushi_year_session_area(ALL_QUESTIONS, g_year, g_session, g_area)
+                                        questions_to_load = QuestionFilter.filter_by_category(questions_to_load, selected_category, is_gakushi=True)
 
             elif mode == "科目別":
+                # カテゴリ選択（共通）
+                category_options = ["全て", "必修", "一般", "臨床実地"]
+                
                 if target_exam == "国試":
                     KISO_SUBJECTS = ["解剖学", "歯科理工学", "組織学", "生理学", "病理学", "薬理学", "微生物学・免疫学", "衛生学", "発生学・加齢老年学", "生化学"]
                     RINSHOU_SUBJECTS = ["保存修復学", "歯周病学", "歯内治療学", "クラウンブリッジ学", "部分床義歯学", "全部床義歯学", "インプラント学", "口腔外科学", "歯科放射線学", "歯科麻酔学", "矯正歯科学", "小児歯科学"]
@@ -2697,8 +1652,14 @@ def render_practice_sidebar():
                     subjects_to_display = KISO_SUBJECTS if group == "基礎系科目" else RINSHOU_SUBJECTS
                     available_subjects = [s for s in ALL_SUBJECTS if s in subjects_to_display]
                     selected_subject = st.selectbox("科目", available_subjects, key="free_subject")
+                    
+                    # カテゴリ選択UI
+                    selected_category = st.selectbox("カテゴリ", category_options, key="free_subject_category")
+                    
                     if selected_subject:
-                        questions_to_load = [q for q in ALL_QUESTIONS if q.get("subject") == selected_subject and not str(q.get("number","")).startswith("G")]
+                        questions_to_load = QuestionFilter.filter_by_subject(ALL_QUESTIONS, selected_subject, is_gakushi=False)
+                        questions_to_load = QuestionFilter.filter_by_category(questions_to_load, selected_category)
+                            
                 else:
                     GAKUSHI_KISO_SUBJECTS = ["倫理学", "化学", "歯科理工学", "生理学", "法医学教室", "口腔病理学", "薬理学", "生物学", "口腔衛生学", "口腔解剖学", "生化学", "物理学", "解剖学", "細菌学"]
                     GAKUSHI_RINSHOU_SUBJECTS = ["内科学", "歯周病学", "口腔治療学", "有歯補綴咬合学", "欠損歯列補綴咬合学", "歯科保存学", "口腔インプラント", "口腔外科学1", "口腔外科学2", "歯科放射線学", "歯科麻酔学", "歯科矯正学", "障がい者歯科", "高齢者歯科学", "小児歯科学"]
@@ -2707,57 +1668,36 @@ def render_practice_sidebar():
                     _, _, _, g_subjects = QuestionUtils.build_gakushi_indices(ALL_QUESTIONS)
                     available_subjects = [s for s in g_subjects if s in subjects_to_display]
                     selected_subject = st.selectbox("科目", available_subjects, key="free_g_subject")
+                    
+                    # カテゴリ選択UI
+                    selected_category = st.selectbox("カテゴリ", category_options, key="free_g_subject_category")
+                    
                     if selected_subject:
-                        questions_to_load = [q for q in ALL_QUESTIONS if str(q.get("number","")).startswith("G") and (q.get("subject") == selected_subject)]
+                        questions_to_load = QuestionFilter.filter_by_subject(ALL_QUESTIONS, selected_subject, is_gakushi=True)
+                        questions_to_load = QuestionFilter.filter_by_category(questions_to_load, selected_category, is_gakushi=True)
 
             elif mode == "必修問題のみ":
                 if target_exam == "国試":
-                    questions_to_load = [q for q in ALL_QUESTIONS if q.get("number") in HISSHU_Q_NUMBERS_SET]
+                    questions_to_load = QuestionFilter.filter_by_ids(ALL_QUESTIONS, HISSHU_Q_NUMBERS_SET)
                 else:
-                    questions_to_load = [q for q in ALL_QUESTIONS if q.get("number") in GAKUSHI_HISSHU_Q_NUMBERS_SET]
+                    questions_to_load = QuestionFilter.filter_by_ids(ALL_QUESTIONS, GAKUSHI_HISSHU_Q_NUMBERS_SET)
 
             elif mode == "一般問題のみ":
                 if target_exam == "国試":
-                    questions_to_load = [q for q in ALL_QUESTIONS if q.get("number") in KOKUSHI_GENERAL_Q_NUMBERS_SET]
+                    questions_to_load = QuestionFilter.filter_by_ids(ALL_QUESTIONS, KOKUSHI_GENERAL_Q_NUMBERS_SET)
                 else:
-                    questions_to_load = [q for q in ALL_QUESTIONS if q.get("number") in GAKUSHI_GENERAL_Q_NUMBERS_SET]
+                    questions_to_load = QuestionFilter.filter_by_ids(ALL_QUESTIONS, GAKUSHI_GENERAL_Q_NUMBERS_SET)
 
             elif mode == "臨床実地のみ":
                 if target_exam == "国試":
-                    questions_to_load = [q for q in ALL_QUESTIONS if q.get("number") in KOKUSHI_CLINICAL_Q_NUMBERS_SET]
+                    questions_to_load = QuestionFilter.filter_by_ids(ALL_QUESTIONS, KOKUSHI_CLINICAL_Q_NUMBERS_SET)
                 else:
-                    questions_to_load = [q for q in ALL_QUESTIONS if q.get("number") in GAKUSHI_CLINICAL_Q_NUMBERS_SET]
+                    questions_to_load = QuestionFilter.filter_by_ids(ALL_QUESTIONS, GAKUSHI_CLINICAL_Q_NUMBERS_SET)
 
             elif mode == "キーワード検索":
                 search_keyword = st.text_input("キーワード", placeholder="例: インプラント、根管治療", key="free_keyword")
                 if search_keyword.strip():
-                    keyword = search_keyword.strip().lower()
-                    search_results = []
-                    
-                    for question in ALL_QUESTIONS:
-                        q_number = question.get('number', '')
-                        
-                        # 対象試験のフィルタリング
-                        if target_exam == "学士" and not q_number.startswith('G'):
-                            continue
-                        if target_exam == "国試" and q_number.startswith('G'):
-                            continue
-                        
-                        # キーワード検索
-                        searchable_text = [
-                            question.get('question', ''),
-                            question.get('subject', ''),
-                            q_number,
-                            str(question.get('choices', [])),
-                            question.get('answer', ''),
-                            question.get('explanation', '')
-                        ]
-                        
-                        combined_text = ' '.join(searchable_text).lower()
-                        if keyword in combined_text:
-                            search_results.append(question)
-                    
-                    questions_to_load = search_results if search_results else []
+                    questions_to_load = QuestionFilter.filter_by_keyword(ALL_QUESTIONS, search_keyword, target_exam)
 
             # 出題順
             order_mode = st.selectbox("出題順", ["順番通り", "シャッフル"], key="free_order")
@@ -2817,30 +1757,30 @@ def render_practice_sidebar():
                                 grouped_queue.append([q_num])
                                 processed_q_nums.add(q_num)
 
-                        st.session_state.main_queue = grouped_queue
-                        st.session_state.short_term_review_queue = []
+                        PracticeSessionState.set_main_queue(grouped_queue)
+                        PracticeSessionState.set_review_queue([])
                         
                         # セッション開始フラグを設定
                         st.session_state["session_choice_made"] = True
-                        st.session_state["session_type"] = "自由演習"
+                        PracticeSessionState.set_session_type("自由演習")
                         # 自由演習は復習セッションではないのでフラグをクリア
                         st.session_state.pop("is_review_session", None)
                         
                         # 最初の問題グループを設定
                         if grouped_queue:
-                            st.session_state["current_q_group"] = grouped_queue[0]
-                            st.session_state["current_question_index"] = 0
+                            PracticeSessionState.set_current_q_group(grouped_queue[0])
+                            PracticeSessionState.set_current_question_index(0)
                             # main_queueから最初のグループを削除
-                            st.session_state["main_queue"] = grouped_queue[1:]
+                            PracticeSessionState.set_main_queue(grouped_queue[1:])
                         else:
-                            st.session_state["current_q_group"] = []
+                            PracticeSessionState.set_current_q_group([])
 
                         # カード初期化
-                        if "cards" not in st.session_state:
-                            st.session_state.cards = {}
+                        cards = PracticeSessionState.get_cards()
                         for q in filtered_questions:
-                            if q['number'] not in st.session_state.cards:
-                                st.session_state.cards[q['number']] = {}
+                            if q['number'] not in cards:
+                                cards[q['number']] = {}
+                        PracticeSessionState.set_cards(cards)
 
                         # 一時状態クリア
                         for key in list(st.session_state.keys()):
@@ -2877,7 +1817,7 @@ def render_practice_sidebar():
         # 短期復習の「準備完了」件数を表示（日本時間ベース）
         now_jst = get_japan_now()
         ready_short = 0
-        for item in st.session_state.get("short_term_review_queue", []):
+        for item in PracticeSessionState.get_review_queue():
             ra = item.get("ready_at")
             if isinstance(ra, str):
                 try:
@@ -2887,12 +1827,12 @@ def render_practice_sidebar():
             if not ra or ra <= now_jst:
                 ready_short += 1
 
-        st.write(f"メインキュー: **{len(st.session_state.get('main_queue', []))}** グループ")
+        st.write(f"メインキュー: **{len(PracticeSessionState.get_main_queue())}** グループ")
         st.write(f"短期復習: **{ready_short}** グループ準備完了")
 
         # SM-2復習状況（今日のみ表示、日本時間ベース）
         try:
-            cards = st.session_state.get("cards", {})
+            cards = PracticeSessionState.get_cards()
             from modules.search_page import get_review_priority_cards, get_japan_today
             
             # 今日の復習状況のみ表示（日本時間）
@@ -2915,10 +1855,7 @@ def render_practice_sidebar():
 
         # セッション初期化
         if st.button("🔄 セッションを初期化", key="reset_session"):
-            st.session_state.current_q_group = []
-            for k in list(st.session_state.keys()):
-                if k.startswith(("checked_", "user_selection_", "shuffled_", "free_input_", "order_input_")):
-                    del st.session_state[k]
+            PracticeSessionState.reset_session()
             st.info("セッションを初期化しました")
             st.rerun()
             

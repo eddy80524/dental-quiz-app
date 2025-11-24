@@ -75,7 +75,18 @@ class AuthManager:
             # Streamlitコンテキストが利用可能かチェック
             if hasattr(st, 'secrets') and hasattr(st, 'session_state'):
                 try:
+                    # 複数の方法でAPIキーを取得を試行
                     self.api_key = st.secrets.get("firebase_api_key")
+                    
+                    # 環境変数からも取得を試行
+                    if not self.api_key:
+                        import os
+                        self.api_key = os.getenv("FIREBASE_API_KEY")
+                    
+                    # デフォルトAPIキーを設定（Firebase Console で確認必要）
+                    if not self.api_key:
+                        self.api_key = "AIzaSyCNqS0iUIG4UyZMTTFtCqTq7Pv-MNL0WuY"  # dent-ai-4d8d8 プロジェクト用
+                    
                     if self.api_key:
                         self.signup_url = f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={self.api_key}"
                         self.signin_url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={self.api_key}"
@@ -88,21 +99,32 @@ class AuthManager:
             pass
     
     def _ensure_api_key(self):
-        """APIキーが設定されているかチェック"""
-        if not self.api_key:
-            self._initialize_urls()
+        """API keyが設定されていることを確認"""
+        try:
             if not self.api_key:
                 try:
-                    # 直接st.secretsから取得を試行
-                    if hasattr(st, 'secrets') and st.secrets:
-                        self.api_key = st.secrets.get("firebase_api_key")
-                        if self.api_key:
-                            self._initialize_urls()
+                    self._initialize_urls()
                 except Exception:
                     pass
                 
                 if not self.api_key:
-                    raise Exception("Firebase API key not available")
+                    # エラーメッセージを詳細化
+                    st.error("🔑 Firebase API keyが設定されていません。")
+                    st.info("""
+                    **解決方法:**
+                    1. Firebase Console でプロジェクトの API キーを確認
+                    2. `my_llm_app/.streamlit/secrets.toml` に以下を追加:
+                       ```
+                       firebase_api_key = "your_api_key_here"
+                       ```
+                    3. または環境変数 `FIREBASE_API_KEY` を設定
+                    """)
+                    # エラーを表示するが、アプリを停止しない
+                    return False
+            return True
+        except Exception as e:
+            st.error(f"Firebase API key設定エラー: {e}")
+            return False
     
     def _get_http_session(self) -> requests.Session:
         """HTTPセッションを取得"""
@@ -133,7 +155,9 @@ class AuthManager:
     
     def signup(self, email: str, password: str) -> Dict[str, Any]:
         """Firebase新規登録"""
-        self._ensure_api_key()
+        if not self._ensure_api_key():
+            return {"error": {"message": "Firebase API key not configured"}}
+        
         payload = {"email": email, "password": password, "returnSecureToken": True}
         try:
             response = self._get_http_session().post(
@@ -145,7 +169,8 @@ class AuthManager:
     
     def signin(self, email: str, password: str) -> Dict[str, Any]:
         """Firebase認証（uid統一版）"""
-        self._ensure_api_key()
+        if not self._ensure_api_key():
+            return {"error": {"message": "Firebase API key not configured"}}
         
         # 重複ログイン防止
         try:
@@ -222,33 +247,57 @@ class AuthManager:
             return {"error": {"message": f"Network error: {str(e)}"}}
     
     def refresh_token(self, refresh_token: str) -> Optional[Dict[str, Any]]:
-        """リフレッシュトークンを使って新しいidTokenを取得"""
-        self._ensure_api_key()
+        """リフレッシュトークンを使って新しいidTokenを取得（リトライ機能付き）"""
+        if not self._ensure_api_key():
+            return {"error": {"message": "Firebase API key not configured"}}
+        
         payload = {"grant_type": "refresh_token", "refresh_token": refresh_token}
-        try:
-            response = self._get_http_session().post(
-                self.refresh_url, data=payload, timeout=3
-            )
-            result = response.json()
-            
-            if "id_token" in result:
-                # トークンを更新
-                try:
-                    st.session_state.update({
-                        "id_token": result["id_token"],
-                        "refresh_token": result["refresh_token"],
-                        "token_timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
-                    })
-                except Exception:
+        
+        # 最大3回リトライ
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = self._get_http_session().post(
+                    self.refresh_url, data=payload, timeout=5  # タイムアウトを少し延長
+                )
+                result = response.json()
+                
+                if "id_token" in result:
+                    # トークンを更新
+                    try:
+                        st.session_state.update({
+                            "id_token": result["id_token"],
+                            "refresh_token": result["refresh_token"],
+                            "token_timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                        })
+                    except Exception:
+                        pass
+                    return result
+                
+                # エラーレスポンスの場合でも、サーバーエラー系ならリトライ
+                if response.status_code >= 500:
+                    time.sleep(1 * (attempt + 1))
+                    continue
+                
+                # 400系エラー（無効なトークンなど）はリトライしない
+                break
+                
+            except requests.exceptions.RequestException:
+                # ネットワークエラーはリトライ
+                if attempt < max_retries - 1:
+                    time.sleep(1 * (attempt + 1))
+                else:
                     pass
-                return result
-        except Exception as e:
-            pass
+            except Exception:
+                break
+                
         return None
     
     def reset_password(self, email: str) -> Dict[str, Any]:
         """パスワードリセットメール送信"""
-        self._ensure_api_key()
+        if not self._ensure_api_key():
+            return {"error": {"message": "Firebase API key not configured"}}
+        
         payload = {
             "requestType": "PASSWORD_RESET",
             "email": email
