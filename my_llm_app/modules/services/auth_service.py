@@ -212,7 +212,7 @@ class AuthService:
     def _render_signup_tab(self):
         """Render the signup tab for new user registration."""
         # Temporary signup disable flag
-        SIGNUP_TEMPORARILY_DISABLED = False
+        SIGNUP_TEMPORARILY_DISABLED = True
         
         if SIGNUP_TEMPORARILY_DISABLED:
             st.warning("🚧 新規登録は一時的に停止中です")

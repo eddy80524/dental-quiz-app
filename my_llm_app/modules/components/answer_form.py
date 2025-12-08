@@ -555,28 +555,12 @@ class AnswerModeComponent:
                 help="マークダウン記法が使えます（**太字**, - 箇条書き など）"
             )
 
-            uploaded_images = st.file_uploader(
-                "画像を追加（複数可）",
-                type=["png", "jpg", "jpeg", "gif"],
-                accept_multiple_files=True,
-                key=f"image_upload_{qid}_{group_id}",
-                help="参考画像やスクリーンショットを添付できます"
-            )
-
             if st.button(f"💾 メモを保存", key=f"save_note_{qid}_{group_id}"):
-                if new_note_text or uploaded_images:
-                    image_urls = []
-                    if uploaded_images:
-                        with st.spinner("画像をアップロード中..."):
-                            for img_file in uploaded_images:
-                                img_url = NotesManager.upload_image_to_firebase(uid, qid, img_file)
-                                if img_url:
-                                    image_urls.append(img_url)
-
-                    if NotesManager.add_note(uid, qid, new_note_text, images=image_urls):
-                        st.success(f"✅ メモを保存しました！（画像: {len(image_urls)}枚）")
+                if new_note_text:
+                    if NotesManager.add_note(uid, qid, new_note_text, images=[]):
+                        st.success(f"✅ メモを保存しました！")
                         st.rerun()
                     else:
                         st.error("メモの保存に失敗しました")
                 else:
-                    st.warning("テキストまたは画像を入力してください")
+                    st.warning("テキストを入力してください")
