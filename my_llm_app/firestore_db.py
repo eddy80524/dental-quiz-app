@@ -139,14 +139,24 @@ class FirestoreManager:
             firebase_config = self._to_dict(st.secrets.get("firebase", {}))
             if not firebase_config:
                 firebase_config = self._to_dict(st.secrets.get("firebase_credentials", {}))
-        except Exception:
+        except Exception as e:
+            print(f"[ERROR] Failed to load firebase config from secrets: {e}")
             firebase_config = None
 
         if not self._is_service_account(firebase_config):
-            raise RuntimeError(
-                "Firebase service account credentials are not configured. "
-                "Please set the full service account JSON under [firebase] in secrets.toml."
-            )
+            error_msg = "Firebase service account credentials are not configured. "
+            if firebase_config:
+                missing_fields = []
+                required = ["client_email", "private_key", "token_uri"]
+                for field in required:
+                    if not firebase_config.get(field):
+                        missing_fields.append(field)
+                if missing_fields:
+                    error_msg += f"Missing fields: {', '.join(missing_fields)}"
+            else:
+                error_msg += "Please set the full service account JSON under [firebase] in secrets.toml."
+            print(f"[ERROR] {error_msg}")
+            raise RuntimeError(error_msg)
 
         return firebase_config
 
@@ -206,18 +216,31 @@ class FirestoreManager:
     def _is_service_account(self, firebase_config: Optional[Dict[str, Any]]) -> bool:
         """サービスアカウント形式かを判定"""
         if not firebase_config or not isinstance(firebase_config, dict):
+            print(f"[DEBUG] firebase_config is not a dict: {type(firebase_config)}")
             return False
 
         required_fields = ["client_email", "private_key", "token_uri"]
         for field in required_fields:
             value = firebase_config.get(field)
             if not value or not str(value).strip():
+                print(f"[DEBUG] Missing or empty required field: {field}")
                 return False
 
         # private_key の整形: 改行がエスケープされているケースに対応
-        private_key = firebase_config.get("private_key")
-        if isinstance(private_key, str) and "\\n" in private_key:
-            firebase_config["private_key"] = private_key.replace("\\n", "\n")
+        private_key = firebase_config.get("private_key", "")
+        if isinstance(private_key, str):
+            # Streamlit Cloudでは改行が既に\nになっている場合と、\\nになっている場合がある
+            if "\\n" in private_key and "\n" not in private_key:
+                firebase_config["private_key"] = private_key.replace("\\n", "\n")
+                print("[DEBUG] Converted \\\\n to \\n in private_key")
+            
+            # private_keyの検証
+            if not firebase_config["private_key"].strip().startswith("-----BEGIN"):
+                print(f"[ERROR] Invalid private_key format. First 50 chars: {firebase_config['private_key'][:50]}")
+                return False
+
+        print(f"[DEBUG] Service account validation passed for: {firebase_config.get('client_email')}")
+        return True
 
         return True
     
